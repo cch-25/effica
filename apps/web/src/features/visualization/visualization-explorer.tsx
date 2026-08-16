@@ -13,8 +13,8 @@ import type { VisualizationPoint } from "@/lib/api/types";
 function PointCloud({ points, selected, onSelect, rotation }: { points: VisualizationPoint[]; selected: string; onSelect: (id: string) => void; rotation: [number, number] }) {
   const group = useRef<Group>(null);
   useFrame(() => { if (group.current) { group.current.rotation.x = rotation[0]; group.current.rotation.y = rotation[1]; } });
-  const color = { article: "#e98a5d", source: "#78a9df", user: "#77c5a8" };
-  return <group ref={group}>{points.map((point) => <mesh key={point.id} position={[point.x / 23, point.y / 23, point.z / 23]} onClick={(event) => { event.stopPropagation(); onSelect(point.id); }}><sphereGeometry args={[selected === point.id ? .22 : .14, 18, 18]} /><meshStandardMaterial color={color[point.type]} emissive={selected === point.id ? color[point.type] : "#000000"} emissiveIntensity={selected === point.id ? .55 : 0} /></mesh>)}<gridHelper args={[10, 10, "#607570", "#2a3e3a"]} rotation={[Math.PI / 2, 0, 0]} /></group>;
+  const color = { article: "#fff", source: "#000", user: "#737373" };
+  return <group ref={group}>{points.map((point) => <mesh key={point.id} position={[point.x / 23, point.y / 23, point.z / 23]} onClick={(event) => { event.stopPropagation(); onSelect(point.id); }}><sphereGeometry args={[selected === point.id ? .22 : .14, 18, 18]} /><meshStandardMaterial color={color[point.type]} emissive={selected === point.id ? color[point.type] : "#000"} emissiveIntensity={selected === point.id ? .55 : 0} /></mesh>)}<gridHelper args={[10, 10, "#737373", "#171717"]} rotation={[Math.PI / 2, 0, 0]} /></group>;
 }
 
 export function VisualizationExplorer() {

@@ -30,7 +30,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ articl
         <aside className="card article-side" aria-label="기사 관점 분석">
           <div><p className="eyebrow">Perspective profile</p><h2>기사 관점 좌표</h2><p style={{ color: "var(--muted)", fontSize: ".82rem" }}>분석 신뢰도 {formatConfidence(article.confidence)}</p></div>
           <ScoreAxis axis="x" value={article.x} /><ScoreAxis axis="y" value={article.y} /><ScoreAxis axis="z" value={article.z} />
-          <div className="axis"><div className="axis__head"><strong>과장성</strong><span>{article.sensationalism}</span></div><div className="axis__track" style={{ background: "linear-gradient(90deg, #dce9e3, #d9673c)" }}><span className="axis__marker" style={{ left: `${article.sensationalism}%` }} /></div><small>허위 판정이 아닌 표현 강도 평가</small></div>
+          <div className="axis"><div className="axis__head"><strong>과장성</strong><span>{article.sensationalism}</span></div><div className="axis__track"><span className="axis__marker" style={{ left: `${article.sensationalism}%` }} /></div><small>허위 판정이 아닌 표현 강도 평가</small></div>
           <a className="external-link" href={article.originalUrl} target="_blank" rel="noreferrer">언론사 원문 새 창에서 보기 <ExternalLink size={15} /></a>
           <Suspense><ReadActions articleId={article.id} originalUrl={article.originalUrl} /></Suspense>
           <button className="button button--ghost"><History size={15} /> 점수 정정·버전 이력</button>
