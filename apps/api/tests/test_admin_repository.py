@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from apps.api.app.db.base import Base
+from apps.api.app.db.enums import UserRole, UserStatus
+from apps.api.app.db.models import User, WeightRecommendation
+from apps.api.app.db.ulid import new_ulid
+from apps.api.app.db.utc import utc_now
+from apps.api.app.repositories.admin import GuardrailError, IdempotencyConflictError
+from apps.api.app.repositories.platform import MariaDBPlatformRepository
+
+
+@pytest.mark.asyncio
+async def test_admin_repository_is_durable_idempotent_and_guarded() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        actor_id = new_ulid()
+        session.add(
+            User(
+                id=actor_id,
+                role=UserRole.ADMIN,
+                status=UserStatus.ACTIVE,
+                display_name="Admin",
+                created_at=utc_now(),
+                deleted_at=None,
+            )
+        )
+        await session.commit()
+        repository = MariaDBPlatformRepository(session, encryption_secret="a" * 40)
+
+        source_payload = {
+            "name": "Fixture",
+            "source_type": "RSS",
+            "canonical_url": "https://source.example",
+            "policy_status": "APPROVED",
+            "robots_status": "UNKNOWN",
+            "terms_status": "UNKNOWN",
+            "active": True,
+        }
+        source = await repository.create_source(
+            source_payload, actor_id=actor_id, idempotency_key="source-create-1"
+        )
+        replay = await repository.create_source(
+            source_payload, actor_id=actor_id, idempotency_key="source-create-1"
+        )
+        assert replay == source
+        assert source["robots_status"] == "PENDING"
+        updated = await repository.update_source(
+            source["id"],
+            {"robots_status": "APPROVED", "terms_status": "APPROVED"},
+            if_match="1",
+            actor_id=actor_id,
+            idempotency_key="source-update-1",
+            reason="policy review",
+        )
+        assert updated["version"] == 2
+        with pytest.raises(IdempotencyConflictError):
+            await repository.create_source(
+                {**source_payload, "name": "Changed"},
+                actor_id=actor_id,
+                idempotency_key="source-create-1",
+            )
+
+        model = await repository.create_model_alias(
+            {
+                "alias": "fixture-model",
+                "provider": "fixture",
+                "actual_model_id": "model-v1",
+                "secret_env_name": "LLM_PRIMARY_API_KEY",
+                "status": "ACTIVE",
+            },
+            actor_id=actor_id,
+            idempotency_key="model-create-1",
+        )
+        assert model["secret_env_name"] == "LLM_PRIMARY_API_KEY"
+        assert model["config_json"]["secret_env_name"] == "[REDACTED]"
+
+        weight = await repository.create_weight(
+            {"weights": {"model": 1.0}, "guardrails": {"max_axis_change": 0.1}},
+            actor_id=actor_id,
+            idempotency_key="weight-create-1",
+        )
+        simulation = await repository.simulate_weight(
+            weight["id"],
+            [7, 30],
+            actor_id=actor_id,
+            idempotency_key="weight-simulate-1",
+        )
+        assert simulation["status"] == "PENDING"
+        recommendation = await session.get(WeightRecommendation, weight["id"])
+        assert recommendation is not None
+        await repository.review_recommendation(
+            weight["id"],
+            "APPROVED",
+            actor_id=actor_id,
+            idempotency_key="weight-review-1",
+            reason="reviewed",
+        )
+        with pytest.raises(GuardrailError):
+            await repository.publish_weight(
+                weight["id"],
+                if_match="1",
+                actor_id=actor_id,
+                idempotency_key="weight-publish-1",
+                reason="must wait for worker evidence",
+            )
+
+        audit = await repository.list_audit(actor=actor_id)
+        assert {row["action"] for row in audit} >= {
+            "SOURCE_CREATED",
+            "SOURCE_UPDATED",
+            "MODEL_CREATED",
+            "WEIGHT_DRAFT_CREATED",
+            "WEIGHT_SIMULATION_ENQUEUED",
+            "RECOMMENDATION_APPROVED",
+        }
+    await engine.dispose()
