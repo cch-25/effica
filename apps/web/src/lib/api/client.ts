@@ -1,6 +1,14 @@
 import type { ApiErrorBody } from "./types";
 
 const API_PREFIX = "/api/v1";
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+function browserCookie(name: string): string | undefined {
+  if (typeof document === "undefined") return undefined;
+  const prefix = `${encodeURIComponent(name)}=`;
+  const entry = document.cookie.split("; ").find((item) => item.startsWith(prefix));
+  return entry ? decodeURIComponent(entry.slice(prefix.length)) : undefined;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -17,20 +25,26 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
     const { startMockWorker } = await import("@/mocks/browser");
     await startMockWorker();
   }
+  const headers = new Headers(init?.headers);
+  headers.set("Content-Type", "application/json");
+  const method = (init?.method ?? "GET").toUpperCase();
+  const csrf = browserCookie("csrf");
+  if (!SAFE_METHODS.has(method) && csrf && !headers.has("X-CSRF-Token")) {
+    headers.set("X-CSRF-Token", csrf);
+  }
+
   const response = await fetch(`${API_PREFIX}${path}`, {
     ...init,
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
+    headers,
   });
 
   if (!response.ok) {
     const fallback: ApiErrorBody = {
       error: { code: "UNKNOWN", message: "요청을 처리하지 못했습니다.", request_id: "unknown", retryable: false, details: {} },
     };
-    const body = await response.json().catch(() => fallback) as ApiErrorBody;
+    const candidate = await response.json().catch(() => fallback) as Partial<ApiErrorBody>;
+    const body = candidate.error?.message ? candidate as ApiErrorBody : fallback;
     if (typeof window !== "undefined") {
       const returnTo = `${window.location.pathname}${window.location.search}`;
       if (response.status === 401) window.dispatchEvent(new CustomEvent("api-auth-redirect", { detail: `/login?returnTo=${encodeURIComponent(returnTo)}` }));

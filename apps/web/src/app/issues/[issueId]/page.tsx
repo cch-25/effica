@@ -4,9 +4,11 @@ import { ArticleCard } from "@/features/feed/article-card";
 import { StatePanel } from "@/components/ui/state-panel";
 import { ScoreAxis } from "@/components/ui/score-axis";
 import { articles, issues } from "@/mocks/fixtures/content";
+import { RealIssueDetail } from "@/features/issues/real-issue-detail";
 
 export default async function IssueDetailPage({ params }: { params: Promise<{ issueId: string }> }) {
   const { issueId } = await params;
+  if (process.env.NEXT_PUBLIC_API_MODE === "real") return <RealIssueDetail issueId={issueId} />;
   const issue = issues.find((item) => item.id === issueId);
   if (!issue) notFound();
   const issueArticles = articles.filter((article) => article.issueId === issue.id);

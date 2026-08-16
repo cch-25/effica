@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, Compass, Layers3 } from "lucide-react";
-import { ArticleCard } from "@/features/feed/article-card";
-import { IssueCard } from "@/features/issues/issue-card";
+import { FeedGrid } from "@/features/feed/feed-grid";
+import { IssueGrid } from "@/features/issues/issue-grid";
 import { articles, issues } from "@/mocks/fixtures/content";
 import { Badge } from "@/components/ui/badge";
 import { ButtonLink } from "@/components/ui/button";
@@ -20,10 +20,10 @@ export default function HomePage() {
       </section>
 
       <div className="section-head"><h2>서로 다른 시선이 모인 이슈</h2><Link href="/issues">전체 이슈 →</Link></div>
-      <div className="grid grid--3">{issues.map((issue) => <IssueCard key={issue.id} issue={issue} />)}</div>
+      <IssueGrid fallback={issues} columns={3} />
 
       <div className="section-head"><h2>관점을 넓히는 기사</h2><span className="badge"><Layers3 size={12} /> 다양성 보정 피드</span></div>
-      <div className="grid grid--2">{articles.map((article) => <ArticleCard key={article.id} article={article} />)}</div>
+      <FeedGrid fallback={articles} />
 
       <section className="card card--padded" style={{ marginTop: "1rem" }}>
         <p className="eyebrow">추천 원칙</p><h2>정반대가 아니라, 이해할 수 있는 거리부터</h2>
