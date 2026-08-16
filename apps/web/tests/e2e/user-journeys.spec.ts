@@ -19,6 +19,7 @@ test("mock login, separate consent, questionnaire, demographics, home", async ({
   await page.getByRole("button", { name: "건너뛰고 홈으로" }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole("heading", { name: "POLITICAL EFFICACY" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "주요 메뉴" }).getByRole("link", { name: "이슈" })).toHaveCount(0);
 });
 
 test("issue, article analysis, outbound return and credit", async ({ page }) => {

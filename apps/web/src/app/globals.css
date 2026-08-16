@@ -328,7 +328,7 @@ h3 { font-size: .95rem; font-weight: 700; }
   body { font-size: 13px; }
   .sidebar { display: none; }
   .main-content { margin-left: 0; padding: 1rem .8rem 5.5rem; }
-  .bottom-nav { position: fixed; inset: auto .6rem .6rem; z-index: 40; display: grid; grid-template-columns: repeat(4, 1fr); padding: .3rem; border: 1px solid var(--black); border-radius: var(--radius); background: var(--white); color: var(--black); box-shadow: var(--shadow); }
+  .bottom-nav { position: fixed; inset: auto .6rem .6rem; z-index: 40; display: grid; grid-template-columns: repeat(3, 1fr); padding: .3rem; border: 1px solid var(--black); border-radius: var(--radius); background: var(--white); color: var(--black); box-shadow: var(--shadow); }
   .bottom-nav a { display: grid; justify-items: center; gap: .1rem; padding: .3rem .15rem; border-radius: var(--radius-sm); font-size: .58rem; }
   .bottom-nav a[aria-current="page"] { background: var(--black); color: var(--white); }
   .shell--admin .sidebar { position: static; display: flex; width: 100%; height: auto; padding: .7rem; border-right: 0; border-bottom: 1px solid var(--line); }
