@@ -25,6 +25,8 @@ from apps.api.app.api.v1.dependencies import (
     require_reviewer,
 )
 from apps.api.app.api.v1.schemas import (
+    ArticlePage,
+    ArticleView,
     AutopilotSettingsPut,
     ConsentSubmission,
     ConsentView,
@@ -34,6 +36,8 @@ from apps.api.app.api.v1.schemas import (
     EfficacyView,
     FeedItem,
     FeedPage,
+    IssueDetailView,
+    IssuePage,
     JobAccepted,
     MergeIssueRequest,
     ModelCreate,
@@ -49,12 +53,14 @@ from apps.api.app.api.v1.schemas import (
     RecommendationGenerate,
     RetryCancelResponse,
     RollbackRequest,
+    ScoreView,
     ShareCardCreate,
     ShareCardView,
     SimulationRequest,
     SourceCreate,
     SplitIssueRequest,
     UserView,
+    VisualizationPointPage,
     VoteInput,
     VoteView,
     WeightCreate,
@@ -608,7 +614,7 @@ async def feed(
     return page
 
 
-@router.get("/issues", response_model=Page, operation_id="list_issues")
+@router.get("/issues", response_model=IssuePage, operation_id="list_issues")
 async def list_issues(
     topic: str | None = None,
     from_: datetime | None = Query(default=None, alias="from"),
@@ -639,7 +645,7 @@ async def list_issues(
     return _page(rows, cursor)
 
 
-@router.get("/issues/{issue_id}", operation_id="get_issue")
+@router.get("/issues/{issue_id}", response_model=IssueDetailView, operation_id="get_issue")
 async def get_issue(
     issue_id: str,
     platform: PlatformState = Depends(get_state),
@@ -660,7 +666,11 @@ async def get_issue(
     }
 
 
-@router.get("/issues/{issue_id}/articles", response_model=Page, operation_id="list_issue_articles")
+@router.get(
+    "/issues/{issue_id}/articles",
+    response_model=ArticlePage,
+    operation_id="list_issue_articles",
+)
 async def list_issue_articles(
     issue_id: str,
     perspective: Literal["all", "negative_x", "center", "positive_x"] = "all",
@@ -696,7 +706,7 @@ async def list_issue_articles(
     return _page(rows, cursor)
 
 
-@router.get("/articles/{article_id}", operation_id="get_article")
+@router.get("/articles/{article_id}", response_model=ArticleView, operation_id="get_article")
 async def get_article(
     article_id: str,
     platform: PlatformState = Depends(get_state),
@@ -732,7 +742,11 @@ async def article_assessments(
     }
 
 
-@router.get("/articles/{article_id}/score", operation_id="get_article_score")
+@router.get(
+    "/articles/{article_id}/score",
+    response_model=ScoreView,
+    operation_id="get_article_score",
+)
 async def article_score(
     article_id: str,
     platform: PlatformState = Depends(get_state),
@@ -1092,6 +1106,13 @@ async def put_vote(
     platform: PlatformState = Depends(get_state),
     repository: MariaDBPlatformRepository | None = Depends(get_repository),
 ) -> dict[str, Any]:
+    user = (
+        await repository.get_user(principal.user_id)
+        if repository is not None
+        else platform.users.get(principal.user_id)
+    )
+    if not user or not user["consent_complete"]:
+        raise ApiError(403, "CONSENT_REQUIRED", "Separate political-data consent is required.")
     if repository is not None:
         result = await repository.put_vote_row(
             user_id=principal.user_id,
@@ -1236,7 +1257,11 @@ async def submit_efficacy(
     return {"normalized_score": normalized, "baseline_delta": delta, "due_survey": False}
 
 
-@router.get("/visualization/points", response_model=Page, operation_id="visualization_points")
+@router.get(
+    "/visualization/points",
+    response_model=VisualizationPointPage,
+    operation_id="visualization_points",
+)
 async def visualization_points(
     type: Literal["article", "source", "user"] = "article",
     issue_id: str | None = None,
