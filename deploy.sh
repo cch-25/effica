@@ -308,7 +308,7 @@ rm -rf "$STAGE_DIR"
 REMOTE
 
 printf '4/7 EC2 API readiness 확인\n'
-curl --fail --silent --show-error --retry 10 --retry-delay 2 "$BACKEND_ORIGIN/health/ready" >/dev/null
+curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-all-errors "$BACKEND_ORIGIN/health/ready" >/dev/null
 
 printf '5/7 Vercel 프로젝트와 production 환경변수 구성\n'
 if [[ ! -f "$WEB_DIR/.vercel/project.json" ]]; then
@@ -338,8 +338,8 @@ data = json.load(sys.stdin)
 aliases = data.get("aliases") or []
 print("https://" + aliases[0] if aliases else "https://" + data["url"])
 ')"
-curl --fail --silent --show-error --retry 10 --retry-delay 2 "$VERCEL_URL" >/dev/null
-curl --fail --silent --show-error --retry 10 --retry-delay 2 "$VERCEL_URL/api/v1/issues" >/dev/null
+curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-all-errors "$VERCEL_URL" >/dev/null
+curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-all-errors "$VERCEL_URL/api/v1/issues" >/dev/null
 
 printf '7/7 EC2의 공개 URL/OAuth 경계를 Vercel origin으로 고정\n'
 "${SSH[@]}" "$DEPLOY_USER@$DEPLOY_HOST" sudo python3 - "$REMOTE_DIR/.env" "$VERCEL_URL" <<'PY'
@@ -366,5 +366,5 @@ PY
 "${SSH[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
   "sudo systemctl restart perspective-api perspective-worker && sudo systemctl is-active --quiet perspective-api perspective-worker && ! sudo systemctl is-enabled --quiet perspective-web 2>/dev/null && test ! -d '$REMOTE_DIR/apps/web'"
 
-curl --fail --silent --show-error --retry 10 --retry-delay 2 "$VERCEL_URL/api/v1/issues" >/dev/null
+curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-all-errors "$VERCEL_URL/api/v1/issues" >/dev/null
 printf '배포 완료: %s (Next.js: Vercel, API/worker/DB: EC2)\n' "$VERCEL_URL"
