@@ -1,19 +1,29 @@
-# Development seeds
+# 실제 한국어 기사 개발 데이터
 
-Run `python -m db.seeds.seed` after `alembic upgrade head` against a local
-MariaDB database.  The runner applies `001_fake_data.sql` and
-`002_demo_articles.sql` in order.  The second fixture adds exactly 100
-synthetic articles (102 total with the baseline), each with a stored blob,
-article version, model assessment, active score, and current-version pointer.
-The 100 rows are spread over four synthetic sources and ten synthetic issues
-so feed and issue screens have useful variety.  Re-running the runner is
-idempotent.
+`python -m db.seeds.seed`는 `articles.json`에 보관된 검증 완료 기사 스냅샷을
+MariaDB에 한 트랜잭션으로 적재합니다. 이 작업은 worker의 웹 크롤링 로직과
+독립적인 일회성 수동 수집 경로입니다.
 
-The fixtures contain only synthetic sources, articles, article versions, blobs,
-scores, assessments, issues, memberships, and deterministic model aliases.
-`tier_policy.json` is a fixture policy document; production policy versions are
-carried on `credit_ledger` and `tier_snapshots` rows as specified by the data
-model.
+러너는 먼저 과거 합성 시드 네임스페이스의 기사, 본문, 버전, 점수, 이슈,
+출처와 그 기사에 종속된 활동 데이터를 제거합니다. 이어서 실제 원문 URL,
+한국어 제목, 한국어 원문 본문, 발행일, 발행처를 적재하고 한국어 카탈로그와
+연결합니다. 재실행해도 동일한 결과가 되도록 실제 기사 스냅샷에도 별도의
+결정적 ULID 네임스페이스를 사용합니다.
 
-Do not add accounts, OAuth subjects, tokens, questionnaire responses, private
-URLs, or secrets to this directory.
+각 기사에는 OpenAI GPT가 원문 본문만 보고 평가한 `편향성(-100~100)`과
+`과장성(0~100)` 결과가 포함됩니다. 모델명, 프롬프트 버전, 신뢰도, 근거와
+처리량도 함께 저장하며 평가가 하나라도 빠진 스냅샷은 적재를 거부합니다.
+과거 DB 호환에 필요한 `y`, `z` 물리 필드는 0으로만 기록되고 분석 기준으로
+사용되지 않습니다.
+
+실행 방법:
+
+```sh
+uv run python -m db.seeds.analyze_articles  # 새 기사 추가 후 LLM 평가 생성
+./run.sh seed --dry-run
+./run.sh seed
+```
+
+스냅샷에는 계정, OAuth 주체, 토큰, 설문 응답, 비공개 URL, 비밀 값이 없어야
+합니다. 기사 추가 시 직접 원문 HTTPS URL, 한국어 원문 제목과 본문, 시간대가
+포함된 ISO 8601 발행일을 반드시 검증해야 합니다.
