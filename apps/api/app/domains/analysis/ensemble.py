@@ -36,8 +36,10 @@ def ensemble_assessments(
 ) -> EnsembleResult:
     """Aggregate valid assessments, enforcing minimum count and spread.
 
-    Spread is the maximum coordinate range across x/y/z/sensationalism.  A
-    failed/rejected model is ignored; callers can persist it separately.
+    Spread is the maximum range across political bias (x) and sensationalism.
+    Legacy y/z values never affect eligibility or confidence and are emitted
+    as zero-valued compatibility fields. A failed/rejected model is ignored;
+    callers can persist it separately.
     """
 
     if min_success_models < 1 or max_spread < 0:
@@ -56,8 +58,8 @@ def ensemble_assessments(
             False,
             "NO_SUCCESSFUL_MODELS",
             None,
-            None,
-            None,
+            0,
+            0,
             None,
             0.0,
             float("inf"),
@@ -69,8 +71,6 @@ def ensemble_assessments(
     version = values[0].article_version_id
     spread = max(
         max(item.x for item in values) - min(item.x for item in values),
-        max(item.y for item in values) - min(item.y for item in values),
-        max(item.z for item in values) - min(item.z for item in values),
         max(item.sensationalism for item in values) - min(item.sensationalism for item in values),
     )
     eligible = len(values) >= min_success_models and spread <= max_spread
@@ -89,8 +89,8 @@ def ensemble_assessments(
         eligible,
         reason,
         round(mean(item.x for item in values)) if eligible else None,
-        round(mean(item.y for item in values)) if eligible else None,
-        round(mean(item.z for item in values)) if eligible else None,
+        0,
+        0,
         round(mean(item.sensationalism for item in values)) if eligible else None,
         confidence,
         float(spread),

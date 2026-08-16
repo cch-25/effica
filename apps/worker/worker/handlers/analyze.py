@@ -67,7 +67,7 @@ async def handle(
         source_url=str(source["source_url"]) if source.get("source_url") else None,
         author=str(source["author"]) if source.get("author") else None,
     )
-    prompt_version = str(source.get("prompt_version", "content-first-v1"))
+    prompt_version = str(source.get("prompt_version", "bias-sensationalism-v1"))
     configured = None if context is None else context.services.get("analysis_providers")
     providers = (
         list(configured)
