@@ -1,0 +1,9 @@
+{
+  "policy_version": "fixture-v1",
+  "description": "Synthetic development policy; tiers represent activity only, not political standing.",
+  "tiers": [
+    {"tier": "seed", "minimum_credit": 0, "level": 0},
+    {"tier": "pathfinder", "minimum_credit": 100, "level": 1},
+    {"tier": "steward", "minimum_credit": 300, "level": 2}
+  ]
+}
