@@ -16,8 +16,8 @@ export function RealIssueDetail({ issueId }: { issueId: string }) {
   return (
     <>
       <PageHeader eyebrow={`Issue / ${issue.topic}`} title={issue.title} description={issue.summary} />
-      {issue.status === "preparing" && <StatePanel state="processing" />}
-      <div className="grid grid--2">{articles.map((article) => <ArticleCard key={article.id} article={article} />)}</div>
+      {articles.length === 0 && <StatePanel state="processing" />}
+      {articles.length > 0 && <div className="grid grid--2">{articles.map((article) => <ArticleCard key={article.id} article={article} />)}</div>}
     </>
   );
 }

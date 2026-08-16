@@ -18,7 +18,7 @@ test("mock login, separate consent, questionnaire, demographics, home", async ({
   await expect(page).toHaveURL(/\/onboarding\/demographics/);
   await page.getByRole("button", { name: "건너뛰고 홈으로" }).click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole("heading", { name: /뉴스의 결론보다/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "POLITICAL EFFICACY" })).toBeVisible();
 });
 
 test("issue, article analysis, outbound return and credit", async ({ page }) => {
@@ -28,7 +28,7 @@ test("issue, article analysis, outbound return and credit", async ({ page }) => 
 });
 
 test("vote can be submitted, revised and deleted", async ({ page }) => {
-  await page.goto("/articles/article-01"); const number = page.getByLabel("경제 숫자 입력"); await number.fill("24"); await page.getByRole("button", { name: "투표 저장·수정" }).click(); await expect(page.getByText(/revision 2/)).toBeVisible(); await number.fill("18"); await page.getByRole("button", { name: "투표 저장·수정" }).click(); await page.getByRole("button", { name: "내 투표 삭제" }).click(); await expect(page.getByText(/활성 투표가 삭제/)).toBeVisible();
+  await page.goto("/articles/article-01"); await page.getByRole("button", { name: "약간 우편향 +33" }).click(); await page.getByRole("button", { name: "투표 저장·수정" }).click(); await expect(page.getByText(/revision 2/)).toBeVisible(); await page.getByRole("button", { name: "우편향 +67" }).click(); await page.getByRole("button", { name: "투표 저장·수정" }).click(); await page.getByRole("button", { name: "내 투표 삭제" }).click(); await expect(page.getByText(/활성 투표가 삭제/)).toBeVisible();
 });
 
 test("efficacy follow-up connects to progress", async ({ page }) => { await page.goto("/efficacy"); await page.getByRole("button", { name: "후속 설문 저장" }).click(); await expect(page.getByText(/정규화 점수/)).toBeVisible(); await page.goto("/progress"); await expect(page.getByText("immutable ledger")).toBeVisible(); });
@@ -39,4 +39,4 @@ test("analyst and admin action permissions differ", async ({ context, page }) =>
 
 test("weight publish preserves reason across version conflict review", async ({ page }) => { await page.goto("/admin/weights"); await page.getByRole("button", { name: "Publish" }).first().click(); await page.getByLabel("변경 사유 (필수)").fill("7일·30일 guardrail 통과"); await page.getByRole("button", { name: "사유와 함께 실행" }).click(); await expect(page.getByText("다른 변경이 먼저 반영됐습니다")).toBeVisible(); await page.getByRole("button", { name: "최신 데이터 불러와 재검토" }).click(); await expect(page.getByLabel("변경 사유 (필수)")).toHaveValue("7일·30일 guardrail 통과"); await page.getByRole("button", { name: "사유와 함께 실행" }).click(); await expect(page.getByText(/Publish 요청이 접수/)).toBeVisible(); });
 
-test("partial LLM failure and preparing issue remain usable", async ({ page }) => { await page.goto("/articles/article-01"); await expect(page.getByText("model-c · 부분 실패")).toBeVisible(); await expect(page.getByText("model-a · 성공")).toBeVisible(); await page.goto("/issues/issue-diplomacy"); await expect(page.getByText("준비 중입니다")).toBeVisible(); });
+test("partial LLM failure and populated issue remain usable", async ({ page }) => { await page.goto("/articles/article-01"); await expect(page.getByText("model-c · 부분 실패")).toBeVisible(); await expect(page.getByText("model-a · 성공")).toBeVisible(); await page.goto("/issues/issue-diplomacy"); await expect(page.getByText("준비 중입니다")).not.toBeVisible(); await expect(page.getByRole("link", { name: "다자 협력과 공급망 안보 사이, 새 통상 전략의 선택지", exact: true })).toBeVisible(); });
