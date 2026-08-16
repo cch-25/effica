@@ -196,21 +196,23 @@
 - 제안·암시한 정책 방향
 - 과장성 근거
 
-### 4.4 멀티 LLM
+### 4.4 단일 OpenAI GPT 분석
 
-- 동일 원문 버전을 복수 provider/model이 공통 schema로 평가한다.
+- 외부 LLM 호출은 OpenAI Responses API와 `OPENAI_API_KEY`만 사용한다.
+- 기본 모델은 `gpt-5.6-luna`, reasoning effort는 `xhigh`이다.
+- 관리자는 활성 GPT model id와 reasoning effort를 변경할 수 있다.
 - content-first 평가 시 언론사 이름을 가린다.
 - 각 결과는 `model_alias`, 실제 model id, prompt version, latency, token, error와 연결한다.
 - 근거 위치는 분석한 기사 원문 버전에 연결한다.
-- 최소 성공 모델 수와 허용 spread를 충족해야 공식 ensemble 후보가 된다.
+- 단일 성공 평가가 공식 점수 후보가 되며 기존 ensemble 필드는 호환성을 위해 유지한다.
 - 공개 rationale은 개인·시크릿·긴 원문을 포함하지 않는 제한 요약이다.
-- 실제 키가 없으면 deterministic stub provider를 쓴다.
+- 외부 호출이 없는 테스트에서는 단일 deterministic stub provider를 쓴다.
 
 ### 4.5 점수 구성
 
 공식 기사 점수는 최소 다음 component를 버전과 함께 보존한다.
 
-- 멀티 LLM content assessment
+- 단일 GPT content assessment
 - 기사 간 상대 framing 차이
 - 사용자 투표 aggregate
 - shrinkage가 적용된 언론사 prior
@@ -909,7 +911,7 @@ docs/
 1. mock OAuth 가입·동의·설문
 2. RSS/API/HTML fixture 수집과 기사 버전 생성
 3. 이슈 clustering
-4. 3개 deterministic stub model 분석
+4. 단일 deterministic stub model 분석
 5. 점수 계산과 score version
 6. 다양성 보정 feed 조회
 7. 원문 read session 복귀와 credit
@@ -922,7 +924,7 @@ docs/
 
 - URL canonicalization과 기사 versioning
 - 이슈 merge·split idempotency
-- LLM ensemble, spread, confidence와 schema rejection
+- 단일 GPT 평가, confidence와 schema rejection
 - score clamp, weight validation과 byte-stable 계산
 - vote revision과 aggregate
 - read eligibility, overlap·repeat·expiry rejection

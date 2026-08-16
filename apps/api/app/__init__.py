@@ -1,0 +1,1 @@
+"""MAS backend application package."""

@@ -217,7 +217,7 @@ Migration 규칙:
 
 MariaDB 버전이 SKIP LOCKED를 지원하면 사용하고, 그렇지 않으면 조건부 UPDATE claim을 사용한다. 동시 Worker 테스트로 한 job이 한 번만 side effect를 내는지 확인한다.
 
-## B5. 멀티 LLM 분석
+## B5. 단일 OpenAI GPT 분석
 
 Provider interface:
 
@@ -225,16 +225,18 @@ Provider interface:
 
 요구사항:
 
-- 공급자별 timeout, retry, rate limit, circuit state
+- OpenAI Responses API timeout, retry, rate limit, circuit state
+- `OPENAI_API_KEY` 단일 자격정보와 `gpt-5.6-luna`/`xhigh` 기본값
+- 관리자 model id와 reasoning effort 변경 및 작업별 동적 반영
 - model_alias와 실제 model id 분리
 - 구조 출력 schema 엄격 검증
 - content-first 분석에서 source identity masking
 - evidence 위치가 원문 version과 연결
 - prompt, raw response, token, latency, error 저장
 - 공개 rationale_summary에 개인·시크릿·긴 원문 유출 방지
-- 최소 성공 모델과 spread 규칙
+- 단일 성공 모델 규칙과 기존 ensemble 응답 호환성
 
-실제 LLM 키가 없을 때 deterministic stub provider로 전체 수직 슬라이스를 실행한다.
+외부 호출이 없는 테스트에서는 단일 deterministic stub provider로 전체 수직 슬라이스를 실행한다.
 
 ## B6. 투표·점수·사용자 행동 좌표
 
@@ -382,7 +384,7 @@ docs/decisions/mas-a/CR-*.md를 읽되 수정하지 않는다. 같은 번호로 
 
 - URL canonicalization
 - 정치축 clamp와 weight validation
-- LLM ensemble·spread·confidence
+- 단일 GPT 평가·confidence
 - vote aggregate
 - read eligibility
 - credit idempotency·reversal
@@ -503,7 +505,7 @@ scripts/dev 안에 다음 목적의 비파괴적 명령을 제공한다.
 - migration head revision
 - 사용한 MariaDB 버전과 호환성
 - unit, DB, contract, integration 결과
-- stub·실제 provider 전환 방법
+- stub·OpenAI Responses API 전환 방법
 - queue 처리량과 알려진 한계
 - 보안·개인정보 미해결 항목
 - A의 변경 요청 처리 상태
