@@ -41,6 +41,10 @@ class Vote:
             raise ValueError("sensationalism must be in [0, 100]")
         if self.revision < 1:
             raise ValueError("revision must be positive")
+        # Retain legacy columns but make every newly materialized domain vote
+        # canonical to political bias + sensationalism.
+        object.__setattr__(self, "y", 0)
+        object.__setattr__(self, "z", 0)
 
 
 class VoteRevisionStore:
@@ -61,6 +65,8 @@ class VoteRevisionStore:
         sensationalism: int,
         quality_status: VoteQuality = VoteQuality.VALID,
     ) -> Vote:
+        y = 0
+        z = 0
         key = (user_id, article_id)
         history = self._votes.setdefault(key, [])
         existing_id = next((vote for vote in history if vote.vote_id == vote_id), None)
@@ -209,12 +215,12 @@ def hide_small_segments(aggregate: Mapping[str, Any], *, min_size: int = 5) -> d
 def detect_vote_anomaly(
     vote: Vote, *, prior_votes: Iterable[Vote] = (), max_duplicate_distance: float = 0.0
 ) -> bool:
-    """Flag exact/repeated voting patterns without changing the vote itself."""
+    """Flag repeated two-axis voting patterns without changing the vote."""
 
     if max_duplicate_distance < 0:
         raise ValueError("max_duplicate_distance cannot be negative")
     for prior in prior_votes:
-        distance = abs(vote.x - prior.x) + abs(vote.y - prior.y) + abs(vote.z - prior.z)
+        distance = abs(vote.x - prior.x) + abs(vote.sensationalism - prior.sensationalism)
         if (
             vote.user_id == prior.user_id
             and vote.article_id != prior.article_id
@@ -237,10 +243,10 @@ aggregate_vote_snapshots = aggregate_votes
 
 def _mean_values(votes: list[Vote]) -> dict[str, int | None]:
     if not votes:
-        return {"x": None, "y": None, "z": None, "sensationalism": None}
+        return {"x": None, "y": 0, "z": 0, "sensationalism": None}
     return {
         "x": round(mean(vote.x for vote in votes)),
-        "y": round(mean(vote.y for vote in votes)),
-        "z": round(mean(vote.z for vote in votes)),
+        "y": 0,
+        "z": 0,
         "sensationalism": round(mean(vote.sensationalism for vote in votes)),
     }
