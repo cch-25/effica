@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from apps.api.app.db.base import Base
 from apps.api.app.db.enums import UserRole, UserStatus
-from apps.api.app.db.models import User, WeightRecommendation
+from apps.api.app.db.models import SourceAdapter, User, WeightRecommendation
 from apps.api.app.db.ulid import new_ulid
 from apps.api.app.db.utc import utc_now
 from apps.api.app.repositories.admin import (
@@ -45,6 +46,10 @@ async def test_admin_repository_is_durable_idempotent_and_guarded() -> None:
             "robots_status": "UNKNOWN",
             "terms_status": "UNKNOWN",
             "active": True,
+            "adapter_type": "RSS",
+            "config_json": {"max_items": 40, "strip_html": True},
+            "rate_limit": 12,
+            "raw_payload_retention_days": 7,
         }
         source = await repository.create_source(
             source_payload, actor_id=actor_id, idempotency_key="source-create-1"
@@ -54,6 +59,13 @@ async def test_admin_repository_is_durable_idempotent_and_guarded() -> None:
         )
         assert replay == source
         assert source["robots_status"] == "PENDING"
+        adapter = await session.scalar(
+            select(SourceAdapter).where(SourceAdapter.source_id == source["id"])
+        )
+        assert adapter is not None
+        assert adapter.config_json == {"max_items": 40, "strip_html": True}
+        assert adapter.rate_limit == 12
+        assert adapter.raw_payload_retention_days == 7
         updated = await repository.update_source(
             source["id"],
             {"robots_status": "APPROVED", "terms_status": "APPROVED"},

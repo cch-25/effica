@@ -120,6 +120,82 @@ class FeedPage(ContractModel):
     personalized: bool
 
 
+class ArticleView(ContractModel):
+    id: str
+    source_id: str
+    source: str
+    issue_id: str | None = None
+    canonical_url: str
+    title: str
+    author: str | None = None
+    summary: str = ""
+    published_at: datetime | None = None
+    current_version_id: str | None = None
+    status: str
+
+
+class ArticleWithCoordinate(ArticleView):
+    coordinate: Coordinate
+
+
+class ArticlePage(ContractModel):
+    items: list[ArticleWithCoordinate]
+    next_cursor: str | None = None
+
+
+class ScoreView(Coordinate):
+    id: str
+    score_version_id: str | None = None
+    article_version_id: str
+    weight_revision_id: str | None = None
+    version: int | None = None
+    components: dict[str, Any]
+    components_json: dict[str, Any] | None = None
+    status: str
+    created_at: datetime
+
+
+class IssueView(ContractModel):
+    id: str
+    title: str
+    summary: str
+    status: str
+    version: int
+    article_ids: list[str]
+    opened_at: datetime
+    last_activity_at: datetime
+
+
+class IssueDistribution(ContractModel):
+    minimum_x: int | None = None
+    maximum_x: int | None = None
+    count: int
+
+
+class IssueDetailView(IssueView):
+    distribution: IssueDistribution
+
+
+class IssuePage(ContractModel):
+    items: list[IssueView]
+    next_cursor: str | None = None
+
+
+class VisualizationPoint(ContractModel):
+    entity_type: Literal["article", "source", "user"]
+    entity_id: str
+    label: str
+    x: float = Field(ge=-100, le=100)
+    y: float = Field(ge=-100, le=100)
+    z: float = Field(ge=-100, le=100)
+    confidence: float = Field(ge=0, le=1)
+
+
+class VisualizationPointPage(ContractModel):
+    items: list[VisualizationPoint]
+    next_cursor: str | None = None
+
+
 class ReadSessionCreate(ContractModel):
     return_path: str = Field(pattern=r"^/.*")
 
@@ -189,6 +265,14 @@ class SourceCreate(ContractModel):
     name: str
     source_type: Literal["API", "RSS", "CRAWLER"]
     canonical_url: str
+    # Adapter settings are optional for backward compatibility.  When
+    # supplied, the worker receives them through source_adapters.config_json
+    # rather than guessing from the source URL.
+    adapter_type: Literal["API", "RSS", "CRAWLER"] | None = None
+    config_json: dict[str, Any] = Field(default_factory=dict)
+    rate_limit: int | None = Field(default=None, gt=0)
+    raw_payload_retention_days: int | None = Field(default=None, ge=0)
+    adapter_active: bool = True
     policy_status: Literal["PENDING", "APPROVED", "REJECTED"] = "PENDING"
     robots_status: Literal["UNKNOWN", "APPROVED", "REJECTED"] = "UNKNOWN"
     terms_status: Literal["UNKNOWN", "APPROVED", "REJECTED"] = "UNKNOWN"

@@ -576,6 +576,15 @@ class AdminRepositoryMixin:
             # Optional adapter metadata is accepted without changing the
             # Source API shape, useful for callers that already have it.
             adapter_type = payload.get("adapter_type")
+            # A source created through the public contract may provide
+            # adapter settings without repeating the source type.  Infer the
+            # compatible adapter only when settings were actually supplied;
+            # legacy source rows still remain adapter-less.
+            if adapter_type is None and any(
+                payload.get(field) not in (None, {}, "")
+                for field in ("config_json", "rate_limit", "raw_payload_retention_days")
+            ):
+                adapter_type = source_type
             if adapter_type is not None:
                 adapter = SourceAdapter(
                     id=new_ulid(),
