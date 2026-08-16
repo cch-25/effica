@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling==1.28.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "perspective-news-platform"
+version = "0.1.0"
+description = "Political-perspective news platform backend and MariaDB worker"
+requires-python = ">=3.12"
+dependencies = [
+  "alembic==1.18.4",
+  "asyncmy==0.2.11",
+  "cryptography==45.0.6",
+  "fastapi==0.128.8",
+  "greenlet==3.2.4",
+  "httpx==0.28.1",
+  "pillow==12.1.0",
+  "pydantic==2.13.4",
+  "pydantic-settings==2.12.0",
+  "python-dotenv==1.2.1",
+  "sqlalchemy==2.0.46",
+  "ulid-py==1.1.0",
+  "uvicorn==0.40.0",
+]
+
+[dependency-groups]
+dev = [
+  "aiosqlite==0.21.0",
+  "mypy==1.17.1",
+  "pytest==8.4.2",
+  "pytest-asyncio==1.3.0",
+  "ruff==0.14.14",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["apps/api/app", "apps/worker/worker"]
+
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers"
+testpaths = ["apps/api/tests", "apps/worker/tests", "tests/integration"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC"]
+ignore = ["B008", "E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"db/alembic/env.py" = ["E402"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+no_strict_optional = true
+follow_imports = "skip"
