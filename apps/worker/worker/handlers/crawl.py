@@ -100,6 +100,7 @@ async def handle(payload: Mapping[str, Any], context: HandlerContext | None = No
     # Validate adapter retention settings before a live request starts.  This
     # avoids fetching data that cannot be durably represented by the worker.
     _retention_days(source)
+    adapter_config = _source_config(source)
 
     # Fixture mode is intentionally side-effect free.  It may still parse a
     # supplied fixture, which is useful for deterministic integration tests.
@@ -112,6 +113,7 @@ async def handle(payload: Mapping[str, Any], context: HandlerContext | None = No
                 source_id=source_id,
                 url=url,
                 policy=_crawler_guard(source_type, source),
+                config=adapter_config,
             )
         except CrawlerPolicyError as exc:
             raise NonRetryableHandlerError(
@@ -162,6 +164,7 @@ async def handle(payload: Mapping[str, Any], context: HandlerContext | None = No
             source_id=source_id,
             url=url,
             policy=_crawler_guard(source_type, source),
+            config=adapter_config,
         )
     except SourceFetchError as exc:
         error_type = RetryableHandlerError if exc.retryable else NonRetryableHandlerError
@@ -384,11 +387,12 @@ def _parse_payload(
     source_id: Any,
     url: str,
     policy: CrawlerPolicyGuard | None,
+    config: Mapping[str, Any] | None = None,
 ) -> list[ArticleCandidate]:
     if source_type == "API":
-        return APIAdapter(None if source_id is None else str(source_id)).parse(payload)
+        return APIAdapter(None if source_id is None else str(source_id), config).parse(payload)
     if source_type == "RSS":
-        return RSSAdapter(None if source_id is None else str(source_id)).parse(payload)
+        return RSSAdapter(None if source_id is None else str(source_id), config).parse(payload)
     if source_type == "CRAWLER":
         if isinstance(payload, Mapping):
             if _looks_like_response(payload):
@@ -403,6 +407,7 @@ def _parse_payload(
         return CrawlerAdapter(
             None if source_id is None else str(source_id),
             policy,
+            config,
         ).parse(crawler_payload)
     raise ValueError(f"unsupported source type: {source_type}")
 
@@ -410,7 +415,7 @@ def _parse_payload(
 def _retention_days(source: Mapping[str, Any]) -> int | None:
     value = source.get("raw_payload_retention_days")
     if value is None:
-        config = source.get("adapter_config", source.get("config_json"))
+        config = _source_config(source)
         if isinstance(config, Mapping):
             value = config.get("raw_payload_retention_days", config.get("retention_days"))
     if value in (None, ""):
@@ -428,6 +433,30 @@ def _retention_days(source: Mapping[str, Any]) -> int | None:
             code="INVALID_RETENTION_POLICY",
         )
     return days
+
+
+def _source_config(source: Mapping[str, Any]) -> dict[str, Any]:
+    """Merge adapter config aliases without letting it override source state.
+
+    Worker lookups expose the joined adapter JSON as ``config`` while direct
+    jobs and older callers use ``adapter_config``/``config_json``.  All three
+    spellings remain accepted; nested ``adapter`` config is also flattened for
+    source records produced by integrations.
+    """
+
+    merged: dict[str, Any] = {}
+    for key in ("config_json", "adapter_config", "config"):
+        value = source.get(key)
+        if isinstance(value, Mapping):
+            merged.update(dict(value))
+    nested = merged.get("adapter")
+    if isinstance(nested, Mapping):
+        merged = {**dict(nested), **{key: value for key, value in merged.items() if key != "adapter"}}
+    if source.get("rate_limit") is not None:
+        merged.setdefault("rate_limit", source.get("rate_limit"))
+    if source.get("raw_payload_retention_days") is not None:
+        merged.setdefault("raw_payload_retention_days", source.get("raw_payload_retention_days"))
+    return merged
 
 
 def _ingestion_result(
