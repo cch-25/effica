@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import "./crouwel.css";
+import "./base-ui.css";
 import { Providers } from "./providers";
 import { AppShell } from "@/components/layout/app-shell";
 

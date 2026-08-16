@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 const sectionCodes: Array<[RegExp, string]> = [
   [/^Issues?\b/i, "02"],
   [/^Perspective\b/i, "03"],
+  [/^관점 지도/, "03"],
   [/^My activity\b/i, "04"],
   [/^Political\b/i, "05"],
   [/^Share\b/i, "06"],
@@ -22,7 +23,7 @@ const sectionCodes: Array<[RegExp, string]> = [
 export function PageHeader({ eyebrow, title, description, actions }: { eyebrow: string; title: string; description: string; actions?: ReactNode }) {
   const explicitCode = eyebrow.match(/\b\d{2}\b/)?.[0];
   const register = explicitCode ?? sectionCodes.find(([pattern]) => pattern.test(eyebrow))?.[1] ?? "08";
-  const accent = Number(register) % 3 === 0 ? "red" : Number(register) % 2 === 0 ? "blue" : "yellow";
+  const accent = Number(register) % 2 === 0 ? "blue" : "red";
 
   return (
     <header className="page-header" data-accent={accent}>
