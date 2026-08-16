@@ -1,4 +1,4 @@
-"""Strict multi-model article assessment and deterministic ensemble logic."""
+"""Strict article assessment and backward-compatible aggregation logic."""
 
 from .ensemble import EnsembleResult, ensemble_assessments, fact_check_does_not_change_axes
 from .provider import (
@@ -17,6 +17,7 @@ from .provider import (
     LLMProviderAdapter,
     ProviderCircuitOpenError,
     ProviderConfig,
+    ProviderConfigurationError,
     ProviderError,
     ProviderHTTPError,
     ProviderMetricsSnapshot,
@@ -60,6 +61,7 @@ __all__ = [
     "LLMHttpProvider",
     "LLMProvider",
     "ProviderConfig",
+    "ProviderConfigurationError",
     "ProviderError",
     "ProviderHTTPError",
     "ProviderTimeoutError",

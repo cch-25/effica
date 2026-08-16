@@ -8,6 +8,7 @@ from app.domains.analysis import (
     HTTPProvider,
     ProviderCircuitOpenError,
     ProviderConfig,
+    ProviderConfigurationError,
     ProviderRateLimitError,
     ProviderSchemaError,
     ProviderTimeoutError,
@@ -68,6 +69,18 @@ def _provider(
         clock=clock or (lambda: 0.0),
         sleep=sleep or (lambda _: None),
     )
+
+
+def test_live_provider_rejects_non_openai_endpoints_without_test_injection():
+    with pytest.raises(ProviderConfigurationError):
+        HTTPProvider(
+            ProviderConfig(
+                "upstage",
+                "solar-pro",
+                endpoint="https://api.upstage.ai/v1/chat/completions",
+                api_key="test-key",
+            )
+        )
 
 
 def test_timeout_retries_with_bounded_backoff_and_records_metrics():
@@ -225,7 +238,7 @@ def test_masking_and_public_redaction_cover_source_identity_secrets_and_long_quo
     assert "Example Source" not in encoded
     assert "example.test" not in encoded
     assert "Reporter Name" not in encoded
-    assert request_body["title"].startswith("[SOURCE]")
+    assert "TITLE: [SOURCE]" in request_body["input"]
     assert "[REDACTED_EMAIL]" in result.rationale_summary
     assert "[REDACTED_SECRET]" in result.rationale_summary
     assert "[REDACTED_URL]" in result.rationale_summary
@@ -234,16 +247,25 @@ def test_masking_and_public_redaction_cover_source_identity_secrets_and_long_quo
     assert "private" not in json.dumps(provider.metrics.as_dict())
 
 
-def test_openai_chat_completions_style_sends_strict_schema_and_parses_choice():
+def test_openai_responses_style_sends_reasoning_and_strict_schema():
     seen: list[dict[str, object]] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
         seen.append(json.loads(request.content))
+        assessment = _response_payload()
+        assessment.pop("token_usage")
         return httpx.Response(
             200,
             json={
-                "choices": [{"message": {"content": json.dumps(_response_payload())}}],
-                "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {"type": "output_text", "text": json.dumps(assessment)}
+                        ],
+                    }
+                ],
+                "usage": {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18},
             },
             request=request,
         )
@@ -251,23 +273,24 @@ def test_openai_chat_completions_style_sends_strict_schema_and_parses_choice():
     provider = _provider(
         httpx.MockTransport(handle),
         config=ProviderConfig(
-            "openai-compatible",
-            "model-v1",
-            endpoint="https://provider.test/v1/chat/completions",
-            api_style="openai_chat_completions",
+            "openai-default",
+            "gpt-5.6-luna",
+            endpoint="https://api.openai.com/v1/responses",
+            reasoning_effort="xhigh",
         ),
     )
 
     result = provider.analyze_article(_input(), "content-first-v1")
 
     body = seen[0]
-    assert body["model"] == "model-v1"
-    assert "messages" in body
-    response_format = body["response_format"]
-    assert isinstance(response_format, dict)
-    assert response_format["type"] == "json_schema"
-    json_schema = response_format["json_schema"]
+    assert body["model"] == "gpt-5.6-luna"
+    assert body["reasoning"] == {"effort": "xhigh"}
+    assert "input" in body
+    text_config = body["text"]
+    assert isinstance(text_config, dict)
+    json_schema = text_config["format"]
     assert isinstance(json_schema, dict)
+    assert json_schema["type"] == "json_schema"
     assert json_schema["strict"] is True
-    assert result.token_usage == 17
+    assert result.token_usage == 18
     assert result.x == 10

@@ -29,11 +29,12 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
     web_base_url: str = "http://localhost:3000"
     oauth_redirect_allowlist: str = "http://localhost:3000/auth/callback"
-    llm_provider_mode: str = "stub"
-    llm_primary_endpoint: str | None = None
-    llm_primary_model_id: str | None = None
-    llm_primary_alias: str = "primary"
-    llm_primary_api_style: str = "generic_json"
+    llm_provider_mode: str = "auto"
+    openai_api_key: str | None = None
+    openai_endpoint: str = "https://api.openai.com/v1/responses"
+    llm_model: str = "gpt-5.6-luna"
+    llm_model_alias: str = "openai-default"
+    llm_reasoning_effort: str = "xhigh"
     log_level: str = "INFO"
     kakao_client_id: str | None = None
     kakao_client_secret: str | None = None
@@ -41,17 +42,6 @@ class Settings(BaseSettings):
     naver_client_secret: str | None = None
     google_client_id: str | None = None
     google_client_secret: str | None = None
-    llm_primary_api_key: str | None = None
-    llm_secondary_api_key: str | None = None
-    llm_secondary_endpoint: str | None = None
-    llm_secondary_model_id: str | None = None
-    llm_secondary_alias: str = "secondary"
-    llm_secondary_api_style: str = "generic_json"
-    llm_tertiary_api_key: str | None = None
-    llm_tertiary_endpoint: str | None = None
-    llm_tertiary_model_id: str | None = None
-    llm_tertiary_alias: str = "tertiary"
-    llm_tertiary_api_style: str = "generic_json"
     cohort_minimum: int = Field(default=5, ge=3)
 
     @field_validator("app_env")
@@ -71,26 +61,42 @@ class Settings(BaseSettings):
     @field_validator("llm_provider_mode")
     @classmethod
     def validate_llm_mode(cls, value: str) -> str:
-        if value not in {"stub", "live"}:
-            raise ValueError("LLM_PROVIDER_MODE must be stub or live")
+        if value not in {"auto", "stub", "live"}:
+            raise ValueError("LLM_PROVIDER_MODE must be auto, stub, or live")
         return value
 
-    @field_validator(
-        "llm_primary_api_style",
-        "llm_secondary_api_style",
-        "llm_tertiary_api_style",
-    )
+    @field_validator("llm_model")
     @classmethod
-    def validate_llm_api_style(cls, value: str) -> str:
-        if value not in {"generic_json", "openai_chat_completions"}:
+    def validate_llm_model(cls, value: str) -> str:
+        if not value.strip().startswith("gpt-"):
+            raise ValueError("LLM_MODEL must be an OpenAI GPT model ID")
+        return value
+
+    @field_validator("llm_reasoning_effort")
+    @classmethod
+    def validate_reasoning_effort(cls, value: str) -> str:
+        if value not in {"none", "low", "medium", "high", "xhigh", "max"}:
             raise ValueError(
-                "LLM provider API style must be generic_json or openai_chat_completions"
+                "LLM_REASONING_EFFORT must be none, low, medium, high, xhigh, or max"
             )
+        return value
+
+    @field_validator("openai_endpoint")
+    @classmethod
+    def validate_openai_endpoint(cls, value: str) -> str:
+        if value != "https://api.openai.com/v1/responses":
+            raise ValueError("OPENAI_ENDPOINT must use the official OpenAI Responses API")
         return value
 
     @property
     def redirect_allowlist(self) -> set[str]:
         return {item.strip() for item in self.oauth_redirect_allowlist.split(",") if item.strip()}
+
+    @property
+    def live_llm_enabled(self) -> bool:
+        return self.llm_provider_mode == "live" or (
+            self.llm_provider_mode == "auto" and bool(self.openai_api_key)
+        )
 
     def assert_safe_runtime(self) -> None:
         if ROOT_ENV_FILE.exists() and os.name != "nt":
@@ -107,19 +113,8 @@ class Settings(BaseSettings):
                     "MariaDB SESSION_SECRET must contain at least 32 random bytes"
                 )
         if self.llm_provider_mode == "live":
-            providers = (
-                (self.llm_primary_endpoint, self.llm_primary_model_id, self.llm_primary_api_key),
-                (
-                    self.llm_secondary_endpoint,
-                    self.llm_secondary_model_id,
-                    self.llm_secondary_api_key,
-                ),
-                (self.llm_tertiary_endpoint, self.llm_tertiary_model_id, self.llm_tertiary_api_key),
-            )
-            if sum(all(item) for item in providers) < 2:
-                raise RuntimeError(
-                    "live LLM mode requires at least two endpoint/model/key configurations"
-                )
+            if not self.openai_api_key:
+                raise RuntimeError("live LLM mode requires OPENAI_API_KEY")
 
 
 @lru_cache

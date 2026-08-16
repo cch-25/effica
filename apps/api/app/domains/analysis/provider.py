@@ -120,7 +120,8 @@ class ProviderConfig:
     max_retries: int = 2
     rate_limit_per_minute: int = 60
     endpoint: str = ""
-    api_style: str = "generic_json"
+    reasoning_effort: str = "xhigh"
+    model_alias_id: str | None = None
     api_key: str | None = field(default=None, repr=False)
     api_key_header: str = "Authorization"
     api_key_prefix: str = "Bearer"
@@ -188,8 +189,8 @@ class ProviderConfig:
                 raise ValueError("provider endpoint must be an absolute HTTP(S) URL")
         if not self.api_key_header.strip():
             raise ValueError("provider api key header is required")
-        if self.api_style not in {"generic_json", "openai_chat_completions"}:
-            raise ValueError("provider API style is invalid")
+        if self.reasoning_effort not in {"none", "low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("provider reasoning effort is invalid")
         normalised_headers: dict[str, str] = {}
         for key, value in self.headers.items():
             if not isinstance(key, str) or not key.strip() or not isinstance(value, str):
@@ -716,7 +717,7 @@ class HTTPTransport(Protocol):
 
 
 class HttpLLMProvider(LLMProvider):
-    """Configurable JSON-over-HTTP provider with bounded runtime controls.
+    """OpenAI Responses API provider with bounded runtime controls.
 
     ``transport`` is passed to ``httpx.Client`` and can be an
     ``httpx.MockTransport`` in tests.  A caller may inject an already-created
@@ -739,6 +740,16 @@ class HttpLLMProvider(LLMProvider):
             raise ProviderConfigurationError("HTTP provider endpoint is required")
         if client is not None and http_client is not None and client is not http_client:
             raise ProviderConfigurationError("client and http_client cannot both be supplied")
+        injected_runtime = transport is not None or client is not None or http_client is not None
+        if not injected_runtime:
+            if config.endpoint != "https://api.openai.com/v1/responses":
+                raise ProviderConfigurationError(
+                    "live analysis must use the official OpenAI Responses API"
+                )
+            if not config.actual_model_id.startswith("gpt-"):
+                raise ProviderConfigurationError("live analysis requires an OpenAI GPT model")
+            if not config.api_key:
+                raise ProviderConfigurationError("live analysis requires OPENAI_API_KEY")
         self.config = config
         self._sleep = sleep or time.sleep
         self._clock = clock or time.monotonic
@@ -946,15 +957,8 @@ class HttpLLMProvider(LLMProvider):
         # Deliberately omit source_name/source_url/author.  The title/body are
         # masked again here so custom callers cannot accidentally bypass the
         # content-first boundary.
-        generic_body: dict[str, object] = {
-            "model": self.config.actual_model_id,
-            "prompt_version": prompt_version,
-            "article_version_id": input.article_version_id,
-            "title": mask_source_identity(input.title, input.source_name, input.source_url),
-            "content": mask_source_identity(input.content, input.source_name, input.source_url),
-        }
-        if self.config.api_style == "generic_json":
-            return generic_body
+        title = mask_source_identity(input.title, input.source_name, input.source_url)
+        content = mask_source_identity(input.content, input.source_name, input.source_url)
         prompt = (
             "Assess only the supplied article content. Do not infer from publisher identity. "
             "Coordinates are observations, not truth labels: X -100 equality/state intervention "
@@ -965,25 +969,21 @@ class HttpLLMProvider(LLMProvider):
             "Return evidence only when its quote is an exact CONTENT substring at those offsets.\n\n"
             f"PROMPT_VERSION: {prompt_version}\n"
             f"ARTICLE_VERSION_ID: {input.article_version_id}\n"
-            f"TITLE: {generic_body['title']}\n"
-            f"CONTENT:\n{generic_body['content']}"
+            f"TITLE: {title}\n"
+            f"CONTENT:\n{content}"
         )
         return {
             "model": self.config.actual_model_id,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a content-first political framing analyst. Return only the "
-                        "requested structured assessment. Do not include personal data, secrets, "
-                        "URLs, publisher identity, or long source excerpts in rationale fields."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
+            "reasoning": {"effort": self.config.reasoning_effort},
+            "instructions": (
+                "You are a content-first political framing analyst. Return only the "
+                "requested structured assessment. Do not include personal data, secrets, "
+                "URLs, publisher identity, or long source excerpts in rationale fields."
+            ),
+            "input": prompt,
+            "text": {
+                "format": {
+                    "type": "json_schema",
                     "name": "article_assessment",
                     "strict": True,
                     "schema": _chat_completion_assessment_schema(),
@@ -1068,13 +1068,13 @@ def _normalise_status_in_place(data: dict[str, Any]) -> None:
             raise _provider_schema_error("provider status is invalid", exc) from exc
 
 
-_WRAPPER_KEYS = ("assessment", "result", "data", "output", "response")
+_WRAPPER_KEYS = ("assessment", "result", "data", "response")
 _USAGE_KEYS = frozenset({"usage", "token_usage", "prompt_tokens", "completion_tokens", "total_tokens"})
 _OUTER_METADATA_KEYS = _USAGE_KEYS | frozenset({"choices", "id", "model", "object", "created"})
 
 
 def _chat_completion_assessment_schema() -> dict[str, object]:
-    """Return the strict provider-neutral schema sent to compatible chat APIs."""
+    """Return the strict assessment schema sent to the Responses API."""
 
     return {
         "type": "object",
@@ -1122,6 +1122,31 @@ def _chat_completion_assessment_schema() -> dict[str, object]:
 
 
 def _extract_assessment_mapping(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    output_text = payload.get("output_text")
+    if output_text is None and isinstance(payload.get("output"), list):
+        for item in payload["output"]:
+            if not isinstance(item, Mapping) or item.get("type") != "message":
+                continue
+            contents = item.get("content")
+            if not isinstance(contents, list):
+                continue
+            for content in contents:
+                if isinstance(content, Mapping) and content.get("type") == "output_text":
+                    output_text = content.get("text")
+                    break
+            if output_text is not None:
+                break
+    if output_text is not None:
+        if not isinstance(output_text, str):
+            raise _provider_schema_error("provider structured content is invalid")
+        try:
+            parsed_output = json.loads(output_text)
+        except (TypeError, ValueError) as exc:
+            raise _provider_schema_error("provider structured content is invalid", exc) from exc
+        if not isinstance(parsed_output, Mapping):
+            raise _provider_schema_error("provider structured content is invalid")
+        return cast(Mapping[str, Any], parsed_output)
+
     candidate: Any = payload
     for key in _WRAPPER_KEYS:
         value = candidate.get(key) if isinstance(candidate, Mapping) else None
@@ -1170,8 +1195,8 @@ def _extract_token_usage(payload: Mapping[str, Any], data: Mapping[str, Any]) ->
     if usage_value is None and isinstance(usage, Mapping):
         usage_value = usage.get("total_tokens")
         if usage_value is None:
-            prompt = usage.get("prompt_tokens")
-            completion = usage.get("completion_tokens")
+            prompt = usage.get("prompt_tokens", usage.get("input_tokens"))
+            completion = usage.get("completion_tokens", usage.get("output_tokens"))
             if isinstance(prompt, int) and not isinstance(prompt, bool) and isinstance(completion, int) and not isinstance(completion, bool):
                 usage_value = prompt + completion
     if usage_value is None:
@@ -1275,7 +1300,7 @@ def provider_from_config(
 StubProvider = DeterministicStubProvider
 
 
-def make_stub_providers(count: int = 3) -> list[DeterministicStubProvider]:
+def make_stub_providers(count: int = 1) -> list[DeterministicStubProvider]:
     if count < 1:
         raise ValueError("count must be positive")
     return [

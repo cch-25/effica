@@ -175,8 +175,8 @@ class PlatformState:
             self.articles[article_id] = row
             article_rows.append(row)
             models = []
-            for model_index, offset in enumerate([-4, 0, 4], start=1):
-                alias = f"stub-{model_index}"
+            for _model_index, offset in enumerate([0], start=1):
+                alias = "openai-default"
                 models.append(
                     {
                         "model_alias": alias,
@@ -220,17 +220,17 @@ class PlatformState:
             "opened_at": utcnow(),
             "last_activity_at": utcnow(),
         }
-        for index in range(1, 4):
-            model_id = new_id()
-            self.models[model_id] = {
-                "id": model_id,
-                "alias": f"stub-{index}",
-                "provider": "deterministic",
-                "actual_model_id": f"stub-v1-{index}",
-                "secret_env_name": None,
-                "status": "ACTIVE",
-                "version": 1,
-            }
+        model_id = new_id()
+        self.models[model_id] = {
+            "id": model_id,
+            "alias": "openai-default",
+            "provider": "openai",
+            "actual_model_id": "gpt-5.6-luna",
+            "reasoning_effort": "xhigh",
+            "secret_env_name": "OPENAI_API_KEY",
+            "status": "ACTIVE",
+            "version": 1,
+        }
         weight_id = new_id()
         self.weights[weight_id] = {
             "id": weight_id,

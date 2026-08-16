@@ -31,7 +31,7 @@ class EnsembleResult:
 def ensemble_assessments(
     assessments: Iterable[ModelAssessment],
     *,
-    min_success_models: int = 2,
+    min_success_models: int = 1,
     max_spread: float = 40.0,
 ) -> EnsembleResult:
     """Aggregate valid assessments, enforcing minimum count and spread.
@@ -101,7 +101,10 @@ def ensemble_assessments(
 def _confidence(values: Sequence[ModelAssessment], spread: float, max_spread: float) -> float:
     base = mean(item.confidence for item in values)
     spread_factor = 1.0 if max_spread == 0 else max(0.0, 1.0 - spread / max_spread)
-    count_factor = min(1.0, len(values) / 3.0)
+    # A single configured GPT model is now a complete analysis, not a partial
+    # multi-provider ensemble. Preserve the legacy count adjustment only for
+    # callers that deliberately aggregate multiple assessments.
+    count_factor = 1.0 if len(values) == 1 else min(1.0, len(values) / 3.0)
     return round(
         max(0.0, min(1.0, base * (0.5 + 0.5 * spread_factor) * (0.75 + 0.25 * count_factor))), 6
     )

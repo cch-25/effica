@@ -88,10 +88,7 @@ ON DUPLICATE KEY UPDATE issue_id = VALUES(issue_id);
 INSERT INTO model_aliases
     (id, alias, provider, actual_model_id, status, config_json)
 VALUES
-    ('01J00000000000000000000401', 'stub-neutral', 'deterministic-stub',
-     'stub-neutral-v1', 'ACTIVE', JSON_OBJECT('seed', 'fixture-neutral')),
-    ('01J00000000000000000000402', 'stub-context', 'deterministic-stub',
-     'stub-context-v1', 'ACTIVE', JSON_OBJECT('seed', 'fixture-context')),
-    ('01J00000000000000000000403', 'stub-evidence', 'deterministic-stub',
-     'stub-evidence-v1', 'ACTIVE', JSON_OBJECT('seed', 'fixture-evidence'))
+    ('01J00000000000000000000401', 'openai-default', 'openai',
+     'gpt-5.6-luna', 'ACTIVE',
+     JSON_OBJECT('reasoning_effort', 'xhigh', 'secret_env_name', 'OPENAI_API_KEY'))
 ON DUPLICATE KEY UPDATE id = VALUES(id);

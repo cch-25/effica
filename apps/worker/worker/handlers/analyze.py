@@ -1,7 +1,8 @@
-"""Deterministic three-model content-first analysis for offline vertical slices."""
+"""Single-model content-first analysis with an offline deterministic fallback."""
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Mapping
 from typing import Any
 
@@ -71,24 +72,49 @@ async def handle(
     providers = (
         list(configured)
         if isinstance(configured, (list, tuple))
-        and len(configured) >= 2
+        and len(configured) >= 1
         and all(isinstance(item, LLMProvider) for item in configured)
-        else make_stub_providers(3)
+        else []
     )
+    owns_providers = False
+    factory = None if context is None else context.services.get("analysis_provider_factory")
+    if not providers and callable(factory):
+        built = factory()
+        if inspect.isawaitable(built):
+            built = await built
+        if not isinstance(built, LLMProvider):
+            raise NonRetryableHandlerError(
+                "analysis provider factory returned an invalid provider",
+                code="INVALID_ANALYSIS_PROVIDER",
+            )
+        providers = [built]
+        owns_providers = True
+    if not providers:
+        providers = make_stub_providers(1)
     assessments = []
     provider_errors: list[dict[str, Any]] = []
-    for provider in providers:
-        try:
-            assessments.append(provider.analyze_article(assessment_input, prompt_version))
-        except ProviderError as exc:
-            provider_errors.append(
-                {
-                    "model_alias": provider.config.alias,
-                    "code": exc.code,
-                    "retryable": not isinstance(exc, ProviderSchemaError),
-                }
-            )
-    minimum = int(source.get("min_success_models", 2))
+    try:
+        for provider in providers:
+            try:
+                assessments.append(provider.analyze_article(assessment_input, prompt_version))
+            except ProviderError as exc:
+                provider_errors.append(
+                    {
+                        "model_alias": provider.config.alias,
+                        "code": exc.code,
+                        "retryable": not isinstance(exc, ProviderSchemaError),
+                    }
+                )
+    finally:
+        if owns_providers:
+            for provider in providers:
+                close = getattr(provider, "close", None)
+                if callable(close):
+                    close()
+    # The constrained runtime intentionally uses one GPT configuration. Old
+    # queued payloads may still request two or three providers, so do not let
+    # that historical policy make every migrated job fail.
+    minimum = 1
     if len(assessments) < minimum:
         raise HandlerError(
             "minimum successful analysis providers not reached",
@@ -101,13 +127,22 @@ async def handle(
         min_success_models=minimum,
         max_spread=float(source.get("max_spread", 100)),
     )
+    serialized_assessments: list[dict[str, Any]] = []
+    provider_by_alias = {provider.config.alias: provider for provider in providers}
+    for assessment in assessments:
+        provider = provider_by_alias[assessment.model_alias]
+        item = assessment.model_dump(mode="json")
+        if provider.config.model_alias_id:
+            item["model_alias_id"] = provider.config.model_alias_id
+        item["provider"] = "openai" if provider.config.endpoint else "deterministic-stub"
+        serialized_assessments.append(item)
     return HandlerResult(
         value={
             "article_version_id": article_version_id,
             "prompt_version": prompt_version,
-            "assessments": [item.model_dump(mode="json") for item in assessments],
+            "assessments": serialized_assessments,
             "ensemble": ensemble.as_dict(),
-            "raw_response": [item.model_dump(mode="json") for item in assessments],
+            "raw_response": serialized_assessments,
             "provider_errors": provider_errors,
         },
         side_effect_key=(context.idempotency_key if context else None),

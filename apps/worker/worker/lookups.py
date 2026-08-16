@@ -235,6 +235,31 @@ class MariaDBWorkerLookups:
             }
         }
 
+    async def analysis_model_lookup(self, identifier: Any = "active") -> dict[str, Any] | None:
+        """Return the single active OpenAI GPT configuration for analysis.
+
+        The lookup runs for every analysis job so administrator changes take
+        effect without recycling worker processes. Legacy provider rows remain
+        available as history but can never be selected for outbound calls.
+        """
+
+        del identifier
+        row = await self._one(
+            """
+            SELECT id AS model_alias_id, alias, provider, actual_model_id, config_json
+            FROM model_aliases
+            WHERE status = 'ACTIVE' AND provider = 'openai'
+              AND actual_model_id LIKE 'gpt-%'
+            ORDER BY id DESC LIMIT 1
+            """,
+            {},
+        )
+        if row is None:
+            return None
+        config = _json_value(row.pop("config_json", None), {})
+        row["reasoning_effort"] = str(config.get("reasoning_effort", "xhigh"))
+        return row
+
     async def export_records_lookup(self, identifier: Any) -> dict[str, Any]:
         user_id = str(identifier)
         records: dict[str, Any] = {}
@@ -283,6 +308,7 @@ class MariaDBWorkerLookups:
             "recommendation_lookup": self.recommendation_lookup,
             "share_card_lookup": self.share_card_lookup,
             "score_components_lookup": self.score_components_lookup,
+            "analysis_model_lookup": self.analysis_model_lookup,
             "export_records_lookup": self.export_records_lookup,
             "deletion_policy_lookup": self.deletion_policy_lookup,
         }

@@ -479,51 +479,32 @@ def _default_services(session_factory: Callable[[], Any]) -> dict[str, Any]:
 
     settings = get_settings()
     settings.assert_safe_runtime()
-    services = MariaDBWorkerLookups(
-        session_factory, encryption_secret=settings.session_secret
-    ).as_services()
+    lookups = MariaDBWorkerLookups(session_factory, encryption_secret=settings.session_secret)
+    services = lookups.as_services()
     services["source_fetcher"] = SourceFetchService()
-    if settings.llm_provider_mode != "live":
+    if not settings.live_llm_enabled:
         return services
     from apps.api.app.domains.analysis import HttpLLMProvider, ProviderConfig
 
-    configurations = (
-        (
-            settings.llm_primary_alias,
-            settings.llm_primary_model_id,
-            settings.llm_primary_endpoint,
-            settings.llm_primary_api_key,
-            settings.llm_primary_api_style,
-        ),
-        (
-            settings.llm_secondary_alias,
-            settings.llm_secondary_model_id,
-            settings.llm_secondary_endpoint,
-            settings.llm_secondary_api_key,
-            settings.llm_secondary_api_style,
-        ),
-        (
-            settings.llm_tertiary_alias,
-            settings.llm_tertiary_model_id,
-            settings.llm_tertiary_endpoint,
-            settings.llm_tertiary_api_key,
-            settings.llm_tertiary_api_style,
-        ),
-    )
-    providers = [
-        HttpLLMProvider(
+    async def analysis_provider_factory() -> HttpLLMProvider:
+        configured = await lookups.analysis_model_lookup()
+        return HttpLLMProvider(
             ProviderConfig(
-                alias=alias,
-                actual_model_id=model_id or "",
-                endpoint=endpoint or "",
-                api_key=api_key,
-                api_style=api_style,
+                alias=str((configured or {}).get("alias") or settings.llm_model_alias),
+                actual_model_id=str(
+                    (configured or {}).get("actual_model_id") or settings.llm_model
+                ),
+                reasoning_effort=str(
+                    (configured or {}).get("reasoning_effort")
+                    or settings.llm_reasoning_effort
+                ),
+                model_alias_id=(configured or {}).get("model_alias_id"),
+                endpoint=settings.openai_endpoint,
+                api_key=settings.openai_api_key,
             )
         )
-        for alias, model_id, endpoint, api_key, api_style in configurations
-        if model_id and endpoint and api_key
-    ]
-    services["analysis_providers"] = providers
+
+    services["analysis_provider_factory"] = analysis_provider_factory
     return services
 
 

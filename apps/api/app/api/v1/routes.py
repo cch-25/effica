@@ -1917,13 +1917,44 @@ async def admin_patch_model(
 
     def patch() -> dict[str, Any]:
         before = deepcopy(model)
-        model.update(
-            {
-                key: value
-                for key, value in body.values.items()
-                if key in {"alias", "actual_model_id", "secret_env_name", "status"}
-            }
-        )
+        candidate = {
+            **model,
+            **{
+                field: value
+                for field, value in body.values.items()
+                if field
+                in {
+                    "alias",
+                    "provider",
+                    "actual_model_id",
+                    "reasoning_effort",
+                    "secret_env_name",
+                    "status",
+                }
+            },
+        }
+        if candidate.get("provider") != "openai":
+            raise ApiError(400, "ADMIN_VALIDATION_ERROR", "Only OpenAI is allowed.")
+        if not str(candidate.get("actual_model_id", "")).startswith("gpt-"):
+            raise ApiError(
+                400,
+                "ADMIN_VALIDATION_ERROR",
+                "actual_model_id must be an OpenAI GPT model ID.",
+            )
+        if candidate.get("reasoning_effort", "xhigh") not in {
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        }:
+            raise ApiError(
+                400,
+                "ADMIN_VALIDATION_ERROR",
+                "reasoning_effort is invalid.",
+            )
+        model.update(candidate)
         model["version"] += 1
         platform.audit_action(
             principal.user_id,

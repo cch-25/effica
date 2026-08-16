@@ -25,7 +25,7 @@ EXPECTED_FIXTURE_COUNTS = {
     "article_versions": ("id", 2),
     "issues": ("id", 2),
     "issue_memberships": ("issue_id", 2),
-    "model_aliases": ("id", 3),
+    "model_aliases": ("id", 1),
 }
 SEED_ID_PREFIX = "01J00000000000000000000"
 

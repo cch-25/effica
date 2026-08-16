@@ -201,11 +201,19 @@ class PatchDocument(ContractModel):
 
 
 class ModelCreate(ContractModel):
-    alias: str
-    provider: str
-    actual_model_id: str
-    secret_env_name: str | None = None
+    alias: str = "openai-default"
+    provider: Literal["openai"] = "openai"
+    actual_model_id: str = "gpt-5.6-luna"
+    reasoning_effort: Literal["none", "low", "medium", "high", "xhigh", "max"] = "xhigh"
+    secret_env_name: Literal["OPENAI_API_KEY"] | None = "OPENAI_API_KEY"
     status: Literal["ACTIVE", "DISABLED"] = "ACTIVE"
+
+    @field_validator("actual_model_id")
+    @classmethod
+    def gpt_model_only(cls, value: str) -> str:
+        if not value.strip().startswith("gpt-"):
+            raise ValueError("actual_model_id must be an OpenAI GPT model ID")
+        return value.strip()
 
     @field_validator("secret_env_name")
     @classmethod

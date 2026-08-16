@@ -66,6 +66,26 @@ from apps.api.app.db.utc import utc_now
 
 T = TypeVar("T")
 
+_OPENAI_PROVIDER = "openai"
+_OPENAI_SECRET_ENV = "OPENAI_API_KEY"
+_REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "xhigh", "max"})
+
+
+def _validate_gpt_model(value: Any) -> str:
+    model = str(value or "").strip()
+    if not model.startswith("gpt-"):
+        raise AdminValidationError("actual_model_id must be an OpenAI GPT model ID.")
+    return model
+
+
+def _validate_reasoning_effort(value: Any) -> str:
+    effort = str(value or "").strip()
+    if effort not in _REASONING_EFFORTS:
+        raise AdminValidationError(
+            "reasoning_effort must be none, low, medium, high, xhigh, or max."
+        )
+    return effort
+
 
 class AdminRepositoryError(Exception):
     """Base error that route adapters can translate into a stable API error."""
@@ -418,6 +438,7 @@ class AdminRepositoryMixin:
             "alias": row.alias,
             "provider": row.provider,
             "actual_model_id": row.actual_model_id,
+            "reasoning_effort": config.get("reasoning_effort", "xhigh"),
             "secret_env_name": configured_secret,
             "status": _value(row.status),
             "config_json": _safe_json(config),
@@ -963,10 +984,18 @@ class AdminRepositoryMixin:
 
         async def operation() -> tuple[dict[str, Any], Any, Any]:
             alias = str(payload.get("alias", "")).strip()
-            provider = str(payload.get("provider", "")).strip()
-            actual = str(payload.get("actual_model_id", "")).strip()
+            provider = str(payload.get("provider", _OPENAI_PROVIDER)).strip().lower()
+            actual = _validate_gpt_model(payload.get("actual_model_id"))
             if not alias or not provider or not actual:
                 raise AdminValidationError("alias, provider, and actual_model_id are required.")
+            if provider != _OPENAI_PROVIDER:
+                raise AdminValidationError("Only the OpenAI provider is allowed.")
+            secret_env_name = payload.get("secret_env_name", _OPENAI_SECRET_ENV)
+            if secret_env_name not in {None, _OPENAI_SECRET_ENV}:
+                raise AdminValidationError("secret_env_name must be OPENAI_API_KEY.")
+            reasoning_effort = _validate_reasoning_effort(
+                payload.get("reasoning_effort", "xhigh")
+            )
             status = _normalise_status(
                 payload.get("status", ModelStatus.ACTIVE.value), ModelStatus, field="status"
             )
@@ -978,9 +1007,22 @@ class AdminRepositoryMixin:
                     "A model alias with this name already exists.",
                     details={"code": "MODEL_ALIAS_ALREADY_EXISTS", "model_id": duplicate.id},
                 )
-            config = deepcopy(payload.get("config_json") or payload.get("config") or {})
-            if payload.get("secret_env_name") is not None:
-                config["secret_env_name"] = payload["secret_env_name"]
+            if status == ModelStatus.ACTIVE:
+                active = await self.session.scalar(
+                    select(ModelAlias).where(
+                        ModelAlias.provider == _OPENAI_PROVIDER,
+                        ModelAlias.status == ModelStatus.ACTIVE,
+                    )
+                )
+                if active is not None:
+                    raise AdminConflictError(
+                        "Disable the current active OpenAI model before creating another.",
+                        details={"code": "ACTIVE_OPENAI_MODEL_EXISTS", "model_id": active.id},
+                    )
+            config = {
+                "reasoning_effort": reasoning_effort,
+                "secret_env_name": secret_env_name or _OPENAI_SECRET_ENV,
+            }
             row = ModelAlias(
                 id=new_ulid(),
                 alias=alias,
@@ -1057,26 +1099,81 @@ class AdminRepositoryMixin:
                         )
                     row.alias = str(value).strip()
                 elif field == "provider":
-                    row.provider = str(value).strip()
+                    if str(value).strip().lower() != _OPENAI_PROVIDER:
+                        raise AdminValidationError("Only the OpenAI provider is allowed.")
+                    row.provider = _OPENAI_PROVIDER
                 elif field == "actual_model_id":
-                    row.actual_model_id = str(value).strip()
+                    row.actual_model_id = _validate_gpt_model(value)
                 elif field == "status":
-                    row.status = _normalise_status(value, ModelStatus, field="status")
+                    resolved_status = _normalise_status(value, ModelStatus, field="status")
+                    if resolved_status == ModelStatus.ACTIVE:
+                        active = await self.session.scalar(
+                            select(ModelAlias).where(
+                                ModelAlias.provider == _OPENAI_PROVIDER,
+                                ModelAlias.status == ModelStatus.ACTIVE,
+                                ModelAlias.id != model_id,
+                            )
+                        )
+                        if active is not None:
+                            raise AdminConflictError(
+                                "Disable the current active OpenAI model before activating another.",
+                                details={
+                                    "code": "ACTIVE_OPENAI_MODEL_EXISTS",
+                                    "model_id": active.id,
+                                },
+                            )
+                    row.status = resolved_status
                 elif field == "secret_env_name":
+                    if value not in {None, _OPENAI_SECRET_ENV}:
+                        raise AdminValidationError(
+                            "secret_env_name must be OPENAI_API_KEY."
+                        )
                     config = deepcopy(row.config_json or {})
                     if value is None:
                         config.pop("secret_env_name", None)
                     else:
                         config["secret_env_name"] = value
                     row.config_json = config
-                elif field in {"config_json", "config"}:
-                    config = deepcopy(value or {})
-                    # Preserve the current selector unless explicitly given.
-                    if "secret_env_name" not in config and (row.config_json or {}).get(
-                        "secret_env_name"
-                    ):
-                        config["secret_env_name"] = row.config_json["secret_env_name"]
+                elif field == "reasoning_effort":
+                    config = deepcopy(row.config_json or {})
+                    config["reasoning_effort"] = _validate_reasoning_effort(value)
+                    config.setdefault("secret_env_name", _OPENAI_SECRET_ENV)
                     row.config_json = config
+                elif field in {"config_json", "config"}:
+                    requested = deepcopy(value or {})
+                    unknown = set(requested) - {"reasoning_effort", "secret_env_name"}
+                    if unknown:
+                        raise AdminValidationError(
+                            "OpenAI model config only supports reasoning_effort and secret_env_name.",
+                            details={"unsupported_fields": sorted(unknown)},
+                        )
+                    secret = requested.get(
+                        "secret_env_name",
+                        (row.config_json or {}).get("secret_env_name", _OPENAI_SECRET_ENV),
+                    )
+                    if secret != _OPENAI_SECRET_ENV:
+                        raise AdminValidationError(
+                            "secret_env_name must be OPENAI_API_KEY."
+                        )
+                    row.config_json = {
+                        "reasoning_effort": _validate_reasoning_effort(
+                            requested.get(
+                                "reasoning_effort",
+                                (row.config_json or {}).get("reasoning_effort", "xhigh"),
+                            )
+                        ),
+                        "secret_env_name": _OPENAI_SECRET_ENV,
+                    }
+            if row.provider != _OPENAI_PROVIDER:
+                raise AdminValidationError("Only the OpenAI provider is allowed.")
+            _validate_gpt_model(row.actual_model_id)
+            final_config = deepcopy(row.config_json or {})
+            row.config_json = {
+                "reasoning_effort": _validate_reasoning_effort(
+                    final_config.get("reasoning_effort", "xhigh")
+                ),
+                "secret_env_name": _OPENAI_SECRET_ENV,
+            }
             await self.session.flush()
             after = await self._model_view(row, version=current + 1)
             return after, before, after

@@ -16,7 +16,7 @@ from apps.api.app.core.logging import configure_logging
 from apps.api.app.state import new_id
 
 logger = configure_logging(logger_name="perspective.api")
-EXPECTED_DB_REVISION = "0005_remove_migration_index"
+EXPECTED_DB_REVISION = "0006_openai_single_model"
 
 
 @asynccontextmanager

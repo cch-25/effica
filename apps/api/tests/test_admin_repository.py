@@ -8,7 +8,11 @@ from apps.api.app.db.enums import UserRole, UserStatus
 from apps.api.app.db.models import User, WeightRecommendation
 from apps.api.app.db.ulid import new_ulid
 from apps.api.app.db.utc import utc_now
-from apps.api.app.repositories.admin import GuardrailError, IdempotencyConflictError
+from apps.api.app.repositories.admin import (
+    AdminValidationError,
+    GuardrailError,
+    IdempotencyConflictError,
+)
 from apps.api.app.repositories.platform import MariaDBPlatformRepository
 
 
@@ -67,18 +71,39 @@ async def test_admin_repository_is_durable_idempotent_and_guarded() -> None:
             )
 
         model = await repository.create_model_alias(
-            {
-                "alias": "fixture-model",
-                "provider": "fixture",
-                "actual_model_id": "model-v1",
-                "secret_env_name": "LLM_PRIMARY_API_KEY",
-                "status": "ACTIVE",
+                {
+                    "alias": "fixture-model",
+                    "provider": "openai",
+                    "actual_model_id": "gpt-5.6-luna",
+                    "reasoning_effort": "xhigh",
+                    "secret_env_name": "OPENAI_API_KEY",
+                    "status": "ACTIVE",
             },
             actor_id=actor_id,
             idempotency_key="model-create-1",
         )
-        assert model["secret_env_name"] == "LLM_PRIMARY_API_KEY"
+        assert model["secret_env_name"] == "OPENAI_API_KEY"
+        assert model["reasoning_effort"] == "xhigh"
         assert model["config_json"]["secret_env_name"] == "[REDACTED]"
+        model = await repository.update_model_alias(
+            model["id"],
+            {"actual_model_id": "gpt-5.6-terra", "reasoning_effort": "high"},
+            if_match="1",
+            actor_id=actor_id,
+            idempotency_key="model-update-1",
+            reason="adjust model runtime",
+        )
+        assert model["actual_model_id"] == "gpt-5.6-terra"
+        assert model["reasoning_effort"] == "high"
+        with pytest.raises(AdminValidationError):
+            await repository.update_model_alias(
+                model["id"],
+                {"provider": "upstage"},
+                if_match="2",
+                actor_id=actor_id,
+                idempotency_key="model-update-invalid-provider",
+                reason="invalid provider regression",
+            )
 
         weight = await repository.create_weight(
             {"weights": {"model": 1.0}, "guardrails": {"max_axis_change": 0.1}},
@@ -115,6 +140,7 @@ async def test_admin_repository_is_durable_idempotent_and_guarded() -> None:
             "SOURCE_CREATED",
             "SOURCE_UPDATED",
             "MODEL_CREATED",
+            "MODEL_UPDATED",
             "WEIGHT_DRAFT_CREATED",
             "WEIGHT_SIMULATION_ENQUEUED",
             "RECOMMENDATION_APPROVED",

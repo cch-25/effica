@@ -69,13 +69,13 @@ def test_external_network_free_full_vertical_slice() -> None:
         assert profile.status_code == 200
         assert profile.json()["kind"] == "SELF_REPORTED"
 
-        # Fixture ingestion has one issue, three article versions, and three stub assessments each.
+        # Fixture ingestion mirrors the constrained single-model runtime.
         issue_page = client.get("/api/v1/issues").json()
         issue_id = issue_page["items"][0]["id"]
         articles = client.get(f"/api/v1/issues/{issue_id}/articles").json()["items"]
         assert len(articles) == 3
         article_id = articles[0]["id"]
-        assert len(client.get(f"/api/v1/articles/{article_id}/assessments").json()["assessments"]) == 3
+        assert len(client.get(f"/api/v1/articles/{article_id}/assessments").json()["assessments"]) == 1
         score = client.get(f"/api/v1/articles/{article_id}/score").json()
         assert set(score["components"]) == {
             "llm_ensemble",
@@ -93,7 +93,7 @@ def test_external_network_free_full_vertical_slice() -> None:
                 }
             )
         ).value
-        assert len(analysis_result["assessments"]) == 3
+        assert len(analysis_result["assessments"]) == 1
         assert all(item["model_alias"].startswith("stub-") for item in analysis_result["assessments"])
         score_result = asyncio.run(
             calculate_score(

@@ -13,10 +13,13 @@ entrypoints are intentionally limited to the two repository-root files `run.sh` 
 
 Copy `.env.example` to `.env`, fill every required value, then run:
 
-`LLM_PROVIDER_MODE=stub` runs the complete offline three-model flow. To switch
-to live providers, set it to `live` and configure all three
-`LLM_{PRIMARY,SECONDARY,TERTIARY}_{ENDPOINT,MODEL_ID,ALIAS,API_KEY}` groups.
-Startup rejects incomplete live configuration. Each provider enforces bounded
+`LLM_PROVIDER_MODE=stub` keeps an offline deterministic single-model flow for
+tests. Auto mode is the default: it enables live analysis when `OPENAI_API_KEY`
+is present and otherwise stays offline. Live analysis uses the OpenAI Responses
+API only. The default is `gpt-5.6-luna` with `xhigh` reasoning; an
+administrator can change the active GPT model and reasoning effort through
+`/api/v1/admin/models`, and the worker reloads that configuration for each job.
+Startup rejects a missing key or a non-OpenAI endpoint. The provider enforces bounded
 timeouts/retries, a rate limiter, circuit breaking, strict output validation,
 source-identity masking, and redacted metrics.
 
