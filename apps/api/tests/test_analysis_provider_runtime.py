@@ -1,0 +1,273 @@
+import json
+
+import httpx
+import pytest
+from app.domains.analysis import (
+    AssessmentInput,
+    CircuitState,
+    HTTPProvider,
+    ProviderCircuitOpenError,
+    ProviderConfig,
+    ProviderRateLimitError,
+    ProviderSchemaError,
+    ProviderTimeoutError,
+)
+
+
+def _input(content: str = "A short article body.") -> AssessmentInput:
+    return AssessmentInput(
+        article_version_id="version-1",
+        title="Example source headline",
+        content=content,
+        source_name="Example Source",
+        source_url="https://example.test/story?id=42",
+        author="Reporter Name",
+    )
+
+
+def _response_payload(**overrides: object) -> dict[str, object]:
+    value: dict[str, object] = {
+        "x": 10,
+        "y": -5,
+        "z": 20,
+        "sensationalism": 12,
+        "confidence": 0.82,
+        "evidence": [
+            {
+                "article_version_id": "version-1",
+                "start": 0,
+                "end": 8,
+                "quote": "A short",
+                "rationale": "opening",
+            }
+        ],
+        "rationale_summary": "The article frames the issue with an opening claim.",
+        "token_usage": 17,
+    }
+    value.update(overrides)
+    return value
+
+
+def _provider(
+    handler: httpx.MockTransport,
+    *,
+    config: ProviderConfig | None = None,
+    clock=None,
+    sleep=None,
+) -> HTTPProvider:
+    return HTTPProvider(
+        config
+        or ProviderConfig(
+            "test-provider",
+            "actual-model-v1",
+            endpoint="https://provider.test/analyze",
+            timeout_seconds=0.25,
+            retry_backoff_seconds=0,
+        ),
+        transport=handler,
+        clock=clock or (lambda: 0.0),
+        sleep=sleep or (lambda _: None),
+    )
+
+
+def test_timeout_retries_with_bounded_backoff_and_records_metrics():
+    calls = 0
+    sleeps: list[float] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise httpx.ReadTimeout("upstream timeout", request=request)
+        return httpx.Response(200, json=_response_payload(), request=request)
+
+    provider = _provider(
+        httpx.MockTransport(handle),
+        config=ProviderConfig(
+            "test-provider",
+            "actual-model-v1",
+            endpoint="https://provider.test/analyze",
+            timeout_seconds=0.25,
+            max_retries=2,
+            retry_backoff_seconds=0.2,
+            max_backoff_seconds=0.25,
+        ),
+        sleep=sleeps.append,
+    )
+
+    result = provider.analyze_article(_input(), "prompt-v1")
+
+    assert result.model_alias == "test-provider"
+    assert result.actual_model_id == "actual-model-v1"
+    assert calls == 3
+    assert sleeps == [0.2, 0.25]
+    assert provider.metrics["retry_count"] == 2
+    assert provider.metrics["total_tokens"] == 17
+    assert provider.metrics["last_error_code"] is None
+
+
+def test_circuit_opens_and_allows_one_half_open_recovery_probe():
+    now = [0.0]
+    calls = 0
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ReadTimeout("timeout", request=request)
+        return httpx.Response(200, json=_response_payload(), request=request)
+
+    provider = _provider(
+        httpx.MockTransport(handle),
+        config=ProviderConfig(
+            "breaker-provider",
+            "model",
+            endpoint="https://provider.test/analyze",
+            max_retries=0,
+            circuit_failure_threshold=1,
+            circuit_reset_timeout_seconds=5,
+        ),
+        clock=lambda: now[0],
+    )
+
+    with pytest.raises(ProviderTimeoutError):
+        provider.analyze_article(_input(), "prompt-v1")
+    assert provider.circuit_state == CircuitState.OPEN
+    with pytest.raises(ProviderCircuitOpenError):
+        provider.analyze_article(_input(), "prompt-v1")
+    assert calls == 1
+
+    now[0] = 5.0
+    assert provider.circuit_state == CircuitState.HALF_OPEN
+    result = provider.analyze_article(_input(), "prompt-v1")
+    assert result.x == 10
+    assert provider.circuit_state == CircuitState.CLOSED
+    assert provider.metrics["circuit_open_requests"] == 1
+
+
+def test_per_provider_rate_limit_rejects_until_window_expires():
+    now = [0.0]
+    provider = _provider(
+        httpx.MockTransport(
+            lambda request: httpx.Response(200, json=_response_payload(), request=request)
+        ),
+        config=ProviderConfig(
+            "limited-provider",
+            "model",
+            endpoint="https://provider.test/analyze",
+            rate_limit_per_minute=1,
+            rate_limit_window_seconds=10,
+        ),
+        clock=lambda: now[0],
+    )
+
+    provider.analyze_article(_input(), "prompt-v1")
+    with pytest.raises(ProviderRateLimitError) as error:
+        provider.analyze_article(_input(), "prompt-v1")
+    assert error.value.retry_after_seconds == 10
+    assert provider.metrics["rate_limited_requests"] == 1
+
+    now[0] = 10.1
+    provider.analyze_article(_input(), "prompt-v1")
+    assert provider.metrics["successful_requests"] == 2
+
+
+def test_schema_rejection_is_strict_and_does_not_expose_response_content():
+    leaked = "private article text that must never become an exception message"
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=_response_payload(x=101, rationale_summary=leaked),
+            request=request,
+        )
+
+    provider = _provider(httpx.MockTransport(handle))
+    with pytest.raises(ProviderSchemaError) as error:
+        provider.analyze_article(_input(), "prompt-v1")
+
+    assert error.value.code == "PROVIDER_SCHEMA_REJECTED"
+    assert leaked not in str(error.value)
+    assert provider.metrics["schema_rejections"] == 1
+
+
+def test_masking_and_public_redaction_cover_source_identity_secrets_and_long_quotes():
+    body = "Example Source reported this long source passage. " + ("important context " * 8)
+    seen: list[dict[str, object]] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json=_response_payload(
+                rationale_summary=(
+                    "Contact test@example.com; Bearer super-secret; "
+                    "https://private.example/a; " + body[:80]
+                ),
+                evidence=[
+                    {
+                        "article_version_id": "version-1",
+                        "start": 0,
+                        "end": 20,
+                        "quote": body[:80],
+                        "rationale": "api_key=do-not-publish",
+                    }
+                ],
+            ),
+            request=request,
+        )
+
+    provider = _provider(httpx.MockTransport(handle))
+    result = provider.analyze_article(_input(body), "prompt-v1")
+    request_body = seen[0]
+
+    encoded = json.dumps(request_body)
+    assert "Example Source" not in encoded
+    assert "example.test" not in encoded
+    assert "Reporter Name" not in encoded
+    assert request_body["title"].startswith("[SOURCE]")
+    assert "[REDACTED_EMAIL]" in result.rationale_summary
+    assert "[REDACTED_SECRET]" in result.rationale_summary
+    assert "[REDACTED_URL]" in result.rationale_summary
+    assert body[:40] not in result.rationale_summary
+    assert "[REDACTED_SECRET]" in result.evidence[0].rationale
+    assert "private" not in json.dumps(provider.metrics.as_dict())
+
+
+def test_openai_chat_completions_style_sends_strict_schema_and_parses_choice():
+    seen: list[dict[str, object]] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": json.dumps(_response_payload())}}],
+                "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+            },
+            request=request,
+        )
+
+    provider = _provider(
+        httpx.MockTransport(handle),
+        config=ProviderConfig(
+            "openai-compatible",
+            "model-v1",
+            endpoint="https://provider.test/v1/chat/completions",
+            api_style="openai_chat_completions",
+        ),
+    )
+
+    result = provider.analyze_article(_input(), "content-first-v1")
+
+    body = seen[0]
+    assert body["model"] == "model-v1"
+    assert "messages" in body
+    response_format = body["response_format"]
+    assert isinstance(response_format, dict)
+    assert response_format["type"] == "json_schema"
+    json_schema = response_format["json_schema"]
+    assert isinstance(json_schema, dict)
+    assert json_schema["strict"] is True
+    assert result.token_usage == 17
+    assert result.x == 10
