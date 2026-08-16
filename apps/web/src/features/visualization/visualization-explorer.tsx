@@ -8,8 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { StatePanel } from "@/components/ui/state-panel";
 import { Tabs } from "@/components/ui/tabs";
-import { visualizationPoints } from "@/mocks/fixtures/content";
+import { visualizationPoints as fixturePoints } from "@/mocks/fixtures/content";
 import type { VisualizationPoint } from "@/lib/api/types";
+import { useVisualizationPointsQuery } from "@/lib/api/queries";
 
 function PointCloud({ points, selected, onSelect, rotation }: { points: VisualizationPoint[]; selected: string; onSelect: (id: string) => void; rotation: [number, number] }) {
   const group = useRef<Group>(null);
@@ -19,6 +20,8 @@ function PointCloud({ points, selected, onSelect, rotation }: { points: Visualiz
 }
 
 export function VisualizationExplorer() {
+  const pointsQuery = useVisualizationPointsQuery();
+  const visualizationPoints = pointsQuery.data?.items.length ? pointsQuery.data.items : fixturePoints;
   const [mode, setMode] = useState<"3d" | "2d" | "table">("3d");
   const [projection, setProjection] = useState<"xy" | "xz" | "yz">("xy");
   const [selected, setSelected] = useState(visualizationPoints[0].id);
@@ -34,7 +37,7 @@ export function VisualizationExplorer() {
   const effectiveMode = !webglAvailable && mode === "3d" ? "2d" : mode;
   const current = visualizationPoints.find((point) => point.id === selected) ?? visualizationPoints[0];
   const [horizontal, vertical] = projection.split("") as Array<"x" | "y" | "z">;
-  const sorted = useMemo(() => [...visualizationPoints].sort((a, b) => typeof a[sort] === "string" ? String(a[sort]).localeCompare(String(b[sort]), "ko") : Number(a[sort]) - Number(b[sort])), [sort]);
+  const sorted = useMemo(() => [...visualizationPoints].sort((a, b) => typeof a[sort] === "string" ? String(a[sort]).localeCompare(String(b[sort]), "ko") : Number(a[sort]) - Number(b[sort])), [sort, visualizationPoints]);
   return <>
     {!webglAvailable && <div style={{ marginBottom: "1rem" }}><StatePanel state="partial" /></div>}
     <div className="admin-toolbar"><Tabs label="시각화 방식" value={effectiveMode} onChange={setMode} items={[{ value: "3d", label: "3D", disabled: !webglAvailable }, { value: "2d", label: "2D 투영" }, { value: "table", label: "데이터 표" }]} /><div className="page-header__actions"><Button variant="secondary" className="button--icon" aria-label="축소" onClick={() => setZoom(Math.min(14, zoom + 1))}><ZoomOut size={16} /></Button><Button variant="secondary" className="button--icon" aria-label="확대" onClick={() => setZoom(Math.max(5, zoom - 1))}><ZoomIn size={16} /></Button><Button variant="secondary" onClick={() => { setZoom(9); setRotation([-.25, .4]); }}><RotateCcw size={16} /> 초기화</Button></div></div>

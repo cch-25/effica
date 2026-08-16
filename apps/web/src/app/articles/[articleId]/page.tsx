@@ -9,9 +9,11 @@ import { VoteForm } from "@/features/voting/vote-form";
 import { Button } from "@/components/ui/button";
 import { articles } from "@/mocks/fixtures/content";
 import { formatConfidence } from "@/lib/api/formatters";
+import { RealArticleDetail } from "@/features/articles/real-article-detail";
 
 export default async function ArticlePage({ params }: { params: Promise<{ articleId: string }> }) {
   const { articleId } = await params;
+  if (process.env.NEXT_PUBLIC_API_MODE === "real") return <RealArticleDetail articleId={articleId} />;
   const article = articles.find((item) => item.id === articleId);
   if (!article) notFound();
   return (
