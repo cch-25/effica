@@ -1,8 +1,8 @@
-"""Apply the synthetic MariaDB development seed in one transaction.
+"""Apply the synthetic MariaDB development seeds in one transaction.
 
 The runner intentionally does not manufacture accounts, credentials, tokens,
 or questionnaire data.  It reads the root settings only, executes the checked
-in SQL fixture, and never prints connection details.
+in SQL fixtures, and never prints connection details.
 """
 
 from __future__ import annotations
@@ -17,23 +17,36 @@ from apps.api.app.core.config import get_settings
 from apps.api.app.db.session import create_engine, dispose_engine
 
 SEED_SQL = Path(__file__).with_name("001_fake_data.sql")
+SEED_SQL_FILES = (SEED_SQL, Path(__file__).with_name("002_demo_articles.sql"))
+
+# The baseline fixture has two articles; the demo extension contributes 100
+# more.  Keep the count explicit so a future seed edit cannot silently shrink
+# the demo feed while preserving idempotent re-runs.
+DEMO_ARTICLE_COUNT = 100
 
 EXPECTED_FIXTURE_COUNTS = {
-    "sources": ("id", 2),
-    "articles": ("id", 2),
-    "stored_blobs": ("id", 2),
-    "article_versions": ("id", 2),
-    "issues": ("id", 2),
-    "issue_memberships": ("issue_id", 2),
+    "sources": ("id", 6),
+    "articles": ("id", 2 + DEMO_ARTICLE_COUNT),
+    "stored_blobs": ("id", 2 + DEMO_ARTICLE_COUNT),
+    "article_versions": ("id", 2 + DEMO_ARTICLE_COUNT),
+    "model_assessments": ("id", DEMO_ARTICLE_COUNT),
+    "weight_profile_revisions": ("id", 1),
+    "score_versions": ("id", DEMO_ARTICLE_COUNT),
+    "issues": ("id", 12),
+    "issue_memberships": ("issue_id", 2 + DEMO_ARTICLE_COUNT),
     "model_aliases": ("id", 1),
 }
-SEED_ID_PREFIX = "01J00000000000000000000"
+# All deterministic fixture IDs share this 21-character namespace root; the
+# suffix identifies the row family and sequence (for example, article 01001).
+SEED_ID_PREFIX = "01J000000000000000000"
 
 
 def _statements() -> list[str]:
-    """Return non-comment SQL statements from the trusted fixture file."""
+    """Return non-comment SQL statements from the trusted fixture files."""
 
-    source = SEED_SQL.read_text(encoding="utf-8")
+    source = "\n\n".join(
+        path.read_text(encoding="utf-8") for path in SEED_SQL_FILES
+    )
     statements: list[str] = []
     current: list[str] = []
     quote: str | None = None
