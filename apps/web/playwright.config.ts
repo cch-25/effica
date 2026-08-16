@@ -1,5 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const webPort = process.env.PLAYWRIGHT_PORT ?? "3000";
+const webBaseUrl = `http://127.0.0.1:${webPort}`;
+
 export default defineConfig({
   testDir: "./tests",
   fullyParallel: true,
@@ -7,7 +10,7 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: "html",
   use: {
-    baseURL: "http://127.0.0.1:3000",
+    baseURL: webBaseUrl,
     trace: "on-first-retry",
   },
   projects: [
@@ -15,8 +18,8 @@ export default defineConfig({
     { name: "mobile", use: { ...devices["Pixel 7"] } },
   ],
   webServer: {
-    command: "npm run dev",
-    url: "http://127.0.0.1:3000",
+    command: `npm run dev -- --hostname 127.0.0.1 --port ${webPort}`,
+    url: webBaseUrl,
     reuseExistingServer: !process.env.CI,
   },
 });
