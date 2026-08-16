@@ -110,7 +110,8 @@ PY
   export APP_BACKEND=mariadb
   export PUBLIC_BASE_URL="http://127.0.0.1:8000"
   export WEB_BASE_URL="http://127.0.0.1:3000"
-  export NEXT_PUBLIC_API_BASE_URL="http://127.0.0.1:8000/api/v1"
+  export API_BACKEND_URL="http://127.0.0.1:8000"
+  export NEXT_PUBLIC_API_MODE="real"
 }
 
 sync_python() {

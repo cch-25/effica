@@ -10,5 +10,6 @@ def test_integrated_deployer_scopes_admin_and_uses_mariadb_stdin() -> None:
     assert "DB_ADMIN_PASSWORD must equal EC2_PASSWORD" in source
     assert "GRANT ALL PRIVILEGES ON `{database}`.*" in source
     assert "GRANT ALL PRIVILEGES ON *.*" not in source
-    assert "python3 - <<'PY' | sudo mariadb" in source
+    assert 'sudo -u "$SERVICE_USER" bash -c' in source
+    assert "exec python3 -\" <<'PY' | sudo mariadb" in source
     assert "--password" not in source

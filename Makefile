@@ -1,4 +1,4 @@
-.PHONY: install dev api worker migrate seed openapi verify test integration deploy
+.PHONY: install dev api worker migrate seed openapi verify test integration deploy deploy-web
 
 install:
 	uv sync --all-groups
@@ -32,3 +32,6 @@ integration:
 
 deploy:
 	./deploy.sh
+
+deploy-web:
+	cd apps/web && vercel --prod

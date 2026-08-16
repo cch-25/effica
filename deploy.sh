@@ -2,10 +2,13 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WEB_DIR="$ROOT/apps/web"
 ENV_FILE="$ROOT/.env"
 REMOTE_DIR="/opt/perspective-news"
 REMOTE_STAGE="/tmp/perspective-news-release"
+VERCEL_PROJECT="${VERCEL_PROJECT:-perspective-news}"
 DEPLOY_ENV=""
+DEPLOY_VARS=""
 
 cd "$ROOT"
 
@@ -22,15 +25,17 @@ cleanup() {
   if [[ -n "$DEPLOY_ENV" && -f "$DEPLOY_ENV" ]]; then
     rm -f "$DEPLOY_ENV"
   fi
+  if [[ -n "$DEPLOY_VARS" && -f "$DEPLOY_VARS" ]]; then
+    rm -f "$DEPLOY_VARS"
+  fi
 }
 trap cleanup EXIT INT TERM
 
-need uv
-need ssh
-need sshpass
-need rsync
+for command in uv ssh sshpass rsync curl vercel; do
+  need "$command"
+done
 [[ -f "$ENV_FILE" ]] || die "저장소 루트에 .env 파일이 필요합니다."
-[[ -f "$ROOT/apps/web/package.json" ]] || die "apps/web/package.json이 없습니다. FastAPI와 Next.js를 함께 배포할 수 없습니다."
+[[ -f "$WEB_DIR/package.json" ]] || die "apps/web/package.json이 없습니다."
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
   mode="$(stat -f '%Lp' "$ENV_FILE")"
@@ -40,9 +45,10 @@ fi
 [[ "$mode" == "600" ]] || die ".env 권한은 600이어야 합니다. 현재: $mode"
 
 DEPLOY_ENV="$(mktemp "${TMPDIR:-/tmp}/perspective-env.XXXXXX")"
-chmod 600 "$DEPLOY_ENV"
+DEPLOY_VARS="$(mktemp "${TMPDIR:-/tmp}/perspective-vars.XXXXXX")"
+chmod 600 "$DEPLOY_ENV" "$DEPLOY_VARS"
 
-eval "$(DEPLOY_ENV="$DEPLOY_ENV" uv run python - "$ENV_FILE" <<'PY'
+DEPLOY_ENV="$DEPLOY_ENV" uv run python - "$ENV_FILE" >"$DEPLOY_VARS" <<'PY'
 from __future__ import annotations
 
 import os
@@ -58,11 +64,13 @@ source = Path(sys.argv[1])
 target = Path(os.environ["DEPLOY_ENV"])
 values = {key: value for key, value in dotenv_values(source).items() if value is not None}
 
+
 def required(key: str) -> str:
     value = values.get(key, "")
     if not value or value.startswith("<"):
         raise SystemExit(f"{key} must be set in the repository-root .env")
     return value
+
 
 host = required("EC2_IPV4_PUBLIC_ADDRESS")
 ssh_password = required("EC2_PASSWORD")
@@ -85,18 +93,16 @@ values["APP_ENV"] = "production"
 values["APP_BACKEND"] = "mariadb"
 values["DATABASE_URL"] = database_url.set(host="127.0.0.1", port=3306).render_as_string(hide_password=False)
 values["DB_ADMIN_ALLOWED_HOST"] = "127.0.0.1"
-for key, default in {
-    "PUBLIC_BASE_URL": f"http://{host}",
-    "WEB_BASE_URL": f"http://{host}",
-    "NEXT_PUBLIC_API_BASE_URL": f"http://{host}/api/v1",
-}.items():
-    if not values.get(key) or values[key].startswith("<"):
-        values[key] = default
+
+# These are replaced with the actual Vercel production URL after the frontend deploy.
+values["PUBLIC_BASE_URL"] = f"http://{host}"
+values["WEB_BASE_URL"] = f"http://{host}"
+values["NEXT_PUBLIC_API_MODE"] = "real"
 
 deployment_only = {
     "EC2_PASSWORD", "EC2_IPV4_PUBLIC_ADDRESS", "EC2_HOST", "EC2_SSH_USER", "EC2_SSH_PORT",
     "MARIADB_BOOTSTRAP_HOST", "MARIADB_BOOTSTRAP_PORT", "MARIADB_BOOTSTRAP_USER",
-    "MARIADB_BOOTSTRAP_PASSWORD",
+    "MARIADB_BOOTSTRAP_PASSWORD", "API_BACKEND_URL", "VERCEL_PROJECT",
 }
 with target.open("w", encoding="utf-8") as output:
     for key in sorted(values):
@@ -107,23 +113,27 @@ print(f"export DEPLOY_HOST={shlex.quote(host)}")
 print(f"export DEPLOY_PASSWORD={shlex.quote(ssh_password)}")
 print(f"export DEPLOY_USER={shlex.quote(values.get('EC2_SSH_USER', 'ubuntu'))}")
 print(f"export DEPLOY_PORT={shlex.quote(values.get('EC2_SSH_PORT', '22'))}")
+api_host = host.replace(".", "-") + ".sslip.io"
+print(f"export API_HOST={shlex.quote(api_host)}")
+print(f"export BACKEND_ORIGIN={shlex.quote(f'https://{api_host}')}")
 PY
-)"
+# The generated file is mode 600 and all values are shell-quoted by Python.
+. "$DEPLOY_VARS"
 
 SSH=(sshpass -e ssh -p "$DEPLOY_PORT" -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30)
 RSYNC_SSH="sshpass -e ssh -p $DEPLOY_PORT -o StrictHostKeyChecking=accept-new"
 export SSHPASS="$DEPLOY_PASSWORD"
 
-printf '1/5 원격 staging 디렉터리 준비\n'
-"${SSH[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$REMOTE_STAGE'"
+printf '1/7 EC2 backend staging 디렉터리 준비\n'
+"${SSH[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "rm -rf '$REMOTE_STAGE' && mkdir -p '$REMOTE_STAGE'"
 
-printf '2/5 애플리케이션과 .env 동기화\n'
+printf '2/7 FastAPI, worker, DB 파일만 EC2에 동기화\n'
 rsync -az --delete \
   --exclude '.git/' \
   --exclude '.env' \
   --exclude '.venv/' \
+  --exclude 'apps/web/' \
   --exclude 'node_modules/' \
-  --exclude '.next/' \
   --exclude '__pycache__/' \
   --exclude '.pytest_cache/' \
   --exclude '.ruff_cache/' \
@@ -131,22 +141,19 @@ rsync -az --delete \
   -e "$RSYNC_SSH" "$ROOT/" "$DEPLOY_USER@$DEPLOY_HOST:$REMOTE_STAGE/"
 rsync -az -e "$RSYNC_SSH" "$DEPLOY_ENV" "$DEPLOY_USER@$DEPLOY_HOST:$REMOTE_STAGE/.env"
 
-printf '3/5 MariaDB, Python, Node.js, Nginx 및 서비스 구성\n'
-"${SSH[@]}" "$DEPLOY_USER@$DEPLOY_HOST" bash -s -- "$REMOTE_DIR" "$REMOTE_STAGE" <<'REMOTE'
+printf '3/7 EC2를 API/worker 전용 호스트로 구성\n'
+"${SSH[@]}" "$DEPLOY_USER@$DEPLOY_HOST" bash -s -- "$REMOTE_DIR" "$REMOTE_STAGE" "$API_HOST" <<'REMOTE'
 set -Eeuo pipefail
 
 APP_DIR="$1"
 STAGE_DIR="$2"
 SERVICE_USER="perspective"
+API_HOST="$3"
 
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  ca-certificates curl mariadb-client mariadb-server nginx python3 python3-venv rsync
-
-if ! command -v node >/dev/null 2>&1 || ! node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'; then
-  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
-fi
+  ca-certificates certbot curl mariadb-client mariadb-server nginx \
+  python3 python3-certbot-nginx python3-venv rsync
 
 if ! command -v uv >/dev/null 2>&1; then
   curl -LsSf https://astral.sh/uv/install.sh | sudo env UV_INSTALL_DIR=/usr/local/bin sh
@@ -157,8 +164,13 @@ if ! id "$SERVICE_USER" >/dev/null 2>&1; then
 fi
 
 sudo install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$APP_DIR"
-sudo rsync -a --delete --exclude '.env' "$STAGE_DIR/" "$APP_DIR/"
+sudo rsync -a --delete --exclude '.env' --exclude '.venv/' "$STAGE_DIR/" "$APP_DIR/"
 sudo install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0600 "$STAGE_DIR/.env" "$APP_DIR/.env"
+
+# Next.js production processes and artifacts are forbidden on EC2.
+sudo systemctl disable --now perspective-web.service 2>/dev/null || true
+sudo rm -f /etc/systemd/system/perspective-web.service
+sudo rm -rf "$APP_DIR/apps/web"
 
 sudo tee /etc/mysql/mariadb.conf.d/99-perspective.cnf >/dev/null <<'EOF'
 [mariadbd]
@@ -168,16 +180,13 @@ EOF
 sudo systemctl enable --now mariadb
 sudo systemctl restart mariadb
 
-set -a
-# deploy.sh generated this file with shell-safe quoting.
-. "$APP_DIR/.env"
-set +a
-
-python3 - <<'PY' | sudo mariadb
+sudo -u "$SERVICE_USER" bash -c "set -a; . '$APP_DIR/.env'; set +a; exec python3 -" <<'PY' | sudo mariadb
 import os
+
 
 def sql_string(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
 
 database = os.environ["DB_ADMIN_DATABASE"]
 username = sql_string(os.environ["DB_ADMIN_USERNAME"])
@@ -191,9 +200,10 @@ print("FLUSH PRIVILEGES;")
 PY
 
 sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR"
+sudo install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 \
+  /var/lib/perspective /var/lib/perspective/.cache /var/lib/perspective/.cache/uv
 sudo -u "$SERVICE_USER" env HOME=/var/lib/perspective bash -c "cd '$APP_DIR' && uv sync --frozen --no-dev"
 sudo -u "$SERVICE_USER" env HOME=/var/lib/perspective bash -c "set -a; . '$APP_DIR/.env'; set +a; cd '$APP_DIR' && uv run alembic -c db/alembic.ini upgrade head"
-sudo -u "$SERVICE_USER" env HOME=/var/lib/perspective bash -c "set -a; . '$APP_DIR/.env'; set +a; cd '$APP_DIR/apps/web' && if [ -f package-lock.json ]; then npm ci; else npm install; fi && npm run build"
 
 sudo tee /etc/systemd/system/perspective-api.service >/dev/null <<EOF
 [Unit]
@@ -248,37 +258,11 @@ ProtectHome=true
 WantedBy=multi-user.target
 EOF
 
-sudo tee /etc/systemd/system/perspective-web.service >/dev/null <<EOF
-[Unit]
-Description=Perspective News Next.js
-After=network-online.target perspective-api.service
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=$SERVICE_USER
-Group=$SERVICE_USER
-WorkingDirectory=$APP_DIR/apps/web
-EnvironmentFile=$APP_DIR/.env
-ExecStart=/usr/bin/npm run start -- --hostname 127.0.0.1 --port 3000
-Restart=on-failure
-RestartSec=3
-TimeoutStopSec=30
-KillSignal=SIGTERM
-UMask=0027
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
 sudo tee /etc/nginx/sites-available/perspective-news >/dev/null <<'EOF'
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
-    server_name _;
+    server_name __API_HOST__;
     client_max_body_size 10m;
 
     location /api/ {
@@ -288,46 +272,90 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
         proxy_read_timeout 60s;
     }
 
     location /health/ {
         proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
         proxy_read_timeout 10s;
     }
 
+    # EC2 never serves the Next.js frontend. Vercel is the only production web host.
     location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 60s;
+        default_type text/plain;
+        return 404 'frontend is deployed on Vercel\n';
     }
 }
 EOF
+sudo sed -i "s/__API_HOST__/$API_HOST/g" /etc/nginx/sites-available/perspective-news
 
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo ln -sfn /etc/nginx/sites-available/perspective-news /etc/nginx/sites-enabled/perspective-news
 sudo nginx -t
+sudo systemctl enable --now nginx
+sudo certbot --nginx --non-interactive --agree-tos --register-unsafely-without-email \
+  --redirect --keep-until-expiring -d "$API_HOST"
 sudo systemctl daemon-reload
-sudo systemctl enable perspective-api perspective-worker perspective-web nginx
-sudo systemctl restart perspective-api perspective-worker perspective-web nginx
+sudo systemctl enable perspective-api perspective-worker nginx
+sudo systemctl restart perspective-api perspective-worker nginx
 rm -rf "$STAGE_DIR"
 REMOTE
 
-printf '4/5 서비스 상태 확인\n'
-"${SSH[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
-  "sudo systemctl --no-pager --full status perspective-api perspective-worker perspective-web nginx | sed -n '1,80p'"
+printf '4/7 EC2 API readiness 확인\n'
+curl --fail --silent --show-error --retry 10 --retry-delay 2 "$BACKEND_ORIGIN/health/ready" >/dev/null
 
-printf '5/5 HTTP health check\n'
-"${SSH[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
-  "curl --fail --silent --show-error --retry 10 --retry-delay 2 http://127.0.0.1:8000/health/ready >/dev/null"
+printf '5/7 Vercel 프로젝트와 production 환경변수 구성\n'
+if [[ ! -f "$WEB_DIR/.vercel/project.json" ]]; then
+  if ! vercel project inspect "$VERCEL_PROJECT" --yes >/dev/null 2>&1; then
+    vercel project add "$VERCEL_PROJECT" >/dev/null
+  fi
+  vercel link --yes --project "$VERCEL_PROJECT" --cwd "$WEB_DIR" >/dev/null
+fi
+vercel env add API_BACKEND_URL production --value "$BACKEND_ORIGIN" --force --no-sensitive --yes --cwd "$WEB_DIR" >/dev/null
+vercel env add NEXT_PUBLIC_API_MODE production --value real --force --no-sensitive --yes --cwd "$WEB_DIR" >/dev/null
 
-printf '배포 완료: http://%s (TLS는 별도 최종 단계)\n' "$DEPLOY_HOST"
+printf '6/7 Next.js를 Vercel production에 배포\n'
+VERCEL_DEPLOYMENT_URL="$(vercel --prod --yes --cwd "$WEB_DIR")"
+[[ "$VERCEL_DEPLOYMENT_URL" == https://* ]] || die "Vercel production URL을 확인하지 못했습니다: $VERCEL_DEPLOYMENT_URL"
+VERCEL_URL="$(vercel inspect "$VERCEL_DEPLOYMENT_URL" --format=json --cwd "$WEB_DIR" | uv run python -c '
+import json, sys
+data = json.load(sys.stdin)
+aliases = data.get("aliases") or []
+print("https://" + aliases[0] if aliases else "https://" + data["url"])
+')"
+curl --fail --silent --show-error --retry 10 --retry-delay 2 "$VERCEL_URL" >/dev/null
+curl --fail --silent --show-error --retry 10 --retry-delay 2 "$VERCEL_URL/api/v1/issues" >/dev/null
+
+printf '7/7 EC2의 공개 URL/OAuth 경계를 Vercel origin으로 고정\n'
+"${SSH[@]}" "$DEPLOY_USER@$DEPLOY_HOST" sudo python3 - "$REMOTE_DIR/.env" "$VERCEL_URL" <<'PY'
+from __future__ import annotations
+
+import shlex
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+origin = sys.argv[2].rstrip("/")
+updates = {
+    "PUBLIC_BASE_URL": origin,
+    "WEB_BASE_URL": origin,
+    "OAUTH_REDIRECT_ALLOWLIST": ",".join(
+        f"{origin}/api/v1/auth/{provider}/callback" for provider in ("kakao", "naver", "google", "mock")
+    ),
+}
+lines = path.read_text(encoding="utf-8").splitlines()
+kept = [line for line in lines if line.partition("=")[0] not in updates]
+kept.extend(f"{key}={shlex.quote(value)}" for key, value in updates.items())
+path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+PY
+"${SSH[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
+  "sudo systemctl restart perspective-api perspective-worker && sudo systemctl is-active --quiet perspective-api perspective-worker && ! sudo systemctl is-enabled --quiet perspective-web 2>/dev/null && test ! -d '$REMOTE_DIR/apps/web'"
+
+curl --fail --silent --show-error --retry 10 --retry-delay 2 "$VERCEL_URL/api/v1/issues" >/dev/null
+printf '배포 완료: %s (Next.js: Vercel, API/worker/DB: EC2)\n' "$VERCEL_URL"
