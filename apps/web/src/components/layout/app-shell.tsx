@@ -1,8 +1,9 @@
 "use client";
 
+import { Avatar } from "@base-ui/react/avatar";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, BookOpenText, Boxes, CircleGauge, Compass, FileText, Home, Landmark, Newspaper, Settings, Share2, SlidersHorizontal, Sparkles, UserRound } from "lucide-react";
+import { BarChart3, BookOpenText, Boxes, CircleGauge, Compass, FileText, Home, Landmark, Newspaper, Settings, Share2, SlidersHorizontal, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 
 const userNav = [
@@ -37,7 +38,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <a className="skip-link" href="#main-content">본문으로 건너뛰기</a>
       <aside className="sidebar">
         <Link href={admin ? "/admin/sources" : "/"} className="brand" aria-label="사이: 홈">
-          <span className="brand__mark" aria-hidden="true">사이</span>
+          <Avatar.Root className="brand__mark" aria-hidden="true"><Avatar.Fallback>사이</Avatar.Fallback></Avatar.Root>
           <span><strong>SAI</strong><small>{admin ? "운영 관제" : "관점 사이를 읽다"}</small></span>
         </Link>
         <nav aria-label={admin ? "관리자 메뉴" : "주요 메뉴"}>
@@ -48,7 +49,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
         <div className="sidebar__foot">
           {admin ? <Link href="/" className="nav-link"><Compass size={18} /> 사용자 웹</Link> : <><Link href="/share/new" className="nav-link"><Share2 size={18} /> 공유 카드</Link><Link href="/settings/privacy" className="nav-link"><Settings size={18} /> 개인정보</Link></>}
-          <Link href="/login" className="profile-chip"><UserRound size={18} /><span><strong>김사이</strong><small>{admin ? "Admin" : "Member"}</small></span></Link>
+          <Link href="/login" className="profile-chip"><Avatar.Root className="profile-avatar"><Avatar.Fallback>김</Avatar.Fallback></Avatar.Root><span><strong>김사이</strong><small>{admin ? "Admin" : "Member"}</small></span></Link>
         </div>
       </aside>
       <main id="main-content" className="main-content" tabIndex={-1}>{children}</main>

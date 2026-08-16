@@ -6,6 +6,7 @@ import { ScoreAxis } from "@/components/ui/score-axis";
 import { StatePanel } from "@/components/ui/state-panel";
 import { ReadActions } from "@/features/reading/read-actions";
 import { VoteForm } from "@/features/voting/vote-form";
+import { Button } from "@/components/ui/button";
 import { articles } from "@/mocks/fixtures/content";
 import { formatConfidence } from "@/lib/api/formatters";
 
@@ -33,7 +34,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ articl
           <div className="axis"><div className="axis__head"><strong>과장성</strong><span>{article.sensationalism}</span></div><div className="axis__track"><span className="axis__marker" style={{ left: `${article.sensationalism}%` }} /></div><small>허위 판정이 아닌 표현 강도 평가</small></div>
           <a className="external-link" href={article.originalUrl} target="_blank" rel="noreferrer">언론사 원문 새 창에서 보기 <ExternalLink size={15} /></a>
           <Suspense><ReadActions articleId={article.id} originalUrl={article.originalUrl} /></Suspense>
-          <button className="button button--ghost"><History size={15} /> 점수 정정·버전 이력</button>
+          <Button variant="ghost"><History size={15} /> 점수 정정·버전 이력</Button>
         </aside>
       </div>
       <div style={{ marginTop: "1rem" }}><VoteForm articleId={article.id} /></div>

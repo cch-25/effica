@@ -4,6 +4,7 @@ import { ArticleCard } from "@/features/feed/article-card";
 import { IssueCard } from "@/features/issues/issue-card";
 import { articles, issues } from "@/mocks/fixtures/content";
 import { Badge } from "@/components/ui/badge";
+import { ButtonLink } from "@/components/ui/button";
 
 export default function HomePage() {
   return (
@@ -13,7 +14,7 @@ export default function HomePage() {
           <Badge tone="positive">오늘의 관점 지도 · 8월 16일</Badge>
           <h1>뉴스의 결론보다,<br />결론에 이른 길을 봅니다.</h1>
           <p>같은 이슈를 여러 출처와 관점에서 읽고, AI와 독자의 평가는 근거와 불확실성까지 함께 비교하세요.</p>
-          <div className="page-header__actions"><Link className="button button--primary" href="/issues">오늘의 이슈 <ArrowRight size={17} /></Link><Link className="button button--secondary" href="/visualization"><Compass size={17} /> 관점 지도</Link></div>
+          <div className="page-header__actions"><ButtonLink href="/issues">오늘의 이슈 <ArrowRight size={15} /></ButtonLink><ButtonLink variant="secondary" href="/visualization"><Compass size={15} /> 관점 지도</ButtonLink></div>
         </div>
         <div className="feature-banner__aside" aria-hidden="true"><div className="orbit"><span /><span /><span /></div></div>
       </section>

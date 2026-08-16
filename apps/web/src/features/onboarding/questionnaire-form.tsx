@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
+import { RadioScale } from "@/components/ui/form-controls";
 
 const questions = [
   { id: "economy", label: "경제적 불평등 완화를 위해 정부가 더 적극적으로 개입해야 한다.", left: "전혀 동의하지 않음", right: "매우 동의함" },
@@ -24,7 +25,7 @@ export function QuestionnaireForm() {
   };
   return (
     <form action="/onboarding/demographics" method="get" onSubmit={submit}>
-      <div className="choice-grid">{questions.map((question, questionIndex) => <fieldset className="field card card--padded" key={question.id}><legend>{questionIndex + 1}. {question.label}</legend><div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: ".35rem", marginTop: ".75rem" }}>{[1,2,3,4,5].map((value) => <label className="radio-row" style={{ display: "grid", justifyItems: "center", padding: ".55rem" }} key={value}><input type="radio" name={question.id} value={value} /><span>{value}</span></label>)}</div><small style={{ display: "flex", justifyContent: "space-between" }}><span>{question.left}</span><span>{question.right}</span></small></fieldset>)}</div>
+      <div className="choice-grid">{questions.map((question, questionIndex) => <fieldset className="field card card--padded" key={question.id}><legend>{questionIndex + 1}. {question.label}</legend><RadioScale name={question.id} values={[1, 2, 3, 4, 5]} required /><small className="scale-labels"><span>{question.left}</span><span>{question.right}</span></small></fieldset>)}</div>
       {error && <p role="alert" style={{ color: "var(--danger)" }}>{error}</p>}
       <div className="form-actions"><Button type="button" variant="secondary" onClick={() => router.back()}>이전</Button><Button type="submit">응답 결과 확인</Button></div>
     </form>
