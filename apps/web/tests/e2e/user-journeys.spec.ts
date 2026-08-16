@@ -2,14 +2,18 @@ import { test, expect } from "@playwright/test";
 
 test("mock login, separate consent, questionnaire, demographics, home", async ({ page }) => {
   await page.goto("/login"); await page.getByRole("link", { name: /로컬 mock/ }).click();
+  await expect(page).toHaveURL(/\/onboarding\/consent/);
   const consentBoxes = page.getByRole("checkbox");
+  await expect(consentBoxes.first()).toBeVisible();
   for (let index = 0; index < await consentBoxes.count(); index += 1) {
     await consentBoxes.nth(index).check();
     await expect(consentBoxes.nth(index)).toBeChecked();
   }
   await page.getByRole("button", { name: "동의하고 설문 시작" }).click();
   await expect(page).toHaveURL(/\/onboarding\/questionnaire/);
-  for (const name of ["economy", "culture", "foreign"]) await page.locator(`input[name="${name}"][value="3"]`).check();
+  const neutralAnswers = page.getByRole("radio", { name: "3" });
+  await expect(neutralAnswers.first()).toBeVisible();
+  for (let index = 0; index < await neutralAnswers.count(); index += 1) await neutralAnswers.nth(index).click();
   await page.getByRole("button", { name: "응답 결과 확인" }).click();
   await expect(page).toHaveURL(/\/onboarding\/demographics/);
   await page.getByRole("button", { name: "건너뛰고 홈으로" }).click();

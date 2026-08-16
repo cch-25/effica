@@ -14,5 +14,5 @@ export function Button({ variant = "primary", className = "", children, ...props
 }
 
 export function ButtonLink({ variant = "primary", className = "", children, ...props }: ComponentProps<typeof Link> & Pick<Props, "variant">) {
-  return <BaseButton nativeButton={false} render={<Link {...props} />} className={`button button--${variant} ${className}`}>{children}</BaseButton>;
+  return <Link className={`button button--${variant} ${className}`} {...props}>{children}</Link>;
 }
