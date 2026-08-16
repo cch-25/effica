@@ -321,7 +321,16 @@ vercel env add API_BACKEND_URL production --value "$BACKEND_ORIGIN" --force --no
 vercel env add NEXT_PUBLIC_API_MODE production --value real --force --no-sensitive --yes --cwd "$WEB_DIR" >/dev/null
 
 printf '6/7 Next.js를 Vercel production에 배포\n'
-VERCEL_DEPLOYMENT_URL="$(vercel --prod --yes --cwd "$WEB_DIR")"
+VERCEL_DEPLOYMENT_URL="$(vercel --prod --yes --format=json --cwd "$WEB_DIR" | uv run python -c '
+import json, sys
+
+payload = json.load(sys.stdin)
+deployment = payload.get("deployment", payload)
+url = deployment.get("url")
+if not isinstance(url, str) or not url:
+    raise SystemExit("Vercel deployment JSON does not contain a URL")
+print(url if url.startswith("https://") else "https://" + url)
+')"
 [[ "$VERCEL_DEPLOYMENT_URL" == https://* ]] || die "Vercel production URL을 확인하지 못했습니다: $VERCEL_DEPLOYMENT_URL"
 VERCEL_URL="$(vercel inspect "$VERCEL_DEPLOYMENT_URL" --format=json --cwd "$WEB_DIR" | uv run python -c '
 import json, sys
