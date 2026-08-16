@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import math
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -32,6 +34,7 @@ _RETRYABLE_STATUS_CODES = frozenset({408, 425, 429})
 _DEFAULT_USER_AGENT = "perspective-news-worker/1.0"
 _DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 _APPROVED_POLICY_STATUS = "APPROVED"
+_DEFAULT_RATE_LIMIT_PER_MINUTE = 0
 
 
 class SourceFetchError(RuntimeError):
@@ -127,6 +130,25 @@ class SourceFetchResponse:
 
 
 SleepCallable = Callable[[float], Awaitable[Any] | Any]
+ClockCallable = Callable[[], float]
+
+
+@dataclass(frozen=True)
+class _RequestSettings:
+    method: str
+    headers: Mapping[str, str]
+    params: Any = None
+    content: bytes | str | None = None
+    json_body: Any = None
+    timeout_seconds: float = 15.0
+    max_response_bytes: int = _DEFAULT_MAX_RESPONSE_BYTES
+    rate_limit_per_minute: float = 0.0
+    min_interval_seconds: float = 0.0
+    max_retries: int = 2
+    backoff_base_seconds: float = 0.25
+    backoff_max_seconds: float = 5.0
+    follow_redirects: bool = True
+    max_redirects: int = 10
 
 
 class SourceFetchService:
@@ -154,6 +176,7 @@ class SourceFetchService:
         max_response_bytes: int = _DEFAULT_MAX_RESPONSE_BYTES,
         headers: Mapping[str, str] | None = None,
         sleep: SleepCallable = asyncio.sleep,
+        clock: ClockCallable = time.monotonic,
         follow_redirects: bool = True,
         max_redirects: int = 10,
     ) -> None:
@@ -187,8 +210,14 @@ class SourceFetchService:
         if max_response_bytes < 1:
             raise ValueError("max_response_bytes must be a positive integer")
         self.max_response_bytes = max_response_bytes
-        self.headers = {"User-Agent": _DEFAULT_USER_AGENT, "Accept": "*/*", **dict(headers or {})}
+        self.headers = self._merge_headers(
+            {"User-Agent": _DEFAULT_USER_AGENT, "Accept": "*/*"},
+            headers,
+        )
         self.sleep = sleep
+        self.clock = clock
+        self._rate_next: dict[str, float] = {}
+        self._rate_lock: asyncio.Lock | None = None
         self.follow_redirects = bool(follow_redirects)
         if isinstance(max_redirects, bool) or not isinstance(max_redirects, int) or max_redirects < 0:
             raise ValueError("max_redirects must be a non-negative integer")
@@ -247,7 +276,7 @@ class SourceFetchService:
                 code="INVALID_SOURCE_URL",
                 retryable=False,
             ) from exc
-        return await self._request(url, source_values)
+        return await self._request(url, source_values, source_kind=source_kind)
 
     @staticmethod
     def _check_crawler_policy(source: Mapping[str, Any]) -> None:
@@ -269,60 +298,69 @@ class SourceFetchService:
                 retryable=False,
             ) from exc
 
-    async def _request(self, url: str, source: Mapping[str, Any]) -> SourceFetchResponse:
-        timeout = httpx.Timeout(self.timeout_seconds)
+    async def _request(
+        self,
+        url: str,
+        source: Mapping[str, Any],
+        *,
+        source_kind: str = "API",
+    ) -> SourceFetchResponse:
+        settings = self._request_settings(source, source_kind=source_kind)
+        timeout = httpx.Timeout(settings.timeout_seconds)
         client = self.client
         if client is not None:
-            return await self._request_with_client(client, url, source)
+            return await self._request_with_client(client, url, source, settings=settings)
         async with httpx.AsyncClient(
             transport=self.transport,
             timeout=timeout,
-            follow_redirects=self.follow_redirects,
-            max_redirects=self.max_redirects,
+            follow_redirects=settings.follow_redirects,
+            max_redirects=settings.max_redirects,
         ) as owned_client:
-            return await self._request_with_client(owned_client, url, source)
+            return await self._request_with_client(owned_client, url, source, settings=settings)
 
     async def _request_with_client(
         self,
         client: httpx.AsyncClient,
         url: str,
         source: Mapping[str, Any],
+        *,
+        settings: _RequestSettings | None = None,
     ) -> SourceFetchResponse:
-        del source  # Reserved for source-specific request options in a future adapter.
-        total_attempts = self.max_retries + 1
+        settings = settings or self._request_settings(source, source_kind="API")
+        total_attempts = settings.max_retries + 1
         last_error: BaseException | None = None
         for attempt in range(1, total_attempts + 1):
             try:
-                response = await asyncio.wait_for(
-                    client.get(url, headers=self.headers),
-                    timeout=self.timeout_seconds,
-                )
-                content_length = response.headers.get("content-length")
-                if content_length is not None:
-                    try:
-                        if int(content_length) > self.max_response_bytes:
-                            raise SourceFetchError(
-                                "source response exceeds configured size limit",
-                                code="SOURCE_RESPONSE_TOO_LARGE",
-                                retryable=False,
-                                details={"max_response_bytes": self.max_response_bytes},
-                            )
-                    except ValueError:
-                        # A malformed length is not trusted; the actual body
-                        # size check below remains authoritative.
-                        pass
-                body = response.content
-                if len(body) > self.max_response_bytes:
-                    raise SourceFetchError(
-                        "source response exceeds configured size limit",
-                        code="SOURCE_RESPONSE_TOO_LARGE",
-                        retryable=False,
-                        details={"max_response_bytes": self.max_response_bytes},
-                    )
+                await self._acquire_rate_limit(self._rate_key(source, url), settings)
+                if callable(getattr(client, "stream", None)):
+                    response, body = await self._stream_response(client, url, settings)
+                else:
+                    # Compatibility for very small fake clients used by
+                    # older callers.  Real httpx clients always take the
+                    # streaming path above.
+                    request = getattr(client, "request", None)
+                    if not callable(request):
+                        request = getattr(client, "get", None)
+                    if not callable(request):
+                        raise TypeError("source client must expose request(), get() or stream()")
+                    kwargs = {
+                        "headers": dict(settings.headers),
+                        "params": settings.params,
+                    }
+                    if settings.content is not None:
+                        kwargs["content"] = settings.content
+                    if settings.json_body is not None:
+                        kwargs["json"] = settings.json_body
+                    if request.__name__ == "get":
+                        response_call = request(url, **kwargs)
+                    else:
+                        response_call = request(settings.method, url, **kwargs)
+                    response = await asyncio.wait_for(response_call, timeout=settings.timeout_seconds)
+                    body = self._bounded_body(response.content, settings.max_response_bytes)
                 status = response.status_code
                 if 200 <= status < 300:
                     return SourceFetchResponse(
-                        url=str(response.url),
+                        url=str(response.url or url),
                         status_code=status,
                         headers=dict(response.headers),
                         body=body,
@@ -330,7 +368,12 @@ class SourceFetchService:
                         attempts=attempt,
                     )
                 if self._retryable_status(status) and attempt < total_attempts:
-                    await self._backoff(attempt, response.headers.get("retry-after"))
+                    await self._backoff(
+                        attempt,
+                        response.headers.get("retry-after"),
+                        base_seconds=settings.backoff_base_seconds,
+                        max_seconds=settings.backoff_max_seconds,
+                    )
                     continue
                 raise SourceFetchError(
                     self._status_message(status),
@@ -343,7 +386,12 @@ class SourceFetchService:
             except (TimeoutError, httpx.TimeoutException) as exc:
                 last_error = exc
                 if attempt < total_attempts:
-                    await self._backoff(attempt, None)
+                    await self._backoff(
+                        attempt,
+                        None,
+                        base_seconds=settings.backoff_base_seconds,
+                        max_seconds=settings.backoff_max_seconds,
+                    )
                     continue
                 raise SourceFetchError(
                     "source request timed out",
@@ -354,7 +402,12 @@ class SourceFetchService:
             except httpx.TransportError as exc:
                 last_error = exc
                 if attempt < total_attempts:
-                    await self._backoff(attempt, None)
+                    await self._backoff(
+                        attempt,
+                        None,
+                        base_seconds=settings.backoff_base_seconds,
+                        max_seconds=settings.backoff_max_seconds,
+                    )
                     continue
                 raise SourceFetchError(
                     "source transport failed",
@@ -368,7 +421,12 @@ class SourceFetchService:
                 # allowing arbitrary exception text into durable job errors.
                 last_error = exc
                 if attempt < total_attempts:
-                    await self._backoff(attempt, None)
+                    await self._backoff(
+                        attempt,
+                        None,
+                        base_seconds=settings.backoff_base_seconds,
+                        max_seconds=settings.backoff_max_seconds,
+                    )
                     continue
                 raise SourceFetchError(
                     "source request failed",
@@ -385,6 +443,239 @@ class SourceFetchService:
             details={"attempts": total_attempts, "exception": type(last_error).__name__ if last_error else None},
         )
 
+    async def _stream_response(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        settings: _RequestSettings,
+    ) -> tuple[httpx.Response, bytes]:
+        request_kwargs: dict[str, Any] = {
+            "headers": dict(settings.headers),
+            "params": settings.params,
+        }
+        if settings.content is not None:
+            request_kwargs["content"] = settings.content
+        if settings.json_body is not None:
+            request_kwargs["json"] = settings.json_body
+        try:
+            stream_context = client.stream(settings.method, url, **request_kwargs)
+            async with asyncio.timeout(settings.timeout_seconds):
+                async with stream_context as response:
+                    self._check_content_length(response.headers, settings.max_response_bytes)
+                    status = response.status_code
+                    # Error responses do not need to be materialized.  Exiting
+                    # the stream context closes the connection before retry.
+                    if not (200 <= status < 300):
+                        return response, b""
+                    chunks: list[bytes] = []
+                    size = 0
+                    async for chunk in response.aiter_bytes():
+                        size += len(chunk)
+                        if size > settings.max_response_bytes:
+                            raise SourceFetchError(
+                                "source response exceeds configured size limit",
+                                code="SOURCE_RESPONSE_TOO_LARGE",
+                                retryable=False,
+                                details={"max_response_bytes": settings.max_response_bytes},
+                            )
+                        chunks.append(chunk)
+                    return response, b"".join(chunks)
+        except TimeoutError:
+            raise
+
+    @staticmethod
+    def _bounded_body(body: bytes, max_response_bytes: int) -> bytes:
+        if len(body) > max_response_bytes:
+            raise SourceFetchError(
+                "source response exceeds configured size limit",
+                code="SOURCE_RESPONSE_TOO_LARGE",
+                retryable=False,
+                details={"max_response_bytes": max_response_bytes},
+            )
+        return body
+
+    @staticmethod
+    def _check_content_length(headers: Mapping[str, Any], max_response_bytes: int) -> None:
+        content_length = headers.get("content-length")
+        if content_length is None:
+            return
+        try:
+            too_large = int(content_length) > max_response_bytes
+        except (TypeError, ValueError):
+            return
+        if too_large:
+            raise SourceFetchError(
+                "source response exceeds configured size limit",
+                code="SOURCE_RESPONSE_TOO_LARGE",
+                retryable=False,
+                details={"max_response_bytes": max_response_bytes},
+            )
+
+    @staticmethod
+    def _merge_headers(
+        defaults: Mapping[str, Any], overrides: Mapping[str, Any] | None,
+    ) -> dict[str, str]:
+        result = {str(key).lower(): (str(key), str(value)) for key, value in defaults.items()}
+        for key, value in (overrides or {}).items():
+            lowered = str(key).lower()
+            result[lowered] = (str(key), str(value))
+        return {key: value for key, value in result.values()}
+
+    def _request_settings(
+        self,
+        source: Mapping[str, Any],
+        *,
+        source_kind: str,
+    ) -> _RequestSettings:
+        config = self._source_config(source)
+        timeout = self._positive_finite(
+            config.get("timeout_seconds", config.get("timeout", self.timeout_seconds)),
+            "timeout_seconds",
+        )
+        configured_max = config.get("max_response_bytes", self.max_response_bytes)
+        if isinstance(configured_max, bool) or not isinstance(configured_max, int) or configured_max < 1:
+            raise SourceFetchError(
+                "source response size limit is invalid",
+                code="INVALID_SOURCE_CONFIG",
+                retryable=False,
+            )
+        method = str(config.get("method", config.get("http_method", "GET"))).upper().strip()
+        if method not in {"GET", "HEAD", "POST"}:
+            raise SourceFetchError(
+                "source HTTP method is not supported",
+                code="INVALID_SOURCE_CONFIG",
+                retryable=False,
+                details={"method": method},
+            )
+        accept_default = {
+            "API": "application/json, application/*+json;q=0.9, */*;q=0.1",
+            "RSS": "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.1",
+            "CRAWLER": "text/html, application/xhtml+xml;q=0.9, */*;q=0.1",
+        }.get(source_kind, "*/*")
+        headers = self._merge_headers(
+            {**self.headers, "Accept": accept_default},
+            config.get("headers") if isinstance(config.get("headers"), Mapping) else None,
+        )
+        extra_headers = source.get("headers")
+        if isinstance(extra_headers, Mapping):
+            headers = self._merge_headers(headers, extra_headers)
+        params = config.get("params", config.get("query_params"))
+        content = config.get("body")
+        if isinstance(content, (dict, list)):
+            content = json.dumps(content, ensure_ascii=False)
+        json_body = config.get("json")
+        interval = self._nonnegative_finite(
+            config.get("min_interval_seconds", config.get("rate_limit_seconds", 0)),
+            "min_interval_seconds",
+        )
+        rate = config.get(
+            "rate_limit_per_minute",
+            config.get(
+                "requests_per_minute",
+                config.get("rate_limit", source.get("rate_limit", _DEFAULT_RATE_LIMIT_PER_MINUTE)),
+            ),
+        )
+        try:
+            rate_value = float(rate or 0)
+        except (TypeError, ValueError):
+            raise SourceFetchError(
+                "source rate limit is invalid",
+                code="INVALID_SOURCE_CONFIG",
+                retryable=False,
+            ) from None
+        if not math.isfinite(rate_value) or rate_value < 0:
+            raise SourceFetchError(
+                "source rate limit is invalid",
+                code="INVALID_SOURCE_CONFIG",
+                retryable=False,
+            )
+        if rate_value and not interval:
+            interval = 60.0 / rate_value
+        raw_retries = config.get("max_retries", self.max_retries)
+        if isinstance(raw_retries, bool) or not isinstance(raw_retries, int) or raw_retries < 0:
+            raise SourceFetchError(
+                "source retry count is invalid",
+                code="INVALID_SOURCE_CONFIG",
+                retryable=False,
+            )
+        backoff_base = self._nonnegative_finite(
+            config.get("backoff_base_seconds", config.get("backoff_base", self.backoff_base_seconds)),
+            "backoff_base_seconds",
+        )
+        backoff_max = self._nonnegative_finite(
+            config.get("backoff_max_seconds", config.get("backoff_max", self.backoff_max_seconds)),
+            "backoff_max_seconds",
+        )
+        if backoff_max < backoff_base:
+            raise SourceFetchError(
+                "source backoff maximum is invalid",
+                code="INVALID_SOURCE_CONFIG",
+                retryable=False,
+            )
+        raw_redirects = config.get("max_redirects", self.max_redirects)
+        if isinstance(raw_redirects, bool) or not isinstance(raw_redirects, int) or raw_redirects < 0:
+            raise SourceFetchError(
+                "source redirect limit is invalid",
+                code="INVALID_SOURCE_CONFIG",
+                retryable=False,
+            )
+        return _RequestSettings(
+            method=method,
+            headers=headers,
+            params=params,
+            content=content,
+            json_body=json_body,
+            timeout_seconds=timeout,
+            max_response_bytes=configured_max,
+            rate_limit_per_minute=rate_value,
+            min_interval_seconds=interval,
+            max_retries=raw_retries,
+            backoff_base_seconds=backoff_base,
+            backoff_max_seconds=backoff_max,
+            follow_redirects=_as_bool(
+                config.get("follow_redirects"), default=self.follow_redirects
+            ),
+            max_redirects=raw_redirects,
+        )
+
+    @staticmethod
+    def _source_config(source: Mapping[str, Any]) -> dict[str, Any]:
+        merged: dict[str, Any] = {}
+        for key in ("config_json", "adapter_config", "config"):
+            value = source.get(key)
+            if isinstance(value, Mapping):
+                merged.update(dict(value))
+        nested = merged.get("adapter")
+        if isinstance(nested, Mapping):
+            merged = {
+                **dict(nested),
+                **{key: value for key, value in merged.items() if key != "adapter"},
+            }
+        if source.get("rate_limit") is not None:
+            merged.setdefault("rate_limit", source.get("rate_limit"))
+        return merged
+
+    @staticmethod
+    def _rate_key(source: Mapping[str, Any], url: str) -> str:
+        return str(source.get("source_id") or source.get("id") or url)
+
+    async def _acquire_rate_limit(self, key: str, settings: _RequestSettings) -> None:
+        interval = settings.min_interval_seconds
+        if interval <= 0:
+            return
+        if self._rate_lock is None:
+            self._rate_lock = asyncio.Lock()
+        async with self._rate_lock:
+            now = self.clock()
+            available = self._rate_next.get(key, now)
+            delay = max(0.0, available - now)
+            if delay:
+                result = self.sleep(delay)
+                if inspect.isawaitable(result):
+                    await result
+                now = self.clock()
+            self._rate_next[key] = max(now, available) + interval
+
     @staticmethod
     def _retryable_status(status: int) -> bool:
         return status in _RETRYABLE_STATUS_CODES or status >= 500
@@ -397,11 +688,20 @@ class SourceFetchService:
             return "source server error"
         return "source returned an unsuccessful HTTP status"
 
-    async def _backoff(self, attempt: int, retry_after: str | None) -> None:
+    async def _backoff(
+        self,
+        attempt: int,
+        retry_after: str | None,
+        *,
+        base_seconds: float | None = None,
+        max_seconds: float | None = None,
+    ) -> None:
+        base = self.backoff_base_seconds if base_seconds is None else base_seconds
+        maximum = self.backoff_max_seconds if max_seconds is None else max_seconds
         delay = self._retry_after_seconds(retry_after)
         if delay is None:
-            delay = self.backoff_base_seconds * (2 ** max(0, attempt - 1))
-        delay = min(self.backoff_max_seconds, max(0.0, delay))
+            delay = base * (2 ** max(0, attempt - 1))
+        delay = min(maximum, max(0.0, delay))
         if delay <= 0:
             return
         result = self.sleep(delay)
@@ -423,6 +723,14 @@ class SourceFetchService:
             return max(0.0, (parsed.astimezone(UTC) - datetime.now(UTC)).total_seconds())
         except (TypeError, ValueError, OverflowError):
             return None
+
+
+def _as_bool(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
 # Names that read naturally at injection sites and keep the public contract
