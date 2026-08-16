@@ -8,7 +8,6 @@ import type { ReactNode } from "react";
 
 const userNav = [
   { href: "/", label: "홈", icon: Home, index: "01" },
-  { href: "/issues", label: "이슈", icon: Newspaper, index: "02" },
   { href: "/visualization", label: "관점 지도", icon: Compass, index: "03" },
   { href: "/progress", label: "나의 기록", icon: CircleGauge, index: "04" },
 ];
