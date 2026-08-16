@@ -12,4 +12,6 @@ def test_integrated_deployer_scopes_admin_and_uses_mariadb_stdin() -> None:
     assert "GRANT ALL PRIVILEGES ON *.*" not in source
     assert 'sudo -u "$SERVICE_USER" bash -c' in source
     assert "exec python3 -\" <<'PY' | sudo mariadb" in source
+    assert "vercel --prod --yes --format=json" in source
+    assert 'payload.get("deployment", payload)' in source
     assert "--password" not in source
