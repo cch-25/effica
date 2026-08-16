@@ -12,6 +12,7 @@ from app.domains.admin import (
 from app.domains.analysis import (
     AssessmentInput,
     DeterministicStubProvider,
+    ModelAssessment,
     ensemble_assessments,
     fact_check_does_not_change_axes,
     sanitize_rationale,
@@ -30,13 +31,17 @@ from app.domains.engagement import CreditLedger, evaluate_read_eligibility
 from app.domains.feed import FeedCandidate, rank_feed
 from app.domains.issues import Issue, IssueClusterStore, cluster_articles
 from app.domains.scoring import (
+    BehavioralProfile,
+    BehaviorEvent,
     ScoreComponents,
+    Vote,
     VoteRevisionStore,
     WeightProfile,
     aggregate_votes,
     calculate_article_score,
     canonical_score_json,
     shrink_source_prior,
+    update_behavioral_profile,
 )
 from app.domains.sharing import (
     BlobLimitError,
@@ -120,8 +125,30 @@ def test_analysis_schema_masking_ensemble_and_fact_check_independence():
     assessments = [provider.analyze_article(input_data, "prompt-1") for provider in providers]
     result = ensemble_assessments(assessments, max_spread=200)
     assert result.eligible and result.successful_model_count == 3
+    assert result.y == 0 and result.z == 0
+    assert all(item.y == 0 and item.z == 0 for item in assessments)
     assert fact_check_does_not_change_axes(assessments[0], "false").x == assessments[0].x
     assert "[REDACTED_EMAIL]" in sanitize_rationale("mail test@example.com")
+
+
+def test_ensemble_spread_ignores_legacy_y_z_coordinates():
+    common = {
+        "article_version_id": "v1",
+        "actual_model_id": "model",
+        "prompt_version": "two-axis-v1",
+        "x": 10,
+        "sensationalism": 20,
+        "confidence": 0.9,
+    }
+    assessments = [
+        ModelAssessment(model_alias="left-legacy", y=-100, z=100, **common),
+        ModelAssessment(model_alias="right-legacy", y=100, z=-100, **common),
+    ]
+
+    result = ensemble_assessments(assessments, min_success_models=2, max_spread=0)
+
+    assert result.eligible and result.spread == 0
+    assert (result.x, result.y, result.z, result.sensationalism) == (10, 0, 0, 20)
 
 
 def test_score_is_clamped_and_byte_stable_and_source_prior_shrinks():
@@ -135,7 +162,8 @@ def test_score_is_clamped_and_byte_stable_and_source_prior_shrinks():
         source_sample_size=20,
     )
     score = calculate_article_score(components, WeightProfile(version="v1"))
-    assert score.x == 100 and score.y == -100
+    assert score.x == 100 and score.y == 0 and score.z == 0
+    assert score.components["model"] == [100.0, 0.0, 0.0]
     assert canonical_score_json(score) == canonical_score_json(score)
     prior = shrink_source_prior((100, 100, 100, 100), 1, (0, 0, 0, 50))
     assert prior.x < 10 and prior.confidence < 0.1
@@ -146,8 +174,34 @@ def test_revisioned_votes_and_segment_suppression():
     store.submit(vote_id="v1", user_id="u", article_id="a", x=1, y=2, z=3, sensationalism=4)
     store.revise("v1", x=5)
     assert len(store.history("u", "a")) == 2 and store.active()[0].x == 5
+    assert store.active()[0].y == 0 and store.active()[0].z == 0
     result = aggregate_votes(store.active(), segment_by_user={"u": "small"}, min_segment_size=2)
     assert result["segments"] == {}
+    assert result["aggregate"]["y"] == 0 and result["aggregate"]["z"] == 0
+
+
+def test_vote_anomaly_and_behavior_profile_use_only_bias_and_sensationalism():
+    profile = update_behavioral_profile(
+        BehavioralProfile(y=99, z=-99),
+        [
+            BehaviorEvent(
+                article_x=-40,
+                article_y=100,
+                article_z=-100,
+                article_sensationalism=75,
+            )
+        ],
+    )
+    assert (profile.x, profile.sensationalism) == (-40, 75)
+    assert profile.y == 0 and profile.z == 0
+
+    # Legacy y/z differences do not make an otherwise repeated two-axis vote
+    # distinct after canonicalization.
+    first = Vote("a", "u", "one", 1, 10, -100, 100, 30)
+    second = Vote("b", "u", "two", 1, 10, 100, -100, 30)
+    from app.domains.scoring import detect_vote_anomaly
+
+    assert detect_vote_anomaly(second, prior_votes=[first])
 
 
 def test_feed_adjacent_and_fallback_reason_codes_and_source_limit():
@@ -159,6 +213,17 @@ def test_feed_adjacent_and_fallback_reason_codes_and_source_limit():
     ranked = rank_feed(candidates, user_coordinates=(0, 0, 0), limit=3, max_consecutive_source=1)
     assert ranked[0].reason_code == "PERSONALIZED_ADJACENT"
     assert rank_feed(candidates, limit=1)[0].reason_code == "FALLBACK_BALANCED"
+
+
+def test_feed_distance_uses_bias_and_sensationalism_not_legacy_coordinates():
+    common = dict(issue_id="i", source_id="s", x=0, relevance=0.2)
+    low = FeedCandidate("low", y=-100, z=100, sensationalism=0, **common)
+    high = FeedCandidate("high", y=100, z=-100, sensationalism=100, **common)
+
+    # A two-value profile is the canonical (x, sensationalism) shape. y/z
+    # differ maximally but only sensationalism changes proximity.
+    ranked = rank_feed([high, low], user_coordinates=(0, 0), limit=2)
+    assert ranked[0].article_id == "low"
 
 
 def test_read_eligibility_and_credit_reversal_are_idempotent():

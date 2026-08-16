@@ -60,9 +60,12 @@ class ScoreComponents:
             value = getattr(self, name)
             if isinstance(value, Mapping):
                 value = tuple(value.get(axis, 0) for axis in ("x", "y", "z"))
-                object.__setattr__(self, name, value)
             if len(value) != 3 or any(not -100 <= float(item) <= 100 for item in value):
                 raise ValueError(f"{name} must contain three coordinates in [-100,100]")
+            # Only x is a canonical political-bias coordinate. Keep the
+            # physical tuple shape for old callers while preventing legacy
+            # y/z values from entering any new score calculation or snapshot.
+            object.__setattr__(self, name, (float(value[0]), 0.0, 0.0))
         if not 0 <= self.sensationalism <= 100:
             raise ValueError("sensationalism must be in [0,100]")
         if (
@@ -163,8 +166,8 @@ def calculate_article_score(
     )
     return ArticleScore(
         combine(0),
-        combine(1),
-        combine(2),
+        0,
+        0,
         _round_clamp(Decimal(str(components.sensationalism)), 0, 100),
         confidence,
         weights.version,

@@ -17,6 +17,8 @@ class BehaviorEvent:
     vote_x: float | None = None
     vote_y: float | None = None
     vote_z: float | None = None
+    article_sensationalism: float = 0.0
+    vote_sensationalism: float | None = None
     occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -25,6 +27,7 @@ class BehavioralProfile:
     x: float = 0.0
     y: float = 0.0
     z: float = 0.0
+    sensationalism: float = 0.0
     confidence: float = 0.0
     event_count: int = 0
     active: bool = False
@@ -45,16 +48,23 @@ def update_behavioral_profile(
 
     if not 0 < decay <= 1:
         raise ValueError("decay must be in (0,1]")
-    current = [float(profile.x), float(profile.y), float(profile.z)]
+    current = [float(profile.x), float(profile.sensationalism)]
     total = float(profile.event_count)
     count = profile.event_count
     for event in events:
         if event.weight < 0:
             raise ValueError("event weight must be non-negative")
-        values = [event.article_x, event.article_y, event.article_z]
-        if event.vote_x is not None and event.vote_y is not None and event.vote_z is not None:
+        values = [event.article_x, event.article_sensationalism]
+        if event.vote_x is not None:
             # A qualified vote is a stronger signal but never mandatory.
-            values = [event.vote_x, event.vote_y, event.vote_z]
+            values = [
+                event.vote_x,
+                (
+                    event.vote_sensationalism
+                    if event.vote_sensationalism is not None
+                    else event.article_sensationalism
+                ),
+            ]
         weight = float(event.weight)
         if weight == 0:
             continue
@@ -69,11 +79,13 @@ def update_behavioral_profile(
             total = weight
         count += 1
     confidence = round(min(1.0, total / (total + 10.0)), 6)
-    coordinates = [round(max(-100.0, min(100.0, axis)), 6) for axis in current]
+    bias = round(max(-100.0, min(100.0, current[0])), 6)
+    sensationalism = round(max(0.0, min(100.0, current[1])), 6)
     return BehavioralProfile(
-        x=coordinates[0],
-        y=coordinates[1],
-        z=coordinates[2],
+        x=bias,
+        y=0.0,
+        z=0.0,
+        sensationalism=sensationalism,
         confidence=confidence,
         event_count=count,
         active=profile.active or activate,

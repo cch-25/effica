@@ -86,7 +86,7 @@ def generate_candidates(
 def rank_feed(
     candidates: Iterable[FeedCandidate | Mapping[str, Any]],
     *,
-    user_coordinates: tuple[float, float, float] | None = None,
+    user_coordinates: Sequence[float] | None = None,
     now: datetime | None = None,
     limit: int = 20,
     max_consecutive_source: int = 2,
@@ -106,13 +106,7 @@ def rank_feed(
     remaining = list(pool)
     source_counts: dict[str | None, int] = {}
     issue_counts: dict[str | None, int] = {}
-    profile: tuple[float, float, float] | None = None
-    if user_coordinates is not None:
-        profile = (
-            float(user_coordinates[0]),
-            float(user_coordinates[1]),
-            float(user_coordinates[2]),
-        )
+    profile = _profile_coordinates(user_coordinates)
     while remaining and len(selected) < limit:
         eligible = [
             item
@@ -140,13 +134,15 @@ def rank_feed(
 def reason_code_for(
     candidate: FeedCandidate | Mapping[str, Any],
     *,
-    user_coordinates: tuple[float, float, float] | None = None,
+    user_coordinates: Sequence[float] | None = None,
     now: datetime | None = None,
 ) -> str:
     item = (
         candidate if isinstance(candidate, FeedCandidate) else FeedCandidate.from_mapping(candidate)
     )
-    _, _, reason = _score(item, user_coordinates, now or datetime.now(UTC), {}, {})
+    _, _, reason = _score(
+        item, _profile_coordinates(user_coordinates), now or datetime.now(UTC), {}, {}
+    )
     return reason
 
 
@@ -172,7 +168,7 @@ def _allowed(
 
 def _score(
     item: FeedCandidate,
-    profile: tuple[float, float, float] | None,
+    profile: tuple[float, float] | None,
     now: datetime,
     source_counts: Mapping[str | None, int],
     issue_counts: Mapping[str | None, int],
@@ -204,16 +200,35 @@ def _score(
     return score, adjacent, reason
 
 
-def _distance(item: FeedCandidate, profile: tuple[float, float, float]) -> float:
+def _profile_coordinates(values: Sequence[float] | None) -> tuple[float, float] | None:
+    """Project old/new profile shapes onto bias and sensationalism.
+
+    Preferred callers pass ``(x, sensationalism)`` or the transitional
+    ``(x, y, z, sensationalism)`` shape. A legacy three-coordinate tuple has
+    no sensationalism value, so y/z are ignored and zero is used.
+    """
+
+    if values is None:
+        return None
+    if len(values) == 2:
+        return float(values[0]), float(values[1])
+    if len(values) == 3:
+        return float(values[0]), 0.0
+    if len(values) == 4:
+        return float(values[0]), float(values[3])
+    raise ValueError("user_coordinates must contain 2, 3, or 4 values")
+
+
+def _distance(item: FeedCandidate, profile: tuple[float, float]) -> float:
+    # Normalize each canonical dimension by its complete range before taking
+    # Euclidean distance: x spans 200 points, sensationalism spans 100.
     return min(
         1.0,
         math.sqrt(
-            sum(
-                (getattr(item, axis) - value) ** 2
-                for axis, value in zip(("x", "y", "z"), profile, strict=True)
-            )
+            ((item.x - profile[0]) / 200.0) ** 2
+            + ((item.sensationalism - profile[1]) / 100.0) ** 2
         )
-        / math.sqrt(3 * 200**2),
+        / math.sqrt(2.0),
     )
 
 
