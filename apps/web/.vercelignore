@@ -1,10 +1,10 @@
 .next/
 .next-real/
-next-env.d.ts
 node_modules/
-coverage/
 playwright-report/
 test-results/
+tests/
 *.tsbuildinfo
-.vercel
-.env*
+playwright.config.ts
+playwright.real.config.ts
+vitest.config.ts

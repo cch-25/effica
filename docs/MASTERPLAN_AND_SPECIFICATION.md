@@ -805,7 +805,9 @@ PENDING | LEASED | SUCCEEDED | FAILED | DEAD | CANCELLED
 | MariaDB | `localhost:3306` | 영속 데이터, 작업 큐, BLOB |
 | Python Worker | 수신 포트 없음 | MariaDB job lease·handler 실행 |
 
-EC2에서는 같은 네 프로세스를 호스트 프로세스로 실행하고 리버스 프록시가 `/`를 Next.js, `/api/`를 FastAPI로 전달한다. 실제 프록시·TLS·systemd·도메인·시크릿 주입은 별도 배포 작업이다.
+이 문서의 초기 EC2 단일 호스트 배포안은 폐기되었다. 운영 Next.js는 Vercel에서만 실행하며,
+EC2는 MariaDB, worker, FastAPI와 API 전용 nginx만 실행한다. 브라우저 요청은 Vercel의 동일 출처
+`/api/v1/*` 경계를 거쳐 EC2 FastAPI로 전달한다.
 
 ### 9.2 저장소
 

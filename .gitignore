@@ -12,4 +12,7 @@ dist/
 build/
 *.egg-info/
 apps/web/.next/
+apps/web/.next-real/
 apps/web/node_modules/
+.vercel/
+.DS_Store

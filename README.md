@@ -37,11 +37,17 @@ tunnel. `DB_TUNNEL_PORT` may be set if the default local forwarding port `13306`
 
 ## Production deployment
 
-`./deploy.sh` performs a complete EC2 deployment: source and sanitized root `.env` synchronization,
-MariaDB installation and loopback binding, database/user provisioning, Python and Node dependency
-installation, Alembic migration, Next.js build, inline systemd/Nginx configuration, service restart,
-and health verification. The DB administrator receives `ALL PRIVILEGES` on the application database
-only, and `DB_ADMIN_PASSWORD` must equal `EC2_PASSWORD`.
+`./deploy.sh` is the production entrypoint. It deploys only MariaDB, FastAPI, and the worker to EC2,
+removes/disables any EC2 Next.js service and artifacts, exposes only `/api/*` and `/health/*` through
+the TLS-enabled EC2 nginx site, configures the Vercel production environment, and deploys `apps/web` with
+`vercel --prod`. The browser always talks to Vercel over HTTPS; Vercel's same-origin `/api/v1/*`
+rewrite talks to the EC2 nginx API origin, so browser CORS configuration is not required.
 
-MariaDB, FastAPI, and Next.js stay on EC2 loopback behind Nginx. TLS is intentionally deferred.
-Back up MariaDB, including `stored_blobs`, before destructive migrations or retention work.
+Vercel is the only supported production host for Next.js. `npm run dev` remains available for local
+development, while the package intentionally has no `next start` script. `make deploy-web` can be
+used for a frontend-only Vercel production deployment after the project has been linked and its
+production environment variables have been configured by `./deploy.sh`.
+
+The DB administrator receives `ALL PRIVILEGES` on the application database only, and
+`DB_ADMIN_PASSWORD` must equal `EC2_PASSWORD`. Back up MariaDB, including `stored_blobs`, before
+destructive migrations or retention work.
