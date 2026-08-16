@@ -9,5 +9,13 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="ko" data-scroll-behavior="smooth"><body><Providers><AppShell>{children}</AppShell></Providers></body></html>;
+  return (
+    <html lang="ko" data-scroll-behavior="smooth">
+      <body>
+        <div className="app-root">
+          <Providers><AppShell>{children}</AppShell></Providers>
+        </div>
+      </body>
+    </html>
+  );
 }
