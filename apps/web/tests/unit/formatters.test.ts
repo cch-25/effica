@@ -1,9 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { clampScore, formatAxis, formatConfidence, validateScores } from "@/lib/api/formatters";
+import { clampScore, formatAxis, formatBiasScore, formatConfidence, formatSensationalismScore, getBiasLabel, validateScores } from "@/lib/api/formatters";
 
 describe("coordinate formatters", () => {
   it("clamps coordinates to the documented range", () => { expect(clampScore(121)).toBe(100); expect(clampScore(-121)).toBe(-100); });
-  it("describes direction without good or bad labels", () => { expect(formatAxis(-24, "x")).toBe("경제 평등·재분배 24"); expect(formatAxis(0, "z")).toContain("판단 불충분"); });
+  it("describes the canonical bias direction", () => { expect(formatAxis(-24, "x")).toBe("편향성 좌편향 24"); expect(formatAxis(0, "x")).toContain("판단 불충분"); });
   it("formats bounded confidence", () => { expect(formatConfidence(.86)).toBe("높음 · 86%"); expect(formatConfidence(9)).toBe("높음 · 100%"); });
-  it("validates all coordinate and confidence bounds", () => { expect(validateScores({ x: 0, y: -100, z: 100, sensationalism: 50, confidence: .5 })).toBe(true); expect(validateScores({ x: 101, y: 0, z: 0, sensationalism: 0, confidence: .5 })).toBe(false); });
+  it("labels x-axis bias with the same ±10 boundaries as perspective filters", () => {
+    expect(getBiasLabel(-11)).toBe("좌편향");
+    expect(getBiasLabel(-10)).toBe("중립적");
+    expect(getBiasLabel(10)).toBe("중립적");
+    expect(getBiasLabel(11)).toBe("우편향");
+  });
+  it("formats an explicit signed x score with its Korean bias label", () => {
+    expect(formatBiasScore(-24)).toBe("좌편향 · -24");
+    expect(formatBiasScore(0)).toBe("중립적 · 0");
+    expect(formatBiasScore(24)).toBe("우편향 · +24");
+  });
+  it("formats sensationalism on its canonical 0–100 scale", () => {
+    expect(formatSensationalismScore(34)).toBe("34/100");
+    expect(formatSensationalismScore(120)).toBe("100/100");
+  });
+  it("validates bias, sensationalism, and zeroed compatibility axes", () => { expect(validateScores({ x: 0, y: 0, z: 0, sensationalism: 50, confidence: .5 })).toBe(true); expect(validateScores({ x: 0, y: -100, z: 100, sensationalism: 50, confidence: .5 })).toBe(false); expect(validateScores({ x: 101, y: 0, z: 0, sensationalism: 0, confidence: .5 })).toBe(false); });
 });

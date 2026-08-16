@@ -1,10 +1,27 @@
 import type { AxisScores } from "./types";
 
 export const AXIS_META = {
-  x: { short: "경제", negative: "평등·재분배", positive: "시장·경쟁" },
-  y: { short: "사회문화", negative: "질서·전통", positive: "자유·다양성" },
-  z: { short: "국가·대외", negative: "국제협력", positive: "국가·안보" },
+  x: { short: "편향성", negative: "좌편향", positive: "우편향" },
 } as const;
+
+export type BiasLabel = "좌편향" | "중립적" | "우편향";
+export const BIAS_CENTER_THRESHOLD = 10;
+
+export function getBiasLabel(value: number): BiasLabel {
+  const score = clampScore(value);
+  if (score < -BIAS_CENTER_THRESHOLD) return "좌편향";
+  if (score > BIAS_CENTER_THRESHOLD) return "우편향";
+  return "중립적";
+}
+
+export function formatBiasScore(value: number): string {
+  const score = clampScore(value);
+  return `${getBiasLabel(score)} · ${score > 0 ? `+${score}` : score}`;
+}
+
+export function formatSensationalismScore(value: number): string {
+  return `${clampScore(value, 0, 100)}/100`;
+}
 
 export function clampScore(value: number, min = -100, max = 100): number {
   return Math.min(max, Math.max(min, Math.round(value)));
@@ -24,7 +41,11 @@ export function formatConfidence(value: number): string {
 }
 
 export function validateScores(scores: AxisScores): boolean {
-  return [scores.x, scores.y, scores.z].every((value) => Number.isInteger(value) && value >= -100 && value <= 100)
+  return Number.isInteger(scores.x)
+    && scores.x >= -100
+    && scores.x <= 100
+    && scores.y === 0
+    && scores.z === 0
     && Number.isInteger(scores.sensationalism)
     && scores.sensationalism >= 0
     && scores.sensationalism <= 100
