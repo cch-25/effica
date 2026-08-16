@@ -32,6 +32,9 @@ def test_builtin_handlers_return_deterministic_values():
         first = await analyze({"text": "official evidence and data"})
         second = await analyze({"text": "official evidence and data"})
         assert first.value == second.value
+        assert first.value["prompt_version"] == "bias-sensationalism-v1"
+        assert first.value["ensemble"]["y"] == 0
+        assert first.value["ensemble"]["z"] == 0
 
         crawl = registry.require("crawl")
         result = await crawl({"url": "HTTPS://Example.COM/article?b=2&a=1#fragment"})

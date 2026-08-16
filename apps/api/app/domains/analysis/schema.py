@@ -48,8 +48,11 @@ class AssessmentInput(BaseModel):
 class ModelAssessment(BaseModel):
     """Strict, serialisable model output.
 
-    The score axes are value coordinates, not a truth score.  ``evidence`` is
-    explicitly linked to the analyzed article version for reproducibility.
+    ``x`` is the canonical political-bias coordinate (-100 left to +100
+    right), while ``sensationalism`` is the independent exaggeration score.
+    ``y`` and ``z`` are retained as zero-valued compatibility fields for
+    persisted records and older API clients. ``evidence`` is explicitly
+    linked to the analyzed article version for reproducibility.
     """
 
     model_config = ConfigDict(extra="forbid", strict=True, validate_assignment=True)
@@ -59,8 +62,8 @@ class ModelAssessment(BaseModel):
     actual_model_id: StrictStr
     prompt_version: StrictStr
     x: StrictInt = Field(ge=-100, le=100)
-    y: StrictInt = Field(ge=-100, le=100)
-    z: StrictInt = Field(ge=-100, le=100)
+    y: StrictInt = Field(default=0, ge=-100, le=100)
+    z: StrictInt = Field(default=0, ge=-100, le=100)
     sensationalism: StrictInt = Field(ge=0, le=100)
     confidence: float = Field(ge=0, le=1)
     evidence: list[Evidence] = Field(default_factory=list, max_length=20)

@@ -292,5 +292,16 @@ def test_openai_responses_style_sends_reasoning_and_strict_schema():
     assert isinstance(json_schema, dict)
     assert json_schema["type"] == "json_schema"
     assert json_schema["strict"] is True
+    schema = json_schema["schema"]
+    assert set(schema["properties"]) == {
+        "x",
+        "sensationalism",
+        "confidence",
+        "evidence",
+        "rationale_summary",
+    }
+    assert "left-biased" in body["input"]
+    assert "right-biased" in body["input"]
     assert result.token_usage == 18
     assert result.x == 10
+    assert result.y == 0 and result.z == 0

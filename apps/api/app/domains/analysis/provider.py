@@ -961,10 +961,13 @@ class HttpLLMProvider(LLMProvider):
         content = mask_source_identity(input.content, input.source_name, input.source_url)
         prompt = (
             "Assess only the supplied article content. Do not infer from publisher identity. "
-            "Coordinates are observations, not truth labels: X -100 equality/state intervention "
-            "to +100 markets/individual responsibility; Y -100 order/tradition/authority to +100 "
-            "individual liberty/diversity/change; Z -100 international cooperation/multilateralism "
-            "to +100 national priority/sovereignty/security. Sensationalism is independent. "
+            "Return exactly two evaluation scores. X is political bias: -100 means strongly "
+            "left-biased, 0 means neutral/balanced, and +100 means strongly right-biased. "
+            "Judge framing, selection and omission of facts, loaded wording, attribution, and "
+            "which political actors or positions receive favorable or unfavorable treatment. "
+            "Sensationalism is independent: 0 means restrained/factual and 100 means highly "
+            "exaggerated, alarmist, emotionally manipulative, or click-driven. Do not treat a "
+            "political position itself as proof of bias, and do not infer missing context. "
             "Evidence offsets are zero-based character offsets into CONTENT, with end exclusive. "
             "Return evidence only when its quote is an exact CONTENT substring at those offsets.\n\n"
             f"PROMPT_VERSION: {prompt_version}\n"
@@ -1018,6 +1021,11 @@ class HttpLLMProvider(LLMProvider):
         data.setdefault("model_alias", self.config.alias)
         data.setdefault("actual_model_id", self.config.actual_model_id)
         data.setdefault("prompt_version", prompt_version)
+        # y/z remain in the public and persistence models during the schema
+        # migration, but every newly analyzed assessment is canonicalized to
+        # the two-axis model regardless of legacy fields returned upstream.
+        data["y"] = 0
+        data["z"] = 0
         usage = _extract_token_usage(payload, data)
         # Usage is transport metadata, not part of the strict public
         # assessment schema.  Remove all accepted usage spellings before
@@ -1081,8 +1089,6 @@ def _chat_completion_assessment_schema() -> dict[str, object]:
         "additionalProperties": False,
         "properties": {
             "x": {"type": "integer", "minimum": -100, "maximum": 100},
-            "y": {"type": "integer", "minimum": -100, "maximum": 100},
-            "z": {"type": "integer", "minimum": -100, "maximum": 100},
             "sensationalism": {"type": "integer", "minimum": 0, "maximum": 100},
             "confidence": {"type": "number", "minimum": 0, "maximum": 1},
             "evidence": {
@@ -1111,8 +1117,6 @@ def _chat_completion_assessment_schema() -> dict[str, object]:
         },
         "required": [
             "x",
-            "y",
-            "z",
             "sensationalism",
             "confidence",
             "evidence",
@@ -1230,10 +1234,9 @@ class DeterministicStubProvider(LLMProvider):
         )
         digest = hashlib.sha256(basis.encode("utf-8")).digest()
         # Distinct byte windows give deterministic but meaningfully different
-        # model outputs while keeping coordinates in the contractual ranges.
+        # outputs while keeping both canonical scores in range. y/z are only
+        # retained as zero-valued persistence compatibility fields.
         x = int.from_bytes(digest[0:2], "big") % 201 - 100
-        y = int.from_bytes(digest[2:4], "big") % 201 - 100
-        z = int.from_bytes(digest[4:6], "big") % 201 - 100
         sensationalism = int.from_bytes(digest[6:8], "big") % 101
         confidence = round(0.55 + digest[8] / 255 * 0.4, 6)
         quote = " ".join(masked_content.split())[:160] or masked_title[:160]
@@ -1255,8 +1258,8 @@ class DeterministicStubProvider(LLMProvider):
             actual_model_id=self.config.actual_model_id,
             prompt_version=prompt_version,
             x=x,
-            y=y,
-            z=z,
+            y=0,
+            z=0,
             sensationalism=sensationalism,
             confidence=confidence,
             evidence=evidence,
