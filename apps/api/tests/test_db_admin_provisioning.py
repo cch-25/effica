@@ -14,4 +14,5 @@ def test_integrated_deployer_scopes_admin_and_uses_mariadb_stdin() -> None:
     assert "exec python3 -\" <<'PY' | sudo mariadb" in source
     assert "vercel --prod --yes --format=json" in source
     assert 'payload.get("deployment", payload)' in source
+    assert source.count("--retry-all-errors") == 4
     assert "--password" not in source
