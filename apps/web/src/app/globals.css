@@ -1,15 +1,17 @@
 :root {
   --white: #fff;
-  --gray-50: #fafafa;
-  --gray-100: #f5f5f5;
-  --gray-200: #e5e5e5;
-  --gray-300: #d4d4d4;
-  --gray-400: #a3a3a3;
-  --gray-500: #737373;
-  --gray-600: #525252;
-  --gray-700: #404040;
-  --gray-900: #171717;
   --black: #000;
+  --red: #d40000;
+  --blue: #0047ff;
+  --gray-50: var(--white);
+  --gray-100: var(--white);
+  --gray-200: var(--white);
+  --gray-300: var(--black);
+  --gray-400: var(--black);
+  --gray-500: var(--black);
+  --gray-600: var(--black);
+  --gray-700: var(--black);
+  --gray-900: var(--black);
   --background: var(--white);
   --foreground: var(--black);
   --muted: var(--gray-500);
@@ -18,9 +20,9 @@
   --surface: var(--white);
   --surface-muted: var(--gray-50);
   --focus: var(--black);
-  --radius-sm: 6px;
-  --radius: 9px;
-  --shadow: 4px 4px 0 rgb(0 0 0 / .09);
+  --radius-sm: 0;
+  --radius: 0;
+  --shadow: none;
   --paper: var(--white);
   --paper-deep: var(--gray-50);
   --ink: var(--foreground);
@@ -37,7 +39,8 @@
   --font-body: Helvetica, Arial, sans-serif;
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; border-radius: 0 !important; box-shadow: none !important; text-shadow: none !important; }
+*::before, *::after { border-radius: 0 !important; box-shadow: none !important; text-shadow: none !important; }
 html { background: var(--white); scroll-behavior: smooth; }
 body { position: relative; margin: 0; background: var(--white); color: var(--black); font-family: Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
 button, input, select, textarea, code, kbd { font: inherit; }
@@ -216,6 +219,20 @@ h3 { font-size: .95rem; font-weight: 700; }
 .progress-dots span.is-active { background: var(--black); }
 .notice { padding: .7rem; border-left: 2px solid var(--black); background: var(--gray-50); color: var(--gray-700); font-size: .74rem; }
 
+.choice-scale { min-width: 0; margin: 1rem 0 0; padding: .75rem; border: 1px solid var(--line-strong); }
+.choice-scale legend { padding: 0 .35rem; font-size: .76rem; font-weight: 700; }
+.choice-scale__grid { display: grid; grid-template-columns: repeat(7, minmax(86px, 1fr)); gap: .35rem; overflow-x: auto; padding: .15rem; }
+.button.choice-button { min-height: 52px; flex-direction: column; gap: .15rem; border-width: 2px; background: var(--white); font-weight: 700; line-height: 1.15; white-space: normal; }
+.choice-button small { font-size: .63rem; font-variant-numeric: tabular-nums; }
+.button.choice-button[data-tone="blue"] { border-color: var(--black); background: var(--white); color: var(--blue); }
+.button.choice-button[data-tone="blue"]:hover:not([data-disabled]) { background: var(--black); color: var(--white); }
+.button.choice-button[data-tone="red"] { border-color: var(--black); background: var(--white); color: var(--red); }
+.button.choice-button[data-tone="red"]:hover:not([data-disabled]) { background: var(--black); color: var(--white); }
+.button.choice-button[data-selected][data-tone="blue"] { background: var(--black); color: var(--white); }
+.button.choice-button[data-selected][data-tone="red"] { background: var(--black); color: var(--white); }
+.button.choice-button[data-selected]:not([data-tone]) { border-color: var(--black); background: var(--black); color: var(--white); }
+.button.choice-button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
 .base-slider { min-width: 0; }
 .base-slider__control { display: flex; width: 100%; touch-action: none; align-items: center; padding-block: .65rem; user-select: none; }
 .base-slider__track { width: 100%; height: 4px; border-radius: 999px; background: var(--gray-200); }
@@ -331,6 +348,9 @@ h3 { font-size: .95rem; font-weight: 700; }
   .tabs { max-width: calc(100vw - 1.6rem); overflow-x: auto; }
   .radio-scale { gap: .25rem; }
   .radio-card { flex-direction: column; min-height: 46px; }
+  .choice-scale { padding: .55rem; }
+  .choice-scale__grid { grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: visible; gap: .3rem; }
+  .button.choice-button { min-height: 56px; padding-inline: .3rem; font-size: .64rem; }
   .slider-field { grid-template-columns: 1fr; }
   .number-field { width: fit-content; }
   .timeline > div { grid-template-columns: 70px minmax(40px, 1fr); }.timeline strong { grid-column: 1 / -1; }

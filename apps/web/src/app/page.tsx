@@ -12,7 +12,7 @@ export default function HomePage() {
       <section className="feature-banner">
         <div className="feature-banner__content">
           <Badge tone="positive">오늘의 관점 지도 · 8월 16일</Badge>
-          <h1>뉴스의 결론보다,<br />결론에 이른 길을 봅니다.</h1>
+          <h1>POLITICAL <span className="feature-banner__effica">EFFICA</span>CY</h1>
           <p>같은 이슈를 여러 출처와 관점에서 읽고, AI와 독자의 평가는 근거와 불확실성까지 함께 비교하세요.</p>
           <div className="page-header__actions"><ButtonLink href="/issues">오늘의 이슈 <ArrowRight size={15} /></ButtonLink><ButtonLink variant="secondary" href="/visualization"><Compass size={15} /> 관점 지도</ButtonLink></div>
         </div>
