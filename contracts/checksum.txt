@@ -1,0 +1,1 @@
+sha256  9e60d86c8df9d6ec91d6438282ae67dd4f9cb0e8e5c5e7aba84f32b03d3911ed  openapi.json
