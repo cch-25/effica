@@ -60,20 +60,33 @@ function ChoiceScale({ legend, value, choices, onChange }: { legend: string; val
 export function VoteForm({ articleId }: { articleId: string }) {
   const [vote, setVote] = useState<Vote>({ x: 0, y: 0, z: 0, sensationalism: 0 });
   const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
   const update = (key: "x" | "sensationalism", value: number) => setVote((current) => ({ ...current, [key]: value }));
   const submit = async () => {
     if (!voteSchema.safeParse(vote).success) return setMessage("각 점수의 허용 범위를 확인해 주세요.");
-    await apiRequest(`/articles/${articleId}/vote`, { method: "PUT", body: JSON.stringify(vote) });
-    setMessage("투표 revision 2가 저장되었습니다.");
+    setBusy(true);
+    try {
+      const saved = await apiRequest<{ revision: number }>(`/articles/${encodeURIComponent(articleId)}/vote`, { method: "PUT", body: JSON.stringify(vote) });
+      setMessage(`투표 revision ${saved.revision}가 저장되었습니다.`);
+    } catch { setMessage("투표를 저장하지 못했습니다. 기존 투표는 유지됩니다."); }
+    finally { setBusy(false); }
   };
-  const remove = async () => { setVote({ x: 0, y: 0, z: 0, sensationalism: 0 }); setMessage("활성 투표가 삭제되었습니다. 이전 revision은 이력으로 보존됩니다."); };
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await apiRequest<void>(`/articles/${encodeURIComponent(articleId)}/vote`, { method: "DELETE" });
+      setVote({ x: 0, y: 0, z: 0, sensationalism: 0 });
+      setMessage("활성 투표가 삭제되었습니다. 이전 revision은 이력으로 보존됩니다.");
+    } catch { setMessage("투표를 삭제하지 못했습니다. 기존 투표는 유지됩니다."); }
+    finally { setBusy(false); }
+  };
   return (
     <section className="card card--padded">
       <p className="eyebrow">독자 평가</p><h2>이 기사를 어떻게 읽었나요?</h2>
       <ChoiceScale legend="편향성 (좌편향 ↔ 우편향)" value={vote.x} choices={BIAS_CHOICES} onChange={(value) => update("x", value)} />
       <ChoiceScale legend="과장성 (낮음 ↔ 높음)" value={vote.sensationalism} choices={SENSATIONALISM_CHOICES} onChange={(value) => update("sensationalism", value)} />
       <div className="notice">독자 투표는 집계 구성요소 중 하나이며 공식 점수를 즉시 교체하지 않습니다.</div>
-      <div className="form-actions"><Button variant="ghost" onClick={remove}>내 투표 삭제</Button><Button onClick={submit}>투표 저장·수정</Button></div>
+      <div className="form-actions"><Button variant="ghost" onClick={remove} disabled={busy}>내 투표 삭제</Button><Button onClick={submit} disabled={busy}>투표 저장·수정</Button></div>
       {message && <Toast message={message} />}
     </section>
   );

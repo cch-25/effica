@@ -19,7 +19,8 @@ export function formatBiasScore(value: number): string {
   return `${getBiasLabel(score)} · ${score > 0 ? `+${score}` : score}`;
 }
 
-export function formatSensationalismScore(value: number): string {
+export function formatSensationalismScore(value: number | null): string {
+  if (value === null) return "미측정";
   return `${clampScore(value, 0, 100)}/100`;
 }
 

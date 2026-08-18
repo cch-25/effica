@@ -7,12 +7,13 @@ export default defineConfig({
   reporter: "line",
   use: {
     baseURL: "http://127.0.0.1:3100",
+    headless: true,
     trace: "retain-on-failure",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: [
     {
-      command: "cd ../.. && APP_ENV=test APP_BACKEND=memory LLM_PROVIDER_MODE=stub uv run uvicorn apps.api.app.main:app --host 127.0.0.1 --port 8100",
+      command: "cd ../.. && APP_ENV=test APP_BACKEND=memory LLM_PROVIDER_MODE=stub WEB_BASE_URL=http://127.0.0.1:3100 OAUTH_REDIRECT_ALLOWLIST=http://127.0.0.1:3100/api/v1/auth/mock/callback uv run uvicorn apps.api.app.main:app --host 127.0.0.1 --port 8100",
       url: "http://127.0.0.1:8100/health/ready",
       reuseExistingServer: false,
       timeout: 60_000,

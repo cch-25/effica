@@ -4,9 +4,9 @@ import { RealArticleDetail } from "@/features/articles/real-article-detail";
 import { ArticleCard } from "@/features/feed/article-card";
 import type { Article } from "@/lib/api/types";
 
-const mocks = vi.hoisted(() => ({ useArticleQuery: vi.fn() }));
+const mocks = vi.hoisted(() => ({ useArticleQuery: vi.fn(), useArticleAnalysisQuery: vi.fn() }));
 
-vi.mock("@/lib/api/queries", () => ({ useArticleQuery: mocks.useArticleQuery }));
+vi.mock("@/lib/api/queries", () => ({ useArticleQuery: mocks.useArticleQuery, useArticleAnalysisQuery: mocks.useArticleAnalysisQuery }));
 vi.mock("@/features/voting/vote-form", () => ({ VoteForm: () => <div>투표 폼</div> }));
 
 const article: Article = {
@@ -43,6 +43,7 @@ describe("기사 LLM 편향 표시", () => {
 
   it("기사 상세에 한국어 편향 라벨과 x값을 표시한다", () => {
     mocks.useArticleQuery.mockReturnValue({ isPending: false, isError: false, data: article });
+    mocks.useArticleAnalysisQuery.mockReturnValue({ isPending: false, isError: false, data: { assessments: { article_version_id: "v1", assessments: [] }, history: { items: [] } } });
 
     render(<RealArticleDetail articleId={article.id} />);
 

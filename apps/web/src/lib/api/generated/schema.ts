@@ -130,7 +130,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Admin Get Autopilot Settings */
+        get: operations["admin_get_autopilot_settings"];
         /** Admin Put Autopilot Settings */
         put: operations["admin_put_autopilot_settings"];
         post?: never;
@@ -571,6 +572,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Auth Providers
+         * @description Return only providers that can complete a server-side OAuth flow.
+         */
+        get: operations["list_auth_providers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/{provider}/callback": {
         parameters: {
             query?: never;
@@ -895,6 +916,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/questionnaires": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Questionnaire Versions
+         * @description Expose the active questionnaire contract before a response is posted.
+         */
+        get: operations["list_questionnaire_versions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/r/{token}": {
         parameters: {
             query?: never;
@@ -1133,6 +1174,26 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /** AutopilotSettingsView */
+        AutopilotSettingsView: {
+            /** Guardrails */
+            guardrails: {
+                [key: string]: number;
+            };
+            /** Manual Locks */
+            manual_locks?: string[];
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "OFF" | "RECOMMEND" | "LIMITED_AUTO";
+            /** Updated At */
+            updated_at?: string | null;
+            /** Updated By */
+            updated_by?: string | null;
+            /** Version */
+            version: number;
+        };
         /** ConsentSubmission */
         ConsentSubmission: {
             /** Consent Version Id */
@@ -1190,7 +1251,7 @@ export interface components {
         EfficacySubmission: {
             /** Answers */
             answers: {
-                [key: string]: number | string | boolean;
+                [key: string]: number;
             };
             /** Questionnaire Version Id */
             questionnaire_version_id: string;
@@ -1339,12 +1400,8 @@ export interface components {
         JobAccepted: {
             /** Job Id */
             job_id: string;
-            /**
-             * Status
-             * @default PENDING
-             * @constant
-             */
-            status: "PENDING";
+            /** @default PENDING */
+            status: components["schemas"]["JobStatus"];
         };
         /**
          * JobStatus
@@ -1353,6 +1410,8 @@ export interface components {
         JobStatus: "PENDING" | "LEASED" | "SUCCEEDED" | "FAILED" | "DEAD" | "CANCELLED";
         /** MergeIssueRequest */
         MergeIssueRequest: {
+            /** Reason */
+            reason: string;
             /** Target Issue Id */
             target_issue_id: string;
         };
@@ -1441,10 +1500,37 @@ export interface components {
         QuestionnaireSubmission: {
             /** Answers */
             answers: {
-                [key: string]: number | string | boolean;
+                [key: string]: number;
             };
             /** Questionnaire Version Id */
             questionnaire_version_id: string;
+        };
+        /** QuestionnaireVersionView */
+        QuestionnaireVersionView: {
+            /**
+             * Active From
+             * Format: date-time
+             */
+            active_from: string;
+            /** Id */
+            id: string;
+            /** Keys */
+            keys?: string[];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "onboarding" | "efficacy";
+            /** Schema Json */
+            schema_json: {
+                [key: string]: unknown;
+            };
+            /** Scoring Json */
+            scoring_json: {
+                [key: string]: unknown;
+            };
+            /** Version */
+            version: string;
         };
         /** ReadResult */
         ReadResult: {
@@ -1563,6 +1649,15 @@ export interface components {
             /** Template */
             template: string;
         };
+        /** ShareCardJobAccepted */
+        ShareCardJobAccepted: {
+            /** Job Id */
+            job_id: string;
+            /** Share Card Id */
+            share_card_id: string;
+            /** @default PENDING */
+            status: components["schemas"]["JobStatus"];
+        };
         /** ShareCardView */
         ShareCardView: {
             /** Etag */
@@ -1583,6 +1678,8 @@ export interface components {
         };
         /** SimulationRequest */
         SimulationRequest: {
+            /** Reason */
+            reason: string;
             /** Windows */
             windows?: (7 | 30)[];
         };
@@ -1593,8 +1690,19 @@ export interface components {
              * @default true
              */
             active: boolean;
+            /**
+             * Adapter Active
+             * @default true
+             */
+            adapter_active: boolean;
+            /** Adapter Type */
+            adapter_type?: ("API" | "RSS" | "CRAWLER") | null;
             /** Canonical Url */
             canonical_url: string;
+            /** Config Json */
+            config_json?: {
+                [key: string]: unknown;
+            };
             /** Name */
             name: string;
             /**
@@ -1603,6 +1711,12 @@ export interface components {
              * @enum {string}
              */
             policy_status: "PENDING" | "APPROVED" | "REJECTED";
+            /** Rate Limit */
+            rate_limit?: number | null;
+            /** Raw Payload Retention Days */
+            raw_payload_retention_days?: number | null;
+            /** Reason */
+            reason: string;
             /**
              * Robots Status
              * @default UNKNOWN
@@ -1625,6 +1739,8 @@ export interface components {
         SplitIssueRequest: {
             /** Article Ids */
             article_ids: string[];
+            /** Reason */
+            reason: string;
         };
         /** UserView */
         UserView: {
@@ -2476,6 +2592,120 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Stable domain validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Role, consent, or CSRF requirement failed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Version, idempotency, or state conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Expired or permanently unavailable resource */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Request schema validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description If-Match precondition is required */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limited; Retry-After is present */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Contract-safe internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    admin_get_autopilot_settings: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Debug-Role"?: components["schemas"]["Role"] | null;
+                "X-Debug-User"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutopilotSettingsView"];
                 };
             };
             /** @description Stable domain validation error */
@@ -4658,7 +4888,11 @@ export interface operations {
                 session?: string | null;
             };
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReasonRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             202: {
@@ -6438,6 +6672,117 @@ export interface operations {
             };
         };
     };
+    list_auth_providers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": ("kakao" | "naver" | "google" | "mock")[];
+                };
+            };
+            /** @description Stable domain validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Role, consent, or CSRF requirement failed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Version, idempotency, or state conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Expired or permanently unavailable resource */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Request schema validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description If-Match precondition is required */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limited; Retry-After is present */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Contract-safe internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     auth_provider_callback: {
         parameters: {
             query: {
@@ -6564,6 +6909,7 @@ export interface operations {
         parameters: {
             query: {
                 redirect_uri: string;
+                returnTo?: string | null;
             };
             header?: never;
             path: {
@@ -8789,6 +9135,119 @@ export interface operations {
             };
         };
     };
+    list_questionnaire_versions: {
+        parameters: {
+            query?: {
+                kind?: ("onboarding" | "political" | "efficacy") | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionnaireVersionView"][];
+                };
+            };
+            /** @description Stable domain validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Role, consent, or CSRF requirement failed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Version, idempotency, or state conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Expired or permanently unavailable resource */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Request schema validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description If-Match precondition is required */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limited; Retry-After is present */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Contract-safe internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     redirect_to_article: {
         parameters: {
             query?: never;
@@ -9055,7 +9514,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["JobAccepted"];
+                    "application/json": components["schemas"]["ShareCardJobAccepted"];
                 };
             };
             /** @description Stable domain validation error */

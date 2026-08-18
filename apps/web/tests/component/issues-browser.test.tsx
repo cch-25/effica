@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { IssuesBrowser } from "@/features/issues/issues-browser";
 import { issues } from "@/mocks/fixtures/content";
 
-vi.mock("@/lib/api/queries", () => ({ useIssuesQuery: () => ({ data: undefined }) }));
+vi.mock("@/lib/api/queries", () => ({ useIssuesQuery: () => ({ data: { items: issues } }) }));
 
 afterEach(cleanup);
 

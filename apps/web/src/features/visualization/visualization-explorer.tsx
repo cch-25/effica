@@ -3,11 +3,17 @@
 import { visualizationPoints as fixturePoints } from "@/mocks/fixtures/content";
 import { useVisualizationPointsQuery } from "@/lib/api/queries";
 import { formatBiasScore, formatSensationalismScore } from "@/lib/api/formatters";
+import { isMockMode } from "@/lib/api/mode";
+import { StatePanel } from "@/components/ui/state-panel";
 
 export function VisualizationExplorer() {
   const pointsQuery = useVisualizationPointsQuery();
-  const visualizationPoints = pointsQuery.data?.items.length ? pointsQuery.data.items : fixturePoints;
+  if (pointsQuery.isPending && !isMockMode()) return <StatePanel state="loading" />;
+  if (pointsQuery.isError && !isMockMode()) return <StatePanel state="error" onRetry={() => void pointsQuery.refetch()} />;
+  const visualizationPoints = pointsQuery.data?.items ?? (isMockMode() ? fixturePoints : []);
+  if (visualizationPoints.length === 0) return <StatePanel state="empty" />;
   const current = visualizationPoints.find((point) => point.type === "user") ?? visualizationPoints[0];
+  const sensationalismLabel = current.sensationalism === null ? "미측정" : formatSensationalismScore(current.sensationalism);
   const counts = visualizationPoints.reduce((result, point) => {
     result[point.type] += 1;
     return result;
@@ -31,7 +37,7 @@ export function VisualizationExplorer() {
           <text className="perspective-solid__value perspective-solid__value--left" x="192" y="401" textAnchor="middle">{formatBiasScore(current.x)}</text>
 
           <text className="perspective-solid__label perspective-solid__label--right" x="448" y="337" textAnchor="middle">과장성</text>
-          <text className="perspective-solid__value perspective-solid__value--right" x="448" y="401" textAnchor="middle">{formatSensationalismScore(current.sensationalism)}</text>
+          <text className="perspective-solid__value perspective-solid__value--right" x="448" y="401" textAnchor="middle">{sensationalismLabel}</text>
         </svg>
       </div>
 
@@ -47,7 +53,7 @@ export function VisualizationExplorer() {
           </div>
           <div>
             <dt>과장성</dt>
-            <dd>{formatSensationalismScore(current.sensationalism)}</dd>
+            <dd>{sensationalismLabel}</dd>
           </div>
         </dl>
 
