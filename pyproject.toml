@@ -9,15 +9,15 @@ description = "Political-perspective news platform backend and MariaDB worker"
 requires-python = ">=3.12"
 dependencies = [
   "alembic==1.18.4",
-  "asyncmy==0.2.11",
-  "cryptography==45.0.6",
-  "fastapi==0.128.8",
+  "asyncmy==0.2.14",
+  "cryptography==50.0.0",
+  "fastapi==0.141.1",
   "greenlet==3.2.4",
   "httpx==0.28.1",
-  "pillow==12.1.0",
+  "pillow==12.3.0",
   "pydantic==2.13.4",
-  "pydantic-settings==2.12.0",
-  "python-dotenv==1.2.1",
+  "pydantic-settings==2.15.0",
+  "python-dotenv==1.2.3",
   "sqlalchemy==2.0.46",
   "ulid-py==1.1.0",
   "uvicorn==0.40.0",
@@ -27,7 +27,8 @@ dependencies = [
 dev = [
   "aiosqlite==0.21.0",
   "mypy==1.17.1",
-  "pytest==8.4.2",
+  "pip-audit==2.10.1",
+  "pytest==9.1.1",
   "pytest-asyncio==1.3.0",
   "ruff==0.14.14",
 ]
@@ -40,6 +41,9 @@ addopts = "-q --strict-markers"
 testpaths = ["apps/api/tests", "apps/worker/tests", "tests/integration"]
 pythonpath = ["."]
 asyncio_mode = "auto"
+markers = [
+  "mariadb: requires a live MariaDB service (skipped unless CI_MARIADB_URL is set)",
+]
 
 [tool.ruff]
 target-version = "py312"

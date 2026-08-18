@@ -1,4 +1,4 @@
-.PHONY: install dev api worker migrate seed openapi verify test integration deploy deploy-web
+.PHONY: install dev api worker migrate seed openapi security ownership verify test integration deploy deploy-web
 
 install:
 	uv sync --all-groups
@@ -20,6 +20,12 @@ seed:
 
 openapi:
 	./run.sh openapi --write
+
+security:
+	./run.sh security
+
+ownership:
+	./run.sh ownership
 
 verify:
 	./run.sh verify
