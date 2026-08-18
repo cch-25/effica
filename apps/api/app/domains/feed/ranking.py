@@ -27,6 +27,16 @@ class FeedCandidate:
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> FeedCandidate:
+        published_at = value.get("published_at")
+        if isinstance(published_at, str):
+            try:
+                published_at = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError("published_at must be an ISO-8601 timestamp") from exc
+        elif published_at is not None and not isinstance(published_at, datetime):
+            raise ValueError("published_at must be a datetime or ISO-8601 timestamp")
+        if isinstance(published_at, datetime) and published_at.tzinfo is None:
+            published_at = published_at.replace(tzinfo=UTC)
         return cls(
             article_id=str(value.get("article_id", value.get("id"))),
             issue_id=value.get("issue_id"),
@@ -37,7 +47,7 @@ class FeedCandidate:
             quality=float(value.get("quality", value.get("quality_score", 0.5))),
             confidence=float(value.get("confidence", 0.5)),
             relevance=float(value.get("relevance", 0)),
-            published_at=value.get("published_at"),
+            published_at=published_at,
             sensationalism=float(value.get("sensationalism", 0)),
             available=bool(value.get("available", True)),
             metadata=value,
@@ -117,8 +127,16 @@ def rank_feed(
         ]
         if not eligible:
             # A hard source cap should not make a feed empty when only one
-            # source is available; reset the consecutive constraint once.
-            eligible = remaining
+            # source is available; reset only the consecutive constraint once.
+            # Issue caps remain hard policy limits even in this fallback.
+            eligible = [
+                item
+                for item in remaining
+                if max_per_issue is None
+                or issue_counts.get(item.issue_id, 0) < max_per_issue
+            ]
+            if not eligible:
+                break
         ranked = sorted(
             ((_score(item, profile, now, source_counts, issue_counts), item) for item in eligible),
             key=lambda pair: (-pair[0][0], pair[1].article_id),

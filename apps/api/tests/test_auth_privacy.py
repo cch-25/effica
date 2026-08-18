@@ -30,7 +30,7 @@ from apps.api.app.domains.auth.providers import (
     ProviderName,
     ProviderRegistry,
 )
-from apps.api.app.domains.auth.service import AuthService, OAuthStateStore
+from apps.api.app.domains.auth.service import AuthResult, AuthService, OAuthStateStore
 from apps.api.app.domains.users.models import (
     ConsentPurpose,
     ProfileKind,
@@ -108,7 +108,7 @@ def test_mock_oauth_flow_is_network_free_and_nonce_checked() -> None:
     )
     start = service.start_oauth("mock", "http://localhost:3000/callback")
 
-    async def callback() -> object:
+    async def callback() -> AuthResult:
         return await service.complete_oauth(
             "mock",
             code="ok",
@@ -125,7 +125,7 @@ def test_mock_oauth_flow_is_network_free_and_nonce_checked() -> None:
     provider.register_code("wrong", subject="subject-2", nonce="wrong-nonce")
     second = service.start_oauth("mock", "http://localhost:3000/callback")
 
-    async def bad_callback() -> object:
+    async def bad_callback() -> AuthResult:
         return await service.complete_oauth("mock", code="wrong", state=second.state)
 
     with pytest.raises(OAuthNonceError):

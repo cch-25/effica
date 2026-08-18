@@ -339,8 +339,16 @@ def validate_public_evidence(
             raise _provider_schema_error("provider evidence failed schema validation", exc) from exc
         if parsed.article_version_id != article_version_id:
             raise _provider_schema_error("provider evidence references another article version")
-        if source_text is not None and parsed.end > text_length:
-            raise _provider_schema_error("provider evidence location is outside article content")
+        if source_text is not None:
+            if parsed.end > text_length:
+                raise _provider_schema_error("provider evidence location is outside article content")
+            # Offsets are Python/Unicode character offsets, with an exclusive
+            # end. Validate the model's quote before any masking or redaction
+            # so a fabricated quote cannot be persisted as source evidence.
+            if source_text[parsed.start : parsed.end] != parsed.quote:
+                raise _provider_schema_error(
+                    "provider evidence quote does not match article content"
+                )
         try:
             result.append(
                 Evidence(
@@ -1239,7 +1247,10 @@ class DeterministicStubProvider(LLMProvider):
         x = int.from_bytes(digest[0:2], "big") % 201 - 100
         sensationalism = int.from_bytes(digest[6:8], "big") % 101
         confidence = round(0.55 + digest[8] / 255 * 0.4, 6)
-        quote = " ".join(masked_content.split())[:160] or masked_title[:160]
+        # Evidence offsets are exact Unicode character offsets into the masked
+        # content. Do not collapse whitespace here: doing so would make the
+        # quote differ from the slice that the provider validator checks.
+        quote = masked_content[:160] or masked_title[:160]
         rationale = sanitize_rationale(
             f"Content-first stub assessment for {masked_title}; evidence: {quote}",
             source_text=masked_content,

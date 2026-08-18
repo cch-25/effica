@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import math
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.app.db.enums import (
@@ -35,6 +40,7 @@ from apps.api.app.db.models import (
 )
 from apps.api.app.db.ulid import new_ulid
 from apps.api.app.db.utc import utc_now
+from apps.api.app.jobs.payloads import validate_job_payload
 from apps.api.app.repositories.admin import AdminRepositoryMixin
 from apps.api.app.repositories.product import ProductRepositoryMixin
 
@@ -47,6 +53,17 @@ def _enum_value(value: Any) -> Any:
     return getattr(value, "value", value)
 
 
+def _is_deadlock(error: BaseException) -> bool:
+    """Identify transient MySQL/MariaDB lock failures safe to retry."""
+
+    original = getattr(error, "orig", error)
+    message = str(original).lower()
+    return any(
+        marker in message
+        for marker in ("1213", "1205", "deadlock", "lock wait timeout")
+    )
+
+
 class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
     """Request-scoped SQLAlchemy repository for user/security/product state.
 
@@ -57,6 +74,8 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
     def __init__(self, session: AsyncSession, *, encryption_secret: str):
         self.session = session
         self._encryption_key = hashlib.sha256(encryption_secret.encode()).digest()
+
+    _OAUTH_CHALLENGE_JOB_TYPE = "__oauth_challenge__"
 
     async def bootstrap_policy_records(self) -> None:
         """Install mandatory versioned policy records when a fresh DB is empty."""
@@ -113,6 +132,122 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
             )
         await self.session.commit()
 
+    async def create_oauth_challenge(
+        self, *, state: str, challenge: dict[str, Any]
+    ) -> None:
+        """Persist an OAuth challenge in the shared DB with one-use state.
+
+        The queue table is already durable and has the required unique key and
+        JSON payload columns.  Challenge rows are marked CANCELLED so worker
+        claimers never execute them; ``consume_oauth_challenge`` transitions a
+        row to DEAD under a row lock before returning its payload.
+        """
+
+        expires_at = challenge.get("expires_at")
+        if hasattr(expires_at, "isoformat"):
+            expires_at = expires_at.isoformat()
+        payload = {**challenge, "expires_at": expires_at}
+        # Insert/commit the challenge before pruning old rows.  A broad DELETE
+        # over the queue table acquires next-key locks in InnoDB; doing it
+        # before an INSERT lets two concurrent OAuth starts deadlock even when
+        # their state keys are unrelated.  A transient deadlock is retried
+        # after rollback with a newly constructed row.
+        for attempt in range(3):
+            now = utc_now()
+            self.session.add(
+                Job(
+                    id=new_ulid(),
+                    job_type=self._OAUTH_CHALLENGE_JOB_TYPE,
+                    dedupe_key=state,
+                    status=JobStatus.CANCELLED,
+                    priority=0,
+                    available_at=now,
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    attempts=0,
+                    max_attempts=1,
+                    payload_json=payload,
+                    last_error_json=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            try:
+                await self.session.commit()
+                break
+            except OperationalError as exc:
+                await self.session.rollback()
+                if not _is_deadlock(exc) or attempt == 2:
+                    raise
+                await asyncio.sleep(0.01 * (attempt + 1))
+
+        # Cleanup is deliberately bounded and best-effort.  The plain SELECT
+        # is a non-locking consistent read; deleting by primary keys avoids the
+        # range locks that caused the start/start deadlock.  Challenge creation
+        # has already committed, so a cleanup race must never turn a successful
+        # authentication start into a 500.
+        for cleanup_attempt in range(2):
+            try:
+                cutoff = utc_now() - timedelta(minutes=11)
+                stale_ids = list(
+                    (
+                        await self.session.scalars(
+                            select(Job.id)
+                            .where(
+                                Job.job_type == self._OAUTH_CHALLENGE_JOB_TYPE,
+                                Job.status == JobStatus.CANCELLED,
+                                Job.created_at < cutoff,
+                            )
+                            .order_by(Job.created_at.asc(), Job.id.asc())
+                            .limit(100)
+                        )
+                    ).all()
+                )
+                if stale_ids:
+                    await self.session.execute(delete(Job).where(Job.id.in_(stale_ids)))
+                    await self.session.commit()
+                break
+            except OperationalError as exc:
+                await self.session.rollback()
+                if not _is_deadlock(exc) or cleanup_attempt == 1:
+                    break
+                await asyncio.sleep(0.01 * (cleanup_attempt + 1))
+            except SQLAlchemyError:
+                await self.session.rollback()
+                break
+
+    async def consume_oauth_challenge(self, state: str) -> dict[str, Any] | None:
+        """Atomically consume one unexpired OAuth challenge, if present."""
+
+        row = await self.session.scalar(
+            select(Job)
+            .where(
+                Job.job_type == self._OAUTH_CHALLENGE_JOB_TYPE,
+                Job.dedupe_key == state,
+                Job.status == JobStatus.CANCELLED,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            return None
+        payload = dict(row.payload_json or {})
+        row.status = JobStatus.DEAD
+        row.updated_at = utc_now()
+        await self.session.commit()
+        raw_expires = payload.get("expires_at")
+        try:
+            expires_at = (
+                raw_expires
+                if isinstance(raw_expires, datetime)
+                else datetime.fromisoformat(str(raw_expires))
+            )
+        except (TypeError, ValueError):
+            return None
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=utc_now().tzinfo)
+        payload["expires_at"] = expires_at
+        return payload if expires_at > utc_now() else None
+
     async def find_session(self, raw_token: str) -> dict[str, Any] | None:
         row = await self.session.scalar(
             select(DBSession).where(DBSession.token_hash == _digest(raw_token))
@@ -146,7 +281,7 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
         if account:
             user = await self.session.get(User, account.user_id)
             if user is None:
-                raise RuntimeError("OAuth account references a missing user")
+                raise RuntimeError("OAuth account references a missing user") from None
             return self.user_view(user)
         user = User(
             id=new_ulid(),
@@ -157,6 +292,10 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
             deleted_at=None,
         )
         self.session.add(user)
+        # OAuthAccount has a real FK to users, but the models intentionally do
+        # not declare an ORM relationship.  Flush the parent explicitly so
+        # MariaDB cannot order the child INSERT first (error 1452).
+        await self.session.flush()
         self.session.add(
             OAuthAccount(
                 id=new_ulid(),
@@ -166,7 +305,27 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
                 created_at=utc_now(),
             )
         )
-        await self.session.flush()
+        try:
+            await self.session.flush()
+        except IntegrityError:
+            # Two callback requests may both observe no account.  The unique
+            # provider/subject key is the serialization point; reload the
+            # winner after rolling back this request's speculative insert.
+            rollback = getattr(self.session, "rollback", None)
+            if rollback is None:
+                raise
+            await rollback()
+            account = await self.session.scalar(
+                select(OAuthAccount).where(
+                    OAuthAccount.provider == OAuthProvider(provider),
+                    OAuthAccount.provider_subject == subject,
+                )
+            )
+            if account is None:
+                raise
+            user = await self.session.get(User, account.user_id)
+            if user is None:
+                raise RuntimeError("OAuth account references a missing user") from None
         return self.user_view(user)
 
     async def rotate_session(
@@ -211,7 +370,6 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
             "id": user.id,
             "display_name": user.display_name or "Member",
             "role": _enum_value(user.role),
-            "status": _enum_value(user.status),
         }
 
     async def complete_user_view(self, user: User) -> dict[str, Any]:
@@ -243,9 +401,22 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
         }
 
     async def list_consents(self, user_id: str) -> list[dict[str, Any]]:
-        versions = list(
-            (await self.session.scalars(select(ConsentVersion).order_by(ConsentVersion.active_from))).all()
+        all_versions = list(
+            (
+                await self.session.scalars(
+                    select(ConsentVersion).order_by(
+                        ConsentVersion.active_from.desc(), ConsentVersion.id.desc()
+                    )
+                )
+            ).all()
         )
+        # A purpose has one current version in the public contract.  Older
+        # immutable documents remain queryable for audit/export but must not
+        # keep consent_complete false or be rendered as additional checkboxes.
+        latest_by_purpose: dict[str, ConsentVersion] = {}
+        for version in all_versions:
+            latest_by_purpose.setdefault(version.purpose, version)
+        versions = sorted(latest_by_purpose.values(), key=lambda item: item.active_from)
         grants = {
             item.consent_version_id: item
             for item in (
@@ -266,11 +437,53 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
             for version in versions
         ]
 
+    async def list_questionnaire_versions(
+        self, kind: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Return the latest active definition for each questionnaire kind."""
+
+        if kind == "political":
+            kind = QuestionnaireKind.ONBOARDING.value
+        statement = select(QuestionnaireVersion).order_by(
+            QuestionnaireVersion.active_from.desc(), QuestionnaireVersion.id.desc()
+        )
+        if kind is not None:
+            statement = statement.where(QuestionnaireVersion.kind == QuestionnaireKind(kind))
+        rows = list((await self.session.scalars(statement)).all())
+        latest: dict[str, QuestionnaireVersion] = {}
+        for row in rows:
+            latest.setdefault(str(_enum_value(row.kind)), row)
+        result: list[dict[str, Any]] = []
+        for row in latest.values():
+            schema_json = dict(row.schema_json or {})
+            questions = schema_json.get("questions", [])
+            keys = [str(item["id"]) for item in questions if isinstance(item, dict) and item.get("id")]
+            result.append(
+                {
+                    "id": row.id,
+                    "kind": _enum_value(row.kind),
+                    "version": row.version,
+                    "schema_json": schema_json,
+                    "scoring_json": dict(row.scoring_json or {}),
+                    "active_from": row.active_from,
+                    "keys": keys,
+                }
+            )
+        return sorted(result, key=lambda item: item["kind"])
+
     async def set_consent(
         self, user_id: str, consent_version_id: str, granted: bool
     ) -> dict[str, Any] | None:
         version = await self.session.get(ConsentVersion, consent_version_id)
         if version is None:
+            return None
+        current_id = await self.session.scalar(
+            select(ConsentVersion.id)
+            .where(ConsentVersion.purpose == version.purpose)
+            .order_by(ConsentVersion.active_from.desc(), ConsentVersion.id.desc())
+            .limit(1)
+        )
+        if current_id != consent_version_id:
             return None
         row = await self.session.scalar(
             select(UserConsent).where(
@@ -319,6 +532,27 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
     async def submit_questionnaire(
         self, user_id: str, questionnaire_version_id: str, answers: dict[str, Any]
     ) -> dict[str, Any] | None:
+        # Serialize repeated submissions on a stable parent row.  Updating an
+        # empty active-profile range before inserting causes InnoDB next-key
+        # locks to deadlock even for different users.
+        user = await self.session.scalar(
+            select(User).where(User.id == user_id).with_for_update()
+        )
+        if user is None:
+            return None
+        existing_profiles = list(
+            (
+                await self.session.scalars(
+                    select(UserProfile).where(
+                        UserProfile.user_id == user_id,
+                        UserProfile.kind == ProfileKind.SELF_REPORTED,
+                        UserProfile.active.is_(True),
+                    )
+                )
+            ).all()
+        )
+        for existing_profile in existing_profiles:
+            existing_profile.active = False
         version = await self.session.get(QuestionnaireVersion, questionnaire_version_id)
         if version is None or _enum_value(version.kind) != QuestionnaireKind.ONBOARDING.value:
             return None
@@ -339,7 +573,10 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
         )
         try:
             coordinates = {
-                axis: max(-100, min(100, int(answers[question])))
+                axis: max(
+                    -100,
+                    min(100, int(self._strict_numeric_answer(answers[question]))),
+                )
                 for axis, question in axes.items()
             }
         except (KeyError, TypeError, ValueError) as exc:
@@ -353,15 +590,6 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
                 encrypted_payload=self._encrypt_answers(answers, aad=response_id.encode()),
                 submitted_at=utc_now(),
             )
-        )
-        await self.session.execute(
-            update(UserProfile)
-            .where(
-                UserProfile.user_id == user_id,
-                UserProfile.kind == ProfileKind.SELF_REPORTED,
-                UserProfile.active.is_(True),
-            )
-            .values(active=False)
         )
         profile = UserProfile(
             id=new_ulid(),
@@ -388,6 +616,14 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
             "source_version": profile.source_version,
             "active": profile.active,
         }
+
+    @staticmethod
+    def _strict_numeric_answer(value: Any) -> int | float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("questionnaire answers must be numeric")
+        if not math.isfinite(float(value)):
+            raise ValueError("questionnaire answers must be finite")
+        return value
 
     async def patch_demographics(
         self,
@@ -425,30 +661,69 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
     async def enqueue(
         self, job_type: str, dedupe_key: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
+        # Keep the live repository on the same producer-side contract boundary
+        # as JobEnvelope and the admin enqueue helper.  Validation must happen
+        # before constructing/upserting a Job so malformed built-ins can never
+        # become durable queue rows.
+        payload = validate_job_payload(job_type, payload)
+        now = utc_now()
+        values = {
+            "id": new_ulid(),
+            "job_type": job_type,
+            "dedupe_key": dedupe_key,
+            "status": JobStatus.PENDING,
+            "priority": 0,
+            "available_at": now,
+            "lease_owner": None,
+            "lease_expires_at": None,
+            "attempts": 0,
+            "max_attempts": 5,
+            "payload_json": payload,
+            "last_error_json": None,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        # Select-then-insert is not an idempotency boundary: two callbacks can
+        # both observe no row and one then loses to the unique key.  Let the
+        # database arbitrate with a no-op conflict update and reload the
+        # canonical row in the same transaction.
+        dialect = getattr(getattr(self.session, "bind", None), "dialect", None)
+        if dialect is None and hasattr(self.session, "get_bind"):
+            try:
+                dialect = getattr(self.session.get_bind(), "dialect", None)
+            except Exception:
+                dialect = None
+        if dialect is None and hasattr(self.session, "_session"):
+            dialect = getattr(getattr(self.session._session, "bind", None), "dialect", None)
+        dialect_name = getattr(dialect, "name", "")
+        if dialect_name in {"mysql", "mariadb"}:
+            statement = mysql_insert(Job).values(**values).on_duplicate_key_update(id=Job.id)
+            await self.session.execute(statement)
+        elif dialect_name == "sqlite":
+            statement = sqlite_insert(Job).values(**values).on_conflict_do_nothing(
+                index_elements=["job_type", "dedupe_key"]
+            )
+            await self.session.execute(statement)
+        else:
+            # Small adapters and future dialects retain a safe fallback.  A
+            # conflict is translated into the same canonical reload rather
+            # than leaking a 500 to an idempotent caller.
+            self.session.add(Job(**values))
+            try:
+                await self.session.flush()
+            except IntegrityError:
+                rollback = getattr(self.session, "rollback", None)
+                if rollback is None:
+                    raise
+                await rollback()
         existing = await self.session.scalar(
             select(Job).where(Job.job_type == job_type, Job.dedupe_key == dedupe_key)
         )
-        if existing:
-            return {"id": existing.id, "status": _enum_value(existing.status)}
-        row = Job(
-            id=new_ulid(),
-            job_type=job_type,
-            dedupe_key=dedupe_key,
-            status=JobStatus.PENDING,
-            priority=0,
-            available_at=utc_now(),
-            lease_owner=None,
-            lease_expires_at=None,
-            attempts=0,
-            max_attempts=5,
-            payload_json=payload,
-            last_error_json=None,
-            created_at=utc_now(),
-            updated_at=utc_now(),
-        )
-        self.session.add(row)
+        if existing is None:
+            raise RuntimeError("job upsert did not produce a durable row")
         await self.session.commit()
-        return {"id": row.id, "status": JobStatus.PENDING.value}
+        return {"id": existing.id, "status": _enum_value(existing.status)}
 
     async def request_export(self, user_id: str) -> dict[str, Any]:
         return await self.enqueue("export_user", user_id, {"user_id": user_id})

@@ -12,6 +12,10 @@ from typing import Any
 
 class VoteQuality(str, Enum):
     VALID = "VALID"
+    # ``QUALIFIED`` is the persisted/database status for a normal vote. Keep
+    # VALID as a legacy compatibility value while accepting both at the
+    # domain boundary during the enum migration.
+    QUALIFIED = "QUALIFIED"
     FLAGGED = "FLAGGED"
     REJECTED = "REJECTED"
 
@@ -177,7 +181,7 @@ def aggregate_votes(
     active: list[Vote] = []
     for item in votes:
         vote = item if isinstance(item, Vote) else Vote(**item)
-        if vote.active and vote.quality_status == VoteQuality.VALID:
+        if vote.active and vote.quality_status in {VoteQuality.VALID, VoteQuality.QUALIFIED}:
             active.append(vote)
     result: dict[str, Any] = {
         "count": len(active),
@@ -190,13 +194,20 @@ def aggregate_votes(
             segment = segment_by_user.get(vote.user_id)
             if segment is not None:
                 grouped.setdefault(segment, []).append(vote)
+        # A cohort is a set of people, not a count of response rows. A user
+        # can have multiple records in a worker payload, so select one
+        # deterministic latest representative before privacy counting and
+        # averaging.
+        representatives = {
+            segment: _latest_per_user(values) for segment, values in grouped.items()
+        }
         result["segments"] = {
             segment: {"count": len(values), "aggregate": _mean_values(values)}
-            for segment, values in sorted(grouped.items())
+            for segment, values in sorted(representatives.items())
             if len(values) >= min_segment_size
         }
         result["suppressed_segment_count"] = sum(
-            1 for values in grouped.values() if len(values) < min_segment_size
+            1 for values in representatives.values() if len(values) < min_segment_size
         )
     return result
 
@@ -250,3 +261,29 @@ def _mean_values(votes: list[Vote]) -> dict[str, int | None]:
         "z": 0,
         "sensationalism": round(mean(vote.sensationalism for vote in votes)),
     }
+
+
+def _latest_per_user(votes: Iterable[Vote]) -> list[Vote]:
+    """Return one stable representative vote per user."""
+
+    latest: dict[str, Vote] = {}
+    for vote in votes:
+        prior = latest.get(vote.user_id)
+        if prior is None or _vote_order(vote) > _vote_order(prior):
+            latest[vote.user_id] = vote
+    return [latest[user_id] for user_id in sorted(latest)]
+
+
+def _vote_order(vote: Vote) -> tuple[int, float, str]:
+    stamp = vote.updated_at or vote.created_at
+    if isinstance(stamp, str):
+        try:
+            stamp = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        except ValueError:
+            # A malformed persistence timestamp must not make privacy
+            # aggregation crash; revision and vote id remain deterministic
+            # tie-breakers.
+            return vote.revision, float("-inf"), vote.vote_id
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+    return vote.revision, stamp.timestamp(), vote.vote_id

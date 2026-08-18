@@ -138,3 +138,8 @@ def test_credit_ledger_matches_append_only_reversal_contract() -> None:
         if isinstance(constraint, ForeignKeyConstraint)
         for foreign_key in constraint.elements
     )
+    assert any(
+        isinstance(constraint, UniqueConstraint)
+        and constraint.name == "uq_credit_ledger_reversed_source"
+        for constraint in table.constraints
+    )

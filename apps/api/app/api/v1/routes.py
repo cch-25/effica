@@ -7,6 +7,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 from statistics import fmean
 from typing import Any, Literal
+from urllib.parse import unquote, urlsplit
 
 from fastapi import APIRouter, Cookie, Depends, Header, Query, Request, Response
 from fastapi.responses import RedirectResponse
@@ -28,6 +29,7 @@ from apps.api.app.api.v1.schemas import (
     ArticlePage,
     ArticleView,
     AutopilotSettingsPut,
+    AutopilotSettingsView,
     ConsentSubmission,
     ConsentView,
     DeleteAccountRequest,
@@ -45,6 +47,7 @@ from apps.api.app.api.v1.schemas import (
     PatchDocument,
     ProfileView,
     QuestionnaireSubmission,
+    QuestionnaireVersionView,
     ReadResult,
     ReadReturn,
     ReadSessionCreate,
@@ -55,6 +58,7 @@ from apps.api.app.api.v1.schemas import (
     RollbackRequest,
     ScoreView,
     ShareCardCreate,
+    ShareCardJobAccepted,
     ShareCardView,
     SimulationRequest,
     SourceCreate,
@@ -123,6 +127,38 @@ def _oauth_provider(provider: str, settings: Settings):
     )
 
 
+def _safe_return_to(value: str | None) -> str | None:
+    """Validate an OAuth post-login path as a same-origin relative URL.
+
+    OAuth state is the trust boundary for the value, so neither an absolute
+    URL nor a protocol-relative/path-backslash variant may be persisted in a
+    challenge.  Keeping the query string is intentional for the original
+    page's filters and cursor.
+    """
+
+    if value is None or value == "":
+        return None
+    if any(ord(char) < 0x20 for char in value):
+        raise ApiError(400, "RETURN_TO_INVALID", "The OAuth return path is invalid.")
+    decoded = unquote(value)
+    if not value.startswith("/") or value.startswith("//") or value.startswith("\\"):
+        raise ApiError(400, "RETURN_TO_INVALID", "The OAuth return path is invalid.")
+    if decoded.startswith(("//", "/\\", "\\")):
+        raise ApiError(400, "RETURN_TO_INVALID", "The OAuth return path is invalid.")
+    parsed = urlsplit(value)
+    if parsed.scheme or parsed.netloc:
+        raise ApiError(400, "RETURN_TO_INVALID", "The OAuth return path is invalid.")
+    return value
+
+
+def _web_return_target(settings: Settings, return_to: str | None, fallback: str) -> str:
+    path = return_to or fallback
+    # ``_safe_return_to`` is called before persistence; keep this defensive
+    # guard close to the final redirect as well.
+    validated = _safe_return_to(path) or fallback
+    return settings.web_base_url.rstrip("/") + validated
+
+
 def _not_found(kind: str) -> ApiError:
     return ApiError(
         404, f"{kind.upper()}_NOT_FOUND", f"{kind.replace('_', ' ').title()} was not found."
@@ -162,16 +198,25 @@ def _idempotent(
 
 
 @router.get("/auth/{provider}/start", operation_id="auth_provider_start")
-def auth_start(
+async def auth_start(
     provider: Literal["kakao", "naver", "google", "mock"],
     redirect_uri: str,
+    return_to: str | None = Query(default=None, alias="returnTo"),
     settings: Settings = Depends(get_settings),
     platform: PlatformState = Depends(get_state),
+    repository: MariaDBPlatformRepository | None = Depends(get_repository),
 ) -> RedirectResponse:
     if redirect_uri not in settings.redirect_allowlist:
         raise ApiError(400, "REDIRECT_URI_INVALID", "The redirect URI is not allowlisted.")
+    validated_return_to = _safe_return_to(return_to)
     state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
-    if provider != "mock" and not getattr(settings, f"{provider}_client_id"):
+    if (provider == "mock" and settings.app_env == "production") or (
+        provider != "mock"
+        and not (
+            getattr(settings, f"{provider}_client_id")
+            and getattr(settings, f"{provider}_client_secret")
+        )
+    ):
         raise ApiError(400, "AUTH_PROVIDER_DISABLED", "The requested OAuth provider is disabled.")
     try:
         target = _oauth_provider(provider, settings).authorization_url(state, nonce, redirect_uri)
@@ -179,12 +224,28 @@ def auth_start(
         raise ApiError(
             400, "AUTH_PROVIDER_DISABLED", "The requested OAuth provider is disabled."
         ) from exc
-    platform.oauth_challenges[state] = {
+    challenge = {
         "provider": provider,
         "nonce": nonce,
         "redirect_uri": redirect_uri,
+        "return_to": validated_return_to,
         "expires_at": utcnow() + timedelta(minutes=10),
     }
+    if repository is not None:
+        await repository.create_oauth_challenge(state=state, challenge=challenge)
+    else:
+        # The memory backend is intentionally deterministic but still needs a
+        # one-use atomic transition when two callbacks race in one process.
+        with platform.lock:
+            now = utcnow()
+            expired = [
+                key
+                for key, value in platform.oauth_challenges.items()
+                if value.get("expires_at") and value["expires_at"] <= now
+            ]
+            for key in expired:
+                platform.oauth_challenges.pop(key, None)
+            platform.oauth_challenges[state] = challenge
     response = RedirectResponse(target, status_code=302)
     response.set_cookie(
         "oauth_state",
@@ -205,6 +266,25 @@ def auth_start(
     return response
 
 
+@router.get(
+    "/auth/providers",
+    response_model=list[Literal["kakao", "naver", "google", "mock"]],
+    operation_id="list_auth_providers",
+)
+def auth_providers(settings: Settings = Depends(get_settings)) -> list[str]:
+    """Return only providers that can complete a server-side OAuth flow."""
+
+    providers: list[str] = []
+    if settings.app_env != "production":
+        providers.append("mock")
+    for provider in ("kakao", "naver", "google"):
+        if getattr(settings, f"{provider}_client_id") and getattr(
+            settings, f"{provider}_client_secret"
+        ):
+            providers.append(provider)
+    return providers
+
+
 @router.get("/auth/{provider}/callback", operation_id="auth_provider_callback")
 async def auth_callback(
     provider: Literal["kakao", "naver", "google", "mock"],
@@ -222,29 +302,44 @@ async def auth_callback(
     expected_state = oauth_state_header or oauth_state_cookie
     if not expected_state or not secrets.compare_digest(state_param, expected_state):
         raise ApiError(400, "OAUTH_STATE_INVALID", "OAuth state verification failed.")
-    challenge = platform.oauth_challenges.pop(state_param, None)
+    if repository is not None:
+        challenge = await repository.consume_oauth_challenge(state_param)
+    else:
+        with platform.lock:
+            challenge = platform.oauth_challenges.pop(state_param, None)
     if (
         not challenge
         or challenge["provider"] != provider
         or challenge["expires_at"] <= utcnow()
-        or (
-            oauth_nonce_cookie
-            and not secrets.compare_digest(challenge["nonce"], oauth_nonce_cookie)
-        )
+        or not oauth_nonce_cookie
+        or not secrets.compare_digest(challenge["nonce"], oauth_nonce_cookie)
     ):
         raise ApiError(400, "OAUTH_STATE_INVALID", "OAuth state or nonce verification failed.")
     if redirect_uri and redirect_uri not in settings.redirect_allowlist:
         raise ApiError(400, "REDIRECT_URI_INVALID", "The redirect URI is not allowlisted.")
-    if provider != "mock" and not getattr(settings, f"{provider}_client_id"):
+    if (provider == "mock" and settings.app_env == "production") or (
+        provider != "mock"
+        and not (
+            getattr(settings, f"{provider}_client_id")
+            and getattr(settings, f"{provider}_client_secret")
+        )
+    ):
         raise ApiError(400, "AUTH_PROVIDER_DISABLED", "The requested OAuth provider is disabled.")
-    callback_uri = redirect_uri or next(iter(settings.redirect_allowlist))
-    if callback_uri != challenge["redirect_uri"]:
+    # The challenge is authoritative.  Picking an arbitrary allowlist item
+    # makes callbacks depend on set/hash iteration order and breaks providers
+    # whose registered URI is not the first item.
+    callback_uri = challenge["redirect_uri"]
+    if redirect_uri is not None and redirect_uri != callback_uri:
         raise ApiError(400, "REDIRECT_URI_INVALID", "OAuth callback redirect URI changed.")
     try:
         identity = await _oauth_provider(provider, settings).exchange_code(
             code,
             callback_uri,
-            expected_nonce=challenge["nonce"] if provider == "mock" else None,
+            # The callback cookie is mandatory for every provider.  The mock
+            # adapter (and OIDC adapters that expose an ID-token nonce) can
+            # additionally validate the provider claim; Kakao/Naver currently
+            # use the documented state+browser-nonce binding instead.
+            expected_nonce=challenge["nonce"] if provider in {"mock", "google"} else None,
         )
     except OAuthError as exc:
         raise ApiError(
@@ -286,7 +381,11 @@ async def auth_callback(
             "nonce_verified": oauth_nonce_cookie is not None,
         }
         onboarding_complete = bool(platform.users[user_id]["onboarding_complete"])
-    target = settings.web_base_url + ("/" if onboarding_complete else "/onboarding/consent")
+    target = _web_return_target(
+        settings,
+        challenge.get("return_to"),
+        "/" if onboarding_complete else "/onboarding/consent",
+    )
     response = RedirectResponse(target, status_code=302)
     response.set_cookie(
         "session",
@@ -407,6 +506,45 @@ async def submit_consent(
             if profile["user_id"] == principal.user_id and profile["kind"] == "BEHAVIORAL":
                 profile["active"] = False
     return {**consent, "granted": body.granted}
+
+
+@router.get(
+    "/questionnaires",
+    response_model=list[QuestionnaireVersionView],
+    operation_id="list_questionnaire_versions",
+)
+async def list_questionnaire_versions(
+    kind: Literal["onboarding", "political", "efficacy"] | None = None,
+    platform: PlatformState = Depends(get_state),
+    repository: MariaDBPlatformRepository | None = Depends(get_repository),
+) -> list[dict[str, Any]]:
+    """Expose the active questionnaire contract before a response is posted."""
+
+    normalized_kind = "onboarding" if kind == "political" else kind
+    if repository is not None:
+        return await repository.list_questionnaire_versions(normalized_kind)
+    rows: list[dict[str, Any]] = []
+    for item in platform.questionnaires.values():
+        item_kind = str(item.get("kind", "onboarding")).lower()
+        if item_kind in {"political_onboarding", "political"}:
+            item_kind = "onboarding"
+        if normalized_kind and item_kind != normalized_kind:
+            continue
+        rows.append(
+            {
+                "id": item["id"],
+                "kind": item_kind,
+                "version": item.get("version", "1.0"),
+                "schema_json": item.get(
+                    "schema_json",
+                    {"questions": [{"id": key, "required": True} for key in item.get("keys", [])]},
+                ),
+                "scoring_json": item.get("scoring_json", {}),
+                "active_from": item.get("active_from", utcnow()),
+                "keys": list(item.get("keys", [])),
+            }
+        )
+    return rows
 
 
 @router.post(
@@ -588,17 +726,28 @@ async def feed(
     personalized = bool(mode == "personalized" and profile)
     rows: list[dict[str, Any]] = []
     last_source = None
+    seen_article_ids: set[str] = set()
+    issue_counts: dict[str | None, int] = {}
     articles = sorted(platform.articles.values(), key=lambda row: row["published_at"], reverse=True)
     if profile:
         articles.sort(key=lambda row: abs(platform.scores[row["id"]][-1]["x"] - profile["x"]))
     for article in articles:
+        issue = platform.issues.get(article.get("issue_id"))
+        if issue and str(issue.get("status", "")).upper() in {"MERGED", "CLOSED", "ARCHIVED"}:
+            continue
+        if article["id"] in seen_article_ids:
+            continue
+        seen_article_ids.add(article["id"])
+        issue_id = article.get("issue_id")
+        if issue_counts.get(issue_id, 0) >= 1:
+            continue
         if article["source_id"] == last_source:
             continue
         score = platform.scores[article["id"]][-1]
         rows.append(
             FeedItem(
                 article_id=article["id"],
-                issue_id=article["issue_id"],
+                issue_id=issue_id,
                 title=article["title"],
                 source=article["source"],
                 coordinate={
@@ -609,6 +758,7 @@ async def feed(
             ).model_dump()
         )
         last_source = article["source_id"]
+        issue_counts[issue_id] = issue_counts.get(issue_id, 0) + 1
     page = _page(rows, cursor)
     page["personalized"] = personalized
     return page
@@ -1124,20 +1274,35 @@ async def put_vote(
         return result
     if article_id not in platform.articles:
         raise _not_found("article")
-    history = platform.votes.setdefault((principal.user_id, article_id), [])
-    if history:
-        history[-1]["active"] = False
-    vote = {
-        **body.model_dump(),
-        "id": new_id(),
-        "revision": len(history) + 1,
-        "quality_status": "QUALIFIED",
-        "active": True,
-        "created_at": utcnow(),
-        "updated_at": utcnow(),
-    }
-    history.append(vote)
-    platform.enqueue("aggregate_votes", f"{article_id}:{len(history)}", {"article_id": article_id})
+    with platform.lock:
+        history = platform.votes.setdefault((principal.user_id, article_id), [])
+        if history:
+            history[-1]["active"] = False
+        latest_revision = max(
+            (
+                vote["revision"]
+                for (vote_user_id, vote_article_id), user_history in platform.votes.items()
+                if vote_article_id == article_id
+                for vote in user_history
+            ),
+            default=0,
+        )
+        revision = latest_revision + 1
+        vote = {
+            **body.model_dump(),
+            "id": new_id(),
+            "revision": revision,
+            "quality_status": "QUALIFIED",
+            "active": True,
+            "created_at": utcnow(),
+            "updated_at": utcnow(),
+        }
+        history.append(vote)
+        platform.enqueue(
+            "aggregate_votes",
+            f"{article_id}:{revision}",
+            {"article_id": article_id, "version": revision},
+        )
     return {
         key: vote[key]
         for key in ("x", "y", "z", "sensationalism", "revision", "quality_status", "active")
@@ -1160,13 +1325,27 @@ async def delete_vote(
         if not await repository.delete_vote_row(user_id=principal.user_id, article_id=article_id):
             raise _not_found("vote")
         return
-    history = platform.votes.get((principal.user_id, article_id))
-    if not history or not history[-1]["active"]:
-        raise _not_found("vote")
-    history[-1]["active"] = False
-    platform.enqueue(
-        "aggregate_votes", f"{article_id}:delete:{len(history)}", {"article_id": article_id}
-    )
+    with platform.lock:
+        history = platform.votes.get((principal.user_id, article_id))
+        if not history or not history[-1]["active"]:
+            raise _not_found("vote")
+        latest_revision = max(
+            (
+                vote["revision"]
+                for (vote_user_id, vote_article_id), user_history in platform.votes.items()
+                if vote_article_id == article_id
+                for vote in user_history
+            ),
+            default=0,
+        )
+        revision = latest_revision + 1
+        history[-1]["revision"] = revision
+        history[-1]["active"] = False
+        platform.enqueue(
+            "aggregate_votes",
+            f"{article_id}:{revision}",
+            {"article_id": article_id, "version": revision},
+        )
 
 
 @router.get("/me/credits", response_model=Page, operation_id="get_credits")
@@ -1376,7 +1555,7 @@ async def visualization_timeline(
 
 @router.post(
     "/share-cards",
-    response_model=JobAccepted,
+    response_model=ShareCardJobAccepted,
     status_code=202,
     dependencies=[Depends(require_csrf)],
     operation_id="create_share_card",
@@ -1393,19 +1572,29 @@ async def create_share_card(
                 user_id=principal.user_id,
                 template=body.template,
                 display_name=body.display_name,
+                publication_confirmed=body.political_data_publication_confirmed,
             )
         except ProductConflictError as exc:
             raise ApiError(
                 409, "PROFILE_REQUIRED", "An active profile is required for sharing."
             ) from exc
-        return {"job_id": job["id"], "status": job["status"]}
-    card = platform.create_share_card(principal.user_id, body.template, body.display_name)
+        return {
+            "job_id": job["id"],
+            "status": job["status"],
+            "share_card_id": _card["id"],
+        }
+    card = platform.create_share_card(
+        principal.user_id,
+        body.template,
+        body.display_name,
+        publication_confirmed=body.political_data_publication_confirmed,
+    )
     job = next(
         job
         for job in platform.jobs.values()
         if job["job_type"] == "render_share_card" and job["dedupe_key"] == card["id"]
     )
-    return {"job_id": job["id"], "status": "PENDING"}
+    return {"job_id": job["id"], "status": "PENDING", "share_card_id": card["id"]}
 
 
 @router.get(
@@ -1561,13 +1750,14 @@ async def admin_create_source(
                 body.model_dump(),
                 actor_id=principal.user_id,
                 idempotency_key=key,
+                reason=body.reason,
                 request_id=request.state.request_id,
             )
         )
 
     def create() -> dict[str, Any]:
         source_id = new_id()
-        result = {"id": source_id, **body.model_dump(), "version": 1}
+        result = {"id": source_id, **body.model_dump(exclude={"reason"}), "version": 1}
         platform.sources[source_id] = result
         platform.audit_action(
             principal.user_id,
@@ -1576,7 +1766,7 @@ async def admin_create_source(
             source_id,
             None,
             result,
-            "create source",
+            body.reason,
             request.state.request_id,
         )
         return result
@@ -1646,6 +1836,7 @@ async def admin_patch_source(
 )
 async def admin_crawl_source(
     source_id: str,
+    body: ReasonRequest,
     request: Request,
     principal: Principal = Depends(require_analyst),
     key: str = Depends(require_idempotency_key),
@@ -1658,6 +1849,7 @@ async def admin_crawl_source(
                 source_id,
                 actor_id=principal.user_id,
                 idempotency_key=key,
+                reason=body.reason,
                 request_id=request.state.request_id,
             )
         )
@@ -1684,8 +1876,19 @@ async def admin_crawl_source(
             "robots_status": source.get("robots_status", "UNKNOWN"),
             "terms_status": source.get("terms_status", "UNKNOWN"),
             "actor_id": principal.user_id,
+            "reason": body.reason,
             "mode": "fixture",
         },
+    )
+    platform.audit_action(
+        principal.user_id,
+        "CRAWL_ENQUEUED",
+        "source",
+        source_id,
+        None,
+        {"job_id": job["id"], "status": "PENDING"},
+        body.reason,
+        request.state.request_id,
     )
     return {"job_id": job["id"], "status": "PENDING"}
 
@@ -1725,20 +1928,64 @@ async def admin_merge_issue(
                 body.target_issue_id,
                 actor_id=principal.user_id,
                 idempotency_key=key,
+                reason=body.reason,
                 request_id=request.state.request_id,
             )
         )
-    if issue_id not in platform.issues or body.target_issue_id not in platform.issues:
+    source = platform.issues.get(issue_id)
+    if source is None:
         raise _not_found("issue")
-    job = platform.enqueue(
-        "merge_issue",
-        f"{issue_id}:{body.target_issue_id}:{key}",
-        {
-            "source_issue_id": issue_id,
-            "target_issue_id": body.target_issue_id,
-            "actor_id": principal.user_id,
-        },
-    )
+    if issue_id == body.target_issue_id:
+        raise ApiError(400, "INVALID_ISSUE_OPERATION_PAYLOAD", "An issue cannot be merged into itself.")
+    # The merge worker treats the target as an output and can create it when
+    # the caller supplies a new identifier.  Mirror that contract in the
+    # deterministic backend so a missing target is not rejected only in local
+    # mode.  Hold the state lock across target creation and enqueue so a
+    # caller cannot observe a target without its merge job (or vice versa).
+    with platform.lock:
+        target_created = body.target_issue_id not in platform.issues
+        if target_created:
+            now = utcnow()
+            platform.issues[body.target_issue_id] = {
+                "id": body.target_issue_id,
+                "title": source.get("title", "Untitled issue"),
+                "summary": source.get("summary", ""),
+                "status": "OPEN",
+                "version": 1,
+                "article_ids": [],
+                "opened_at": now,
+                "last_activity_at": now,
+            }
+        try:
+            job = platform.enqueue(
+                "merge_issue",
+                f"{issue_id}:{body.target_issue_id}:{key}",
+                {
+                    "source_issue_id": issue_id,
+                    "target_issue_id": body.target_issue_id,
+                    "actor_id": principal.user_id,
+                    "reason": body.reason,
+                },
+            )
+        except BaseException:
+            if target_created:
+                platform.issues.pop(body.target_issue_id, None)
+            raise
+        platform.audit_action(
+            principal.user_id,
+            "ISSUE_MERGE_ENQUEUED",
+            "issue",
+            issue_id,
+            None,
+            {
+                "job": job,
+                "source_issue_id": issue_id,
+                "target_issue_id": body.target_issue_id,
+                "target_created": target_created,
+            },
+            body.reason,
+            request.state.request_id,
+        )
     return {"job_id": job["id"], "status": "PENDING"}
 
 
@@ -1765,6 +2012,7 @@ async def admin_split_issue(
                 body.article_ids,
                 actor_id=principal.user_id,
                 idempotency_key=key,
+                reason=body.reason,
                 request_id=request.state.request_id,
             )
         )
@@ -1774,7 +2022,17 @@ async def admin_split_issue(
     job = platform.enqueue(
         "split_issue",
         f"{issue_id}:{stable_hash('|'.join(sorted(body.article_ids)))}:{key}",
-        {"issue_id": issue_id, "article_ids": body.article_ids, "actor_id": principal.user_id},
+        {"issue_id": issue_id, "article_ids": body.article_ids, "actor_id": principal.user_id, "reason": body.reason},
+    )
+    platform.audit_action(
+        principal.user_id,
+        "ISSUE_SPLIT_ENQUEUED",
+        "issue",
+        issue_id,
+        None,
+        {"job": job, "issue_id": issue_id, "article_ids": body.article_ids},
+        body.reason,
+        request.state.request_id,
     )
     return {"job_id": job["id"], "status": "PENDING"}
 
@@ -2058,9 +2316,14 @@ async def admin_list_weights(
     repository: MariaDBPlatformRepository | None = Depends(get_repository),
 ) -> dict[str, Any]:
     if repository is not None:
-        return _page(await _admin_repo(repository.list_weights()), cursor)
+        rows = await _admin_repo(repository.list_weights())
+        settings = await _admin_repo(repository.get_autopilot_settings())
+        rows = [{**row, "profile_version": settings["version"]} for row in rows]
+        return _page(rows, cursor)
+    profile_version = int(platform.autopilot.get("version", 1))
+    rows = [{**row, "profile_version": profile_version} for row in platform.weights.values()]
     return _page(
-        sorted(platform.weights.values(), key=lambda row: row["revision"], reverse=True), cursor
+        sorted(rows, key=lambda row: row["revision"], reverse=True), cursor
     )
 
 
@@ -2142,6 +2405,7 @@ async def admin_simulate_weight(
                 body.windows,
                 actor_id=principal.user_id,
                 idempotency_key=key,
+                reason=body.reason,
                 request_id=request.state.request_id,
             )
         )
@@ -2184,7 +2448,22 @@ async def admin_simulate_weight(
     job = platform.enqueue(
         "simulate_weights",
         f"{weight_id}:{key}",
-        {"weight_id": weight_id, "windows": body.windows, "actor_id": principal.user_id},
+        {
+            "weight_id": weight_id,
+            "windows": body.windows,
+            "actor_id": principal.user_id,
+            "reason": body.reason,
+        },
+    )
+    platform.audit_action(
+        principal.user_id,
+        "WEIGHT_SIMULATION_ENQUEUED",
+        "weight",
+        weight_id,
+        None,
+        {"job_id": job["id"], "status": "PENDING", "windows": body.windows},
+        body.reason,
+        request.state.request_id,
     )
     return {"job_id": job["id"], "status": "PENDING"}
 
@@ -2218,6 +2497,12 @@ async def admin_publish_weight(
     weight = platform.weights.get(weight_id)
     if not weight:
         raise _not_found("weight")
+    if weight.get("status") not in {"draft", "simulation"}:
+        raise ApiError(
+            409,
+            "WEIGHT_STATE_INVALID",
+            "Only a draft or simulated weight revision can be published.",
+        )
     if str(platform.autopilot["version"]) != if_match:
         raise ApiError(
             409, "VERSION_CONFLICT", "If-Match does not match the active-profile version."
@@ -2291,9 +2576,45 @@ async def admin_rollback_weight(
     target = platform.weights.get(body.target_revision_id)
     if not active or active["status"] != "active" or not target:
         raise ApiError(409, "ROLLBACK_TARGET_INVALID", "Active and target revisions are required.")
+    if target.get("status") != "archived":
+        raise ApiError(
+            409,
+            "ROLLBACK_TARGET_INVALID",
+            "Only an archived revision can be used as a rollback target.",
+        )
+    if (
+        target.get("id") == active.get("id")
+        or int(target.get("revision", 0)) >= int(active.get("revision", 0))
+    ):
+        raise ApiError(
+            409,
+            "ROLLBACK_TARGET_INVALID",
+            "Only an older archived revision can be used as a rollback target.",
+        )
     if str(platform.autopilot["version"]) != if_match:
         raise ApiError(
             409, "VERSION_CONFLICT", "If-Match does not match the active-profile version."
+        )
+    target_recommendation = platform.recommendations.get(body.target_revision_id)
+    if target_recommendation and target_recommendation.get("status") not in {
+        "APPROVED",
+        "PUBLISHED",
+    }:
+        raise ApiError(
+            409,
+            "REVIEWER_APPROVAL_REQUIRED",
+            "The archived revision does not have reviewer approval.",
+        )
+    target_simulations = platform.simulations.get(body.target_revision_id, [])
+    if target_simulations and {
+        sim.get("window_days")
+        for sim in target_simulations
+        if sim.get("guardrail_result") in {"PASS", "PASSED"}
+    } != {7, 30}:
+        raise ApiError(
+            409,
+            "GUARDRAIL_NOT_SATISFIED",
+            "Passing 7-day and 30-day simulations are required.",
         )
 
     def rollback() -> dict[str, Any]:
@@ -2493,6 +2814,25 @@ async def admin_reject_recommendation(
     )
 
 
+@router.get(
+    "/admin/autopilot/settings",
+    response_model=AutopilotSettingsView,
+    operation_id="admin_get_autopilot_settings",
+)
+async def admin_get_autopilot_settings(
+    _: Principal = Depends(require_admin),
+    platform: PlatformState = Depends(get_state),
+    repository: MariaDBPlatformRepository | None = Depends(get_repository),
+) -> dict[str, Any]:
+    if repository is not None:
+        return await _admin_repo(repository.get_autopilot_settings())
+    with platform.lock:
+        settings = deepcopy(platform.autopilot)
+    settings.setdefault("updated_by", None)
+    settings.setdefault("updated_at", None)
+    return settings
+
+
 @router.put(
     "/admin/autopilot/settings",
     dependencies=[Depends(require_csrf)],
@@ -2600,7 +2940,18 @@ async def admin_retry_job(
             raise ApiError(
                 409, "JOB_NOT_RETRYABLE", "Only failed, dead, or cancelled jobs can be retried."
             )
-        job.update({"status": "PENDING", "available_at": utcnow(), "last_error": None})
+        retry_at = utcnow()
+        job.update(
+            {
+                "status": "PENDING",
+                "attempts": 0,
+                "available_at": retry_at,
+                "lease_owner": None,
+                "lease_expires_at": None,
+                "last_error": None,
+                "updated_at": retry_at,
+            }
+        )
         platform.audit_action(
             principal.user_id,
             "JOB_RETRIED",
@@ -2699,9 +3050,15 @@ async def admin_efficacy_metrics(
         return await _admin_repo(
             repository.get_efficacy_metrics(minimum_cohort_size=settings.cohort_minimum)
         )
-    scores = [
-        row["normalized_score"] for responses in platform.efficacy.values() for row in responses
-    ]
+    latest_by_user = {
+        user_id: max(
+            responses,
+            key=lambda row: (row.get("submitted_at", utcnow()), row.get("id", "")),
+        )
+        for user_id, responses in platform.efficacy.items()
+        if responses
+    }
+    scores = [row["normalized_score"] for row in latest_by_user.values()]
     if len(scores) < settings.cohort_minimum:
         return {"suppressed": True, "minimum_cohort_size": settings.cohort_minimum, "cohorts": []}
     return {

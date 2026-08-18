@@ -693,6 +693,12 @@ class CreditLedger(Base):
             "(status = 'reversed' AND reversed_ledger_id IS NOT NULL) OR (status <> 'reversed')",
             name="reversal_reference",
         ),
+        # A source ledger entry can be compensated at most once.  NULL values
+        # on ordinary posted rows remain reusable under SQL unique semantics.
+        UniqueConstraint(
+            "reversed_ledger_id",
+            name="uq_credit_ledger_reversed_source",
+        ),
         Index("ix_credit_ledger_user_created", "user_id", "created_at"),
     )
 

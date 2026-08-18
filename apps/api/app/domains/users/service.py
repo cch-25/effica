@@ -8,10 +8,12 @@ SQLAlchemy models without changing route-level calls.
 
 from __future__ import annotations
 
+import math
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from numbers import Real
 from typing import Any, Protocol
 
 from ...core.security import Role, SessionStore, new_identifier, normalize_role, utc_now
@@ -94,12 +96,16 @@ def _numeric_answer(question: QuestionSpec, answer: Any) -> float:
             answer = question.options[answer]
         elif answer not in question.options.values():
             raise QuestionnaireValidationError(f"answer for {question.id} is not a valid option")
-    if isinstance(answer, bool):
+    # Numeric strings and booleans are not numeric questionnaire answers. A
+    # string is accepted only when it is an explicit option label above.
+    if isinstance(answer, (str, bool)) or not isinstance(answer, Real):
         raise QuestionnaireValidationError(f"answer for {question.id} must be numeric")
     try:
         value = float(answer)
     except (TypeError, ValueError) as exc:
         raise QuestionnaireValidationError(f"answer for {question.id} must be numeric") from exc
+    if not math.isfinite(value):
+        raise QuestionnaireValidationError(f"answer for {question.id} must be finite")
     if value < question.scale_min or value > question.scale_max:
         raise QuestionnaireValidationError(
             f"answer for {question.id} must be between {question.scale_min} "

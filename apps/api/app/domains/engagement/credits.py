@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -54,6 +55,7 @@ class CreditLedger:
     def __init__(self) -> None:
         self._entries: list[CreditEntry] = []
         self._by_event: dict[tuple[str, str, str], CreditEntry] = {}
+        self._lock = threading.RLock()
 
     def append(
         self,
@@ -65,61 +67,73 @@ class CreditLedger:
         delta: int,
         policy_version: str,
     ) -> CreditEntry:
-        kind = CreditEventType(event_type)
-        key = (user_id, kind.value, event_key)
-        existing = self._by_event.get(key)
-        if existing is not None:
-            # Idempotent replay must not silently turn into a different credit.
-            if existing.delta != delta or existing.policy_version != policy_version:
-                raise ValueError("idempotency key reused with different credit payload")
-            return existing
-        entry = CreditEntry(ledger_id, user_id, kind, event_key, delta, policy_version)
-        self._entries.append(entry)
-        self._by_event[key] = entry
-        return entry
+        with self._lock:
+            kind = CreditEventType(event_type)
+            key = (user_id, kind.value, event_key)
+            existing = self._by_event.get(key)
+            if existing is not None:
+                # Idempotent replay must not silently turn into a different credit.
+                if existing.delta != delta or existing.policy_version != policy_version:
+                    raise ValueError("idempotency key reused with different credit payload")
+                return existing
+            entry = CreditEntry(ledger_id, user_id, kind, event_key, delta, policy_version)
+            self._entries.append(entry)
+            self._by_event[key] = entry
+            return entry
 
     def reverse(
         self, original_ledger_id: str, *, ledger_id: str, event_key: str, policy_version: str
     ) -> CreditEntry:
-        original = next(
-            (entry for entry in self._entries if entry.ledger_id == original_ledger_id), None
-        )
-        if original is None:
-            raise KeyError("credit entry not found")
-        if original.reversed_ledger_id:
-            existing = next(
-                entry for entry in self._entries if entry.ledger_id == original.reversed_ledger_id
+        with self._lock:
+            original = next(
+                (entry for entry in self._entries if entry.ledger_id == original_ledger_id), None
             )
-            return existing
-        entry = self.append(
-            user_id=original.user_id,
-            event_type=CreditEventType.REVERSAL,
-            event_key=event_key,
-            delta=-original.delta,
-            policy_version=policy_version,
-            ledger_id=ledger_id,
-        )
-        # The original object is frozen; preserve reversal link in a separate
-        # projection rather than mutating historical data.
-        self._entries[self._entries.index(original)] = CreditEntry(
-            original.ledger_id,
-            original.user_id,
-            original.event_type,
-            original.event_key,
-            original.delta,
-            original.policy_version,
-            original.created_at,
-            entry.ledger_id,
-        )
-        return entry
+            if original is None:
+                raise KeyError("credit entry not found")
+            if original.event_type is CreditEventType.REVERSAL:
+                raise ValueError("a reversal entry cannot be reversed")
+            if original.reversed_ledger_id:
+                existing = next(
+                    entry
+                    for entry in self._entries
+                    if entry.ledger_id == original.reversed_ledger_id
+                )
+                # Replaying the same event key is idempotent; a distinct
+                # reversal request must not create a second compensating entry.
+                if existing.event_key == event_key:
+                    return existing
+                raise ValueError("credit entry has already been reversed")
+            entry = self.append(
+                user_id=original.user_id,
+                event_type=CreditEventType.REVERSAL,
+                event_key=event_key,
+                delta=-original.delta,
+                policy_version=policy_version,
+                ledger_id=ledger_id,
+            )
+            # The original object is frozen; preserve reversal link in a
+            # separate projection rather than mutating historical data.
+            self._entries[self._entries.index(original)] = CreditEntry(
+                original.ledger_id,
+                original.user_id,
+                original.event_type,
+                original.event_key,
+                original.delta,
+                original.policy_version,
+                original.created_at,
+                entry.ledger_id,
+            )
+            return entry
 
     def entries(self, user_id: str | None = None) -> tuple[CreditEntry, ...]:
-        return tuple(
-            entry for entry in self._entries if user_id is None or entry.user_id == user_id
-        )
+        with self._lock:
+            return tuple(
+                entry for entry in self._entries if user_id is None or entry.user_id == user_id
+            )
 
     def total(self, user_id: str) -> int:
-        return sum(entry.delta for entry in self._entries if entry.user_id == user_id)
+        with self._lock:
+            return sum(entry.delta for entry in self._entries if entry.user_id == user_id)
 
     def snapshot(self, user_id: str, *, policy_version: str = "tier-v1") -> TierSnapshot:
         total = self.total(user_id)

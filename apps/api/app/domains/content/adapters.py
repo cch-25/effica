@@ -16,7 +16,7 @@ from urllib.parse import urljoin
 from xml.etree import ElementTree
 
 from .canonical import canonicalize_url, content_hash, normalize_text, url_hash
-from .policy import CrawlerPolicyGuard
+from .policy import CrawlerPolicyError, CrawlerPolicyGuard
 
 
 class AdapterType(str, Enum):
@@ -484,11 +484,14 @@ class CrawlerAdapter(SourceAdapter):
         config: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__(source_id, config)
+        if not isinstance(policy, CrawlerPolicyGuard):
+            raise CrawlerPolicyError(
+                "crawler adapter requires an explicit robots and terms policy guard"
+            )
         self.policy = policy
 
     def parse(self, payload: Any) -> list[ArticleCandidate]:
-        if self.policy is not None:
-            self.policy.check()
+        self.policy.check()
         if isinstance(payload, Mapping):
             url = _first(payload, "url", "canonical_url", "link")
             html = _first(payload, "html", "body", "content", "payload")

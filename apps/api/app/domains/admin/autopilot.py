@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import threading
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -117,14 +119,25 @@ def validate_weights(
     for key, value in sorted(weights.items()):
         if not isinstance(key, str) or not key:
             raise ValueError("weight keys must be non-empty strings")
+        if isinstance(value, bool):
+            raise ValueError(f"weight {key} is not numeric")
         try:
             number = float(value)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"weight {key} is not numeric") from exc
-        if number != number or number < config.min_weight or number > config.max_weight:
+        if not math.isfinite(number) or number < config.min_weight or number > config.max_weight:
             raise ValueError(f"weight {key} outside allowed range")
         result[key] = round(number, 8)
+    if not math.isclose(sum(result.values()), 1.0, rel_tol=0.0, abs_tol=1e-8):
+        raise ValueError("weights must sum to 1")
     return result
+
+
+def _normalise_weight_total(weights: Mapping[str, float]) -> dict[str, float]:
+    total = sum(weights.values())
+    if total <= 0 or not math.isfinite(total):
+        return dict(weights)
+    return {key: round(value / total, 8) for key, value in weights.items()}
 
 
 def recommend_weights(
@@ -152,6 +165,7 @@ def recommend_weights(
         except (TypeError, ValueError):
             delta = 0.0
         proposed[key] = round(max(config.min_weight, min(config.max_weight, value + delta)), 8)
+    proposed = _normalise_weight_total(proposed)
     digest = (
         recommendation_id
         or hashlib.sha256((evidence_snapshot_id + _canonical(proposed)).encode()).hexdigest()[:26]
@@ -264,24 +278,28 @@ class AutoPilotManager:
     """Revision manager enforcing If-Match, idempotency and immutable rollback."""
 
     def __init__(self, initial: WeightRevision, *, mode: AutoPilotMode = AutoPilotMode.OFF) -> None:
+        validate_weights(initial.weights)
         self.mode = mode
         self.revisions: dict[str, WeightRevision] = {initial.revision_id: initial}
         self.active_revision_id = (
             initial.revision_id if initial.status == WeightRevisionStatus.ACTIVE else None
         )
         self._idempotency: dict[str, WeightRevision] = {}
+        self._lock = threading.RLock()
 
     @property
     def active(self) -> WeightRevision | None:
         return self.revisions.get(self.active_revision_id) if self.active_revision_id else None
 
     def add_draft(self, revision: WeightRevision) -> WeightRevision:
-        if revision.revision_id in self.revisions:
-            return self.revisions[revision.revision_id]
-        if revision.status not in {WeightRevisionStatus.DRAFT, WeightRevisionStatus.SIMULATION}:
-            raise ValueError("new revision must be draft or simulation")
-        self.revisions[revision.revision_id] = revision
-        return revision
+        with self._lock:
+            if revision.revision_id in self.revisions:
+                return self.revisions[revision.revision_id]
+            if revision.status not in {WeightRevisionStatus.DRAFT, WeightRevisionStatus.SIMULATION}:
+                raise ValueError("new revision must be draft or simulation")
+            validate_weights(revision.weights)
+            self.revisions[revision.revision_id] = revision
+            return revision
 
     def publish(
         self,
@@ -292,49 +310,53 @@ class AutoPilotManager:
         guardrail_result: GuardrailResult,
         reviewer_approved: bool = False,
     ) -> WeightRevision:
-        if idempotency_key in self._idempotency:
-            return self._idempotency[idempotency_key]
-        if self.active_revision_id != if_match:
-            raise ValueError("If-Match revision conflict")
-        revision = self.revisions.get(revision_id)
-        if revision is None:
-            raise KeyError("weight revision not found")
-        if not guardrail_result.passed:
-            raise ValueError("guardrails failed")
-        if revision.guardrail_result is not None and not revision.guardrail_result.passed:
-            raise ValueError("revision guardrails failed")
-        if reviewer_approved is False and self.mode != AutoPilotMode.LIMITED_AUTO:
-            # Keep approval explicit for RECOMMEND/OFF. LIMITED_AUTO may only
-            # publish when caller has already passed guardrails.
-            raise ValueError("reviewer approval required")
-        old = self.active
-        if old is not None:
-            self.revisions[old.revision_id] = WeightRevision(
-                old.revision_id,
-                old.revision,
-                old.weights,
-                WeightRevisionStatus.ARCHIVED,
-                old.based_on_revision_id,
-                old.created_by,
-                old.created_at,
-                old.published_at,
-                old.guardrail_result,
+        with self._lock:
+            if idempotency_key in self._idempotency:
+                return self._idempotency[idempotency_key]
+            if self.active_revision_id != if_match:
+                raise ValueError("If-Match revision conflict")
+            revision = self.revisions.get(revision_id)
+            if revision is None:
+                raise KeyError("weight revision not found")
+            if revision.status is not WeightRevisionStatus.SIMULATION:
+                raise ValueError("only simulated revisions can be published")
+            validate_weights(revision.weights)
+            if not guardrail_result.passed:
+                raise ValueError("guardrails failed")
+            if revision.guardrail_result is not None and not revision.guardrail_result.passed:
+                raise ValueError("revision guardrails failed")
+            if reviewer_approved is False and self.mode != AutoPilotMode.LIMITED_AUTO:
+                # Keep approval explicit for RECOMMEND/OFF. LIMITED_AUTO may
+                # publish only when caller has already passed guardrails.
+                raise ValueError("reviewer approval required")
+            old = self.active
+            if old is not None:
+                self.revisions[old.revision_id] = WeightRevision(
+                    old.revision_id,
+                    old.revision,
+                    old.weights,
+                    WeightRevisionStatus.ARCHIVED,
+                    old.based_on_revision_id,
+                    old.created_by,
+                    old.created_at,
+                    old.published_at,
+                    old.guardrail_result,
+                )
+            published = WeightRevision(
+                revision.revision_id,
+                revision.revision,
+                dict(revision.weights),
+                WeightRevisionStatus.ACTIVE,
+                revision.based_on_revision_id,
+                revision.created_by,
+                revision.created_at,
+                datetime.now(UTC),
+                guardrail_result,
             )
-        published = WeightRevision(
-            revision.revision_id,
-            revision.revision,
-            dict(revision.weights),
-            WeightRevisionStatus.ACTIVE,
-            revision.based_on_revision_id,
-            revision.created_by,
-            revision.created_at,
-            datetime.now(UTC),
-            guardrail_result,
-        )
-        self.revisions[revision_id] = published
-        self.active_revision_id = revision_id
-        self._idempotency[idempotency_key] = published
-        return published
+            self.revisions[revision_id] = published
+            self.active_revision_id = revision_id
+            self._idempotency[idempotency_key] = published
+            return published
 
     def rollback(
         self,
@@ -344,45 +366,49 @@ class AutoPilotManager:
         idempotency_key: str,
         actor: str | None = None,
     ) -> WeightRevision:
-        if idempotency_key in self._idempotency:
-            return self._idempotency[idempotency_key]
-        if self.active_revision_id != if_match:
-            raise ValueError("If-Match revision conflict")
-        target = self.revisions.get(target_revision_id)
-        if target is None:
-            raise KeyError("target revision not found")
-        active = self.active
-        next_number = max(item.revision for item in self.revisions.values()) + 1
-        digest = hashlib.sha256(
-            f"rollback:{target_revision_id}:{next_number}".encode()
-        ).hexdigest()[:26]
-        rollback = WeightRevision(
-            digest,
-            next_number,
-            dict(target.weights),
-            WeightRevisionStatus.ACTIVE,
-            target.revision_id,
-            actor,
-            datetime.now(UTC),
-            datetime.now(UTC),
-            GuardrailResult(True, ()),
-        )
-        if active is not None:
-            self.revisions[active.revision_id] = WeightRevision(
-                active.revision_id,
-                active.revision,
-                active.weights,
-                WeightRevisionStatus.ARCHIVED,
-                active.based_on_revision_id,
-                active.created_by,
-                active.created_at,
-                active.published_at,
-                active.guardrail_result,
+        with self._lock:
+            if idempotency_key in self._idempotency:
+                return self._idempotency[idempotency_key]
+            if self.active_revision_id != if_match:
+                raise ValueError("If-Match revision conflict")
+            target = self.revisions.get(target_revision_id)
+            if target is None:
+                raise KeyError("target revision not found")
+            if target.status is not WeightRevisionStatus.ARCHIVED:
+                raise ValueError("rollback target must be an archived revision")
+            validate_weights(target.weights)
+            active = self.active
+            next_number = max(item.revision for item in self.revisions.values()) + 1
+            digest = hashlib.sha256(
+                f"rollback:{target_revision_id}:{next_number}".encode()
+            ).hexdigest()[:26]
+            rollback = WeightRevision(
+                digest,
+                next_number,
+                dict(target.weights),
+                WeightRevisionStatus.ACTIVE,
+                target.revision_id,
+                actor,
+                datetime.now(UTC),
+                datetime.now(UTC),
+                GuardrailResult(True, ()),
             )
-        self.revisions[rollback.revision_id] = rollback
-        self.active_revision_id = rollback.revision_id
-        self._idempotency[idempotency_key] = rollback
-        return rollback
+            if active is not None:
+                self.revisions[active.revision_id] = WeightRevision(
+                    active.revision_id,
+                    active.revision,
+                    active.weights,
+                    WeightRevisionStatus.ARCHIVED,
+                    active.based_on_revision_id,
+                    active.created_by,
+                    active.created_at,
+                    active.published_at,
+                    active.guardrail_result,
+                )
+            self.revisions[rollback.revision_id] = rollback
+            self.active_revision_id = rollback.revision_id
+            self._idempotency[idempotency_key] = rollback
+            return rollback
 
 
 def _canonical(value: Mapping[str, Any]) -> str:

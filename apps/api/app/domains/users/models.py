@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -109,12 +110,28 @@ class QuestionSpec:
     def validate(self) -> None:
         if self.axis not in {"x", "y", "z"}:
             raise ValueError("question axis must be x, y, or z")
-        if self.scale_max <= self.scale_min:
+        try:
+            scale_min = float(self.scale_min)
+            scale_max = float(self.scale_max)
+            weight = float(self.weight)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("question scale and weight must be numeric") from exc
+        if not all(math.isfinite(value) for value in (scale_min, scale_max, weight)):
+            raise ValueError("question scale and weight must be finite")
+        if scale_max <= scale_min:
             raise ValueError("question scale_max must be greater than scale_min")
-        if self.weight <= 0:
+        if weight <= 0:
             raise ValueError("question weight must be positive")
-        if self.options is not None and not self.options:
-            raise ValueError("question options cannot be empty")
+        if self.options is not None:
+            if not self.options:
+                raise ValueError("question options cannot be empty")
+            for option_value in self.options.values():
+                try:
+                    numeric = float(option_value)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("question options must be numeric") from exc
+                if isinstance(option_value, bool) or not math.isfinite(numeric):
+                    raise ValueError("question options must be finite numeric values")
 
 
 @dataclass(frozen=True)
