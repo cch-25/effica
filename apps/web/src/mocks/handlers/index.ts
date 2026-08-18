@@ -47,12 +47,63 @@ const apiIssues = issues.map((issue) => ({
 
 export const handlers = [
   http.get(`${prefix}/auth/providers`, () => HttpResponse.json(["mock"])),
-  http.get(`${prefix}/auth/:provider/start`, () => new HttpResponse(null, { status: 302, headers: { Location: "/onboarding/consent" } })),
+  http.get(`${prefix}/auth/:provider/start`, ({ request }) => {
+    const returnTo = new URL(request.url).searchParams.get("returnTo") || "/";
+    const location = returnTo.startsWith("/") && !returnTo.startsWith("//") && returnTo !== "/"
+      ? `/onboarding/consent?returnTo=${encodeURIComponent(returnTo)}`
+      : "/onboarding/consent";
+    return new HttpResponse(null, { status: 302, headers: { Location: location } });
+  }),
+  http.get(`${prefix}/me`, () => HttpResponse.json(mockResponse("UserView", {
+    id: "01HZZZZZZZZZZZZZZZZZZZZZZ1",
+    display_name: "Mock 사용자",
+    role: "MEMBER",
+    consent_complete: true,
+    onboarding_complete: true,
+    behavioral_profile_active: false,
+  }))),
+  http.get(`${prefix}/me/progress`, () => HttpResponse.json({
+    credit_total: 12,
+    level: 1,
+    tier: "Explorer",
+    policy_version: "tier-v1",
+  })),
+  http.get(`${prefix}/me/credits`, () => HttpResponse.json({
+    items: [{
+      id: "01H0000000000000000000000B",
+      event_type: "QUALIFIED_READ",
+      event_key: "read:01H00000000000000000000009",
+      delta: 12,
+      policy_version: "credit-v1",
+      status: "POSTED",
+      created_at: "2026-08-16T12:41:00Z",
+    }],
+    next_cursor: null,
+  })),
+  http.get(`${prefix}/me/efficacy`, () => HttpResponse.json({
+    baseline: 52,
+    responses: [
+      { id: "01H0000000000000000000000C", questionnaire_version_id: "01H00000000000000000000004", normalized_score: 52, submitted_at: "2026-05-12T00:00:00Z" },
+      { id: "01H0000000000000000000000D", questionnaire_version_id: "01H00000000000000000000004", normalized_score: 64, submitted_at: "2026-08-12T00:00:00Z" },
+    ],
+    due_survey: true,
+  })),
   http.get(`${prefix}/consents`, () => HttpResponse.json(mockConsents.map((item) => mockResponse("ConsentView", item)))),
   http.get(`${prefix}/questionnaires`, ({ request }) => {
     const kind = new URL(request.url).searchParams.get("kind") ?? "onboarding";
     const efficacy = kind === "efficacy";
-    return HttpResponse.json([mockResponse("QuestionnaireVersionView", { id: efficacy ? "01H00000000000000000000004" : "01H00000000000000000000003", kind: efficacy ? "efficacy" : "onboarding", version: "1.0", schema_json: {}, scoring_json: {}, active_from: "2026-08-18T00:00:00Z", keys: efficacy ? ["confidence"] : ["economic", "social", "international"] })]);
+    const keys = efficacy ? ["baseline", "current"] : ["economic", "social", "international"];
+    return HttpResponse.json([mockResponse("QuestionnaireVersionView", {
+      id: efficacy ? "01H00000000000000000000004" : "01H00000000000000000000003",
+      kind: efficacy ? "efficacy" : "onboarding",
+      version: "1.0",
+      schema_json: {
+        questions: keys.map((id) => ({ id, required: true, minimum: efficacy ? 0 : -100, maximum: efficacy ? 100 : 100 })),
+      },
+      scoring_json: {},
+      active_from: "2026-08-18T00:00:00Z",
+      keys,
+    })]);
   }),
   http.post(`${prefix}/me/consents`, async ({ request }) => {
     const body = await request.json() as { consent_version_id: string; granted: boolean };
@@ -106,12 +157,12 @@ export const handlers = [
     return HttpResponse.json(mockResponse("ArticlePage", { items, next_cursor: null } satisfies ArticlePageDto));
   }),
   http.get(`${prefix}/visualization/points`, () => HttpResponse.json(mockResponse("VisualizationPointPage", {
-    items: visualizationPoints.map((point) => ({ entity_type: point.type, entity_id: point.id, label: point.label, x: point.x, y: point.y, z: point.z, confidence: point.confidence })),
+    items: visualizationPoints.map((point) => ({ entity_type: point.type, entity_id: point.id, label: point.label, x: point.x, y: point.y, z: point.z, sensationalism: point.sensationalism, confidence: point.confidence })),
     next_cursor: null,
   } satisfies VisualizationPointPageDto))),
-  http.post(`${prefix}/articles/:articleId/read-sessions`, () => HttpResponse.json(mockResponse("ReadSessionView", {
+  http.post(`${prefix}/articles/:articleId/read-sessions`, ({ params }) => HttpResponse.json(mockResponse("ReadSessionView", {
     read_session_id: "01H00000000000000000000009",
-    redirect_url: "/articles/article-01?returned=1",
+    redirect_url: `/articles/${params.articleId}?returned=1`,
     expires_at: "2026-08-18T12:00:00Z",
   }))),
   http.post(`${prefix}/read-sessions/:readSessionId/return`, () => HttpResponse.json(mockResponse("ReadResult", {
@@ -120,6 +171,7 @@ export const handlers = [
     credit_delta: 12,
     reason_code: "ELIGIBLE",
   } satisfies ReadResult))),
+  http.get(`${prefix}/articles/:articleId/vote`, () => HttpResponse.json(errorEnvelope("NOT_FOUND", "활성 투표를 찾을 수 없습니다."), { status: 404 })),
   http.put(`${prefix}/articles/:articleId/vote`, async ({ request }) => {
     const body = await request.json() as Pick<VoteView, "x" | "y" | "z" | "sensationalism">;
     return HttpResponse.json(mockResponse("VoteView", {
@@ -133,6 +185,17 @@ export const handlers = [
   http.post(`${prefix}/share-cards`, () => { mockCard = { ...mockCard, status: "ready" }; return HttpResponse.json(mockResponse("ShareCardJobAccepted", { job_id: "01H0000000000000000000000A", share_card_id: mockCard.id, status: "PENDING" }), { status: 202 }); }),
   http.get(`${prefix}/share-cards/:shareCardId`, ({ params }) => params.shareCardId === mockCard.id ? HttpResponse.json(mockResponse("ShareCardView", mockCard)) : HttpResponse.json(errorEnvelope("NOT_FOUND", "공유 카드를 찾을 수 없습니다."), { status: 404 })),
   http.delete(`${prefix}/share-cards/:shareCardId`, () => { mockCard = { ...mockCard, status: "revoked", public_token: null }; return new HttpResponse(null, { status: 204 }); }),
+  http.get(`${prefix}/public/share/:publicToken`, ({ params }) => (
+    params.publicToken === mockCard.public_token
+      ? HttpResponse.json({
+        id: mockCard.id,
+        template: "orbit",
+        display_name: "김사이",
+        snapshot: mockCard.snapshot,
+        etag: mockCard.etag,
+      })
+      : HttpResponse.json(errorEnvelope("NOT_FOUND", "공개 카드를 찾을 수 없습니다."), { status: 404 })
+  )),
   http.get(`${prefix}/public/share/:publicToken/image`, () => new HttpResponse(new Uint8Array([137, 80, 78, 71]), { headers: { "Content-Type": "image/png" } })),
   http.get(`${prefix}/admin/:resource`, ({ params }) => HttpResponse.json({ items: [{ id: `${params.resource}-01`, title: `${params.resource} fixture`, status: "ACTIVE", version: 1, etag: '"v1"' }], next_cursor: null })),
   http.get(`${prefix}/admin/autopilot/recommendations`, () => HttpResponse.json({ items: [{ id: "recommendation-01", title: "추천", status: "PENDING_REVIEW" }], next_cursor: null })),
