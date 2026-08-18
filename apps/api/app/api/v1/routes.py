@@ -729,8 +729,18 @@ async def feed(
     seen_article_ids: set[str] = set()
     issue_counts: dict[str | None, int] = {}
     articles = sorted(platform.articles.values(), key=lambda row: row["published_at"], reverse=True)
-    if profile:
-        articles.sort(key=lambda row: abs(platform.scores[row["id"]][-1]["x"] - profile["x"]))
+    if personalized and profile:
+        profile_sensationalism = float(profile.get("sensationalism") or 0)
+
+        def profile_distance(article: dict[str, Any]) -> float:
+            score = (platform.scores.get(article["id"]) or [{"x": 0}])[-1]
+            score_sensationalism = float(score.get("sensationalism") or 0)
+            return (
+                ((float(score["x"]) - float(profile["x"])) / 200.0) ** 2
+                + ((score_sensationalism - profile_sensationalism) / 100.0) ** 2
+            ) ** 0.5
+
+        articles.sort(key=profile_distance)
     for article in articles:
         issue = platform.issues.get(article.get("issue_id"))
         if issue and str(issue.get("status", "")).upper() in {"MERGED", "CLOSED", "ARCHIVED"}:
@@ -738,12 +748,15 @@ async def feed(
         if article["id"] in seen_article_ids:
             continue
         seen_article_ids.add(article["id"])
-        issue_id = article.get("issue_id")
+        issue_id = article.get("issue_id") or "unclustered"
         if issue_counts.get(issue_id, 0) >= 1:
             continue
         if article["source_id"] == last_source:
             continue
-        score = platform.scores[article["id"]][-1]
+        history = platform.scores.get(article["id"])
+        if not history:
+            continue
+        score = history[-1]
         rows.append(
             FeedItem(
                 article_id=article["id"],
@@ -812,7 +825,11 @@ async def get_issue(
     axes = [platform.scores[aid][-1]["x"] for aid in issue["article_ids"] if aid in platform.scores]
     return {
         **issue,
-        "distribution": {"minimum_x": min(axes), "maximum_x": max(axes), "count": len(axes)},
+        "distribution": {
+            "minimum_x": min(axes) if axes else None,
+            "maximum_x": max(axes) if axes else None,
+            "count": len(axes),
+        },
     }
 
 
@@ -1180,13 +1197,7 @@ async def return_read_session(
     elapsed = result.server_elapsed_ms
     session["status"], session["returned_at"] = "RETURNED", now
     eligible = result.eligible
-    if body.client_elapsed_ms is not None and abs(body.client_elapsed_ms - elapsed) > max(
-        60_000, elapsed * 0.75
-    ):
-        eligible = False
-        reason = "CLIENT_SERVER_ELAPSED_MISMATCH"
-    else:
-        reason = result.reason_code
+    reason = result.reason_code
     delta = 10 if eligible else 0
     event_key = f"read:{read_session_id}"
     ledger = platform.credits.setdefault(principal.user_id, [])
@@ -1240,6 +1251,39 @@ async def vote_aggregate(
         "qualified_count": len(qualified),
         "segments": {} if len(qualified) < 5 else {"all": {"count": len(qualified)}},
         "small_segments_suppressed": len(qualified) < 5,
+    }
+
+
+@router.get(
+    "/articles/{article_id}/vote",
+    response_model=VoteView,
+    operation_id="get_vote",
+)
+async def get_vote(
+    article_id: str,
+    principal: Principal = Depends(require_member),
+    platform: PlatformState = Depends(get_state),
+    repository: MariaDBPlatformRepository | None = Depends(get_repository),
+) -> dict[str, Any]:
+    if repository is not None:
+        try:
+            result = await repository.get_vote_row(
+                user_id=principal.user_id, article_id=article_id
+            )
+        except KeyError:
+            raise _not_found("article") from None
+        if result is None:
+            raise _not_found("vote")
+        return result
+    if article_id not in platform.articles:
+        raise _not_found("article")
+    history = platform.votes.get((principal.user_id, article_id))
+    if not history or not history[-1]["active"]:
+        raise _not_found("vote")
+    vote = history[-1]
+    return {
+        key: vote[key]
+        for key in ("x", "y", "z", "sensationalism", "revision", "quality_status", "active")
     }
 
 
@@ -1469,7 +1513,10 @@ async def visualization_points(
         for article in platform.articles.values():
             if issue_id and article["issue_id"] != issue_id:
                 continue
-            score = platform.scores[article["id"]][-1]
+            history = platform.scores.get(article["id"])
+            if not history:
+                continue
+            score = history[-1]
             if from_ and score["created_at"] < from_ or to and score["created_at"] > to:
                 continue
             rows.append(
@@ -1477,7 +1524,7 @@ async def visualization_points(
                     "entity_type": "article",
                     "entity_id": article["id"],
                     "label": article["title"],
-                    **{key: score[key] for key in ("x", "y", "z", "confidence")},
+                    **{key: score[key] for key in ("x", "y", "z", "sensationalism", "confidence")},
                 }
             )
     elif type == "source":
@@ -1485,7 +1532,7 @@ async def visualization_points(
             scores = [
                 platform.scores[a["id"]][-1]
                 for a in platform.articles.values()
-                if a["source_id"] == source["id"]
+                if a["source_id"] == source["id"] and platform.scores.get(a["id"])
             ]
             if scores:
                 rows.append(
@@ -1494,8 +1541,8 @@ async def visualization_points(
                         "entity_id": source["id"],
                         "label": source["name"],
                         **{
-                            axis: round(fmean(score[axis] for score in scores), 2)
-                            for axis in ("x", "y", "z")
+                            axis: round(fmean(score.get(axis, 0) for score in scores), 2)
+                            for axis in ("x", "y", "z", "sensationalism")
                         },
                         "confidence": min(1.0, len(scores) / 20),
                     }
@@ -1509,7 +1556,7 @@ async def visualization_points(
                 **{
                     key: value
                     for key, value in profile.items()
-                    if key in {"x", "y", "z", "confidence"}
+                    if key in {"x", "y", "z", "sensationalism", "confidence"}
                 },
             }
             for profile in platform.profiles.values()

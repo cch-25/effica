@@ -220,6 +220,7 @@ class VisualizationPoint(ContractModel):
     x: float = Field(ge=-100, le=100)
     y: float = Field(ge=-100, le=100)
     z: float = Field(ge=-100, le=100)
+    sensationalism: float | None = Field(default=None, ge=0, le=100)
     confidence: float = Field(ge=0, le=1)
 
 

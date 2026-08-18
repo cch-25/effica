@@ -31,7 +31,6 @@ from apps.api.app.db.models import (
     ConsentVersion,
     CreditLedger,
     EfficacyResponse,
-    FeedImpression,
     Issue,
     IssueMembership,
     ModelAlias,
@@ -60,6 +59,17 @@ from apps.api.app.domains.scoring.behavior import (
 
 def _value(value: Any) -> Any:
     return getattr(value, "value", value)
+
+
+def _event_count_from_confidence(confidence: float) -> int:
+    """Invert ``confidence = total / (total + 10)`` for profile reconstruction."""
+
+    value = float(confidence)
+    if value >= 0.999:
+        return 10_000
+    if value <= 0:
+        return 0
+    return max(1, round(10.0 * value / (1.0 - value)))
 
 
 _TERMINAL_ISSUE_STATUSES = ("merged", "closed", "archived")
@@ -210,6 +220,9 @@ class ProductRepositoryMixin:
             if score is not None:
                 candidates.append((article, source, issue_id, score))
         context_by_article = {item[0].id: item for item in candidates}
+        profile_sensationalism = 0.0
+        if profile is not None and _value(profile.kind) == ProfileKind.BEHAVIORAL.value:
+            profile_sensationalism = float(profile.y)
         ranked = rank_feed(
             [
                 FeedCandidate(
@@ -226,9 +239,13 @@ class ProductRepositoryMixin:
                 )
                 for article, source, issue_id, score in candidates
             ],
-            user_coordinates=(profile.x, profile.y, profile.z)
+            user_coordinates=(profile.x, profile_sensationalism)
             if personalized and profile is not None
             else None,
+            # The HTTP layer owns cursor pagination.  Ranking only a fixed
+            # prefix here would make every candidate after that prefix
+            # permanently unreachable, regardless of the requested cursor.
+            limit=max(1, len(candidates)),
             max_consecutive_source=1,
             max_per_issue=1,
         )
@@ -254,19 +271,6 @@ class ProductRepositoryMixin:
                     "rank": rank,
                 }
             )
-            self.session.add(
-                FeedImpression(
-                    id=new_ulid(),
-                    user_id=user_id,
-                    article_id=article.id,
-                    issue_id=issue_id,
-                    reason_code=reason,
-                    rank=rank,
-                    created_at=utc_now(),
-                )
-            )
-        if items:
-            await self.session.commit()
         return items, personalized
 
     async def list_issue_rows(
@@ -601,10 +605,6 @@ class ProductRepositoryMixin:
             max_elapsed_ms=30 * 60_000,
         )
         eligible, reason = result.eligible, result.reason_code
-        if client_elapsed_ms is not None and abs(
-            client_elapsed_ms - result.server_elapsed_ms
-        ) > max(60_000, result.server_elapsed_ms * 0.75):
-            eligible, reason = False, "CLIENT_SERVER_ELAPSED_MISMATCH"
         row.returned_at = now
         row.client_elapsed_ms = client_elapsed_ms
         row.status = ReadSessionStatus.ELIGIBLE if eligible else ReadSessionStatus.REJECTED
@@ -672,6 +672,28 @@ class ProductRepositoryMixin:
             "qualified_count": len(qualified),
             "segments": {} if len(qualified) < 5 else {"all": {"count": len(qualified)}},
             "small_segments_suppressed": len(qualified) < 5,
+        }
+
+    async def get_vote_row(self, *, user_id: str, article_id: str) -> dict[str, Any] | None:
+        if await self.session.get(Article, article_id) is None:
+            raise KeyError("article")
+        row = await self.session.scalar(
+            select(Vote).where(
+                Vote.user_id == user_id,
+                Vote.article_id == article_id,
+                Vote.active.is_(True),
+            )
+        )
+        if row is None:
+            return None
+        return {
+            "x": row.x,
+            "y": row.y,
+            "z": row.z,
+            "sensationalism": row.sensationalism,
+            "revision": row.revision,
+            "quality_status": _value(row.quality_status),
+            "active": bool(row.active),
         }
 
     async def put_vote_row(
@@ -784,10 +806,11 @@ class ProductRepositoryMixin:
             if existing is None
             else BehavioralProfile(
                 x=existing.x,
-                y=existing.y,
+                y=0.0,
                 z=existing.z,
+                sensationalism=float(existing.y),
                 confidence=float(existing.confidence),
-                event_count=max(1, round(float(existing.confidence) * 10)),
+                event_count=_event_count_from_confidence(existing.confidence),
                 active=existing.active,
                 policy_version=existing.source_version,
             )
@@ -799,10 +822,14 @@ class ProductRepositoryMixin:
                     article_x=score["x"],
                     article_y=score["y"],
                     article_z=score["z"],
+                    article_sensationalism=float(score.get("sensationalism") or 0),
                     kind="vote" if vote_values else "read",
                     vote_x=None if vote_values is None else vote_values["x"],
                     vote_y=None if vote_values is None else vote_values["y"],
                     vote_z=None if vote_values is None else vote_values["z"],
+                    vote_sensationalism=(
+                        None if vote_values is None else float(vote_values["sensationalism"])
+                    ),
                 )
             ],
             activate=True,
@@ -815,7 +842,7 @@ class ProductRepositoryMixin:
                 user_id=user_id,
                 kind=ProfileKind.BEHAVIORAL,
                 x=round(updated_profile.x),
-                y=round(updated_profile.y),
+                y=round(updated_profile.sensationalism),
                 z=round(updated_profile.z),
                 confidence=round(updated_profile.confidence, 4),
                 source_version=updated_profile.policy_version,
@@ -1057,13 +1084,26 @@ class ProductRepositoryMixin:
         card_id = new_ulid()
         token = self._share_token(card_id)
         confirmed_at = utc_now()
+        kind = _value(profile.kind)
+        sensationalism = (
+            float(profile.y) if kind == ProfileKind.BEHAVIORAL.value else None
+        )
         snapshot = {
             "x": profile.x,
             "y": profile.y,
             "z": profile.z,
+            "sensationalism": sensationalism,
             "confidence": float(profile.confidence),
+            "coordinate": {
+                "x": profile.x,
+                "y": profile.y,
+                "z": profile.z,
+                "sensationalism": sensationalism,
+                "confidence": float(profile.confidence),
+            },
             "tier": progress["tier"],
             "activity": progress["credit_total"],
+            "credit_total": progress["credit_total"],
             "created_at": confirmed_at.isoformat(),
             "political_data_publication_confirmed": bool(publication_confirmed),
             "publication_consent": {
@@ -1169,6 +1209,11 @@ class ProductRepositoryMixin:
                     "x": row.x,
                     "y": row.y,
                     "z": row.z,
+                    "sensationalism": (
+                        float(row.y)
+                        if _value(row.kind) == ProfileKind.BEHAVIORAL.value
+                        else None
+                    ),
                     "confidence": float(row.confidence),
                 }
                 for row in profiles
@@ -1184,20 +1229,30 @@ class ProductRepositoryMixin:
         )
         latest = await self._latest_scores()
         if entity_type == "article":
-            return [
-                {
-                    "entity_type": "article",
-                    "entity_id": article.id,
-                    "label": article.title,
-                    "x": latest[article.current_version_id].x,
-                    "y": latest[article.current_version_id].y,
-                    "z": latest[article.current_version_id].z,
-                    "confidence": float(latest[article.current_version_id].confidence),
-                }
-                for article, _source, row_issue_id in contexts
-                if article.current_version_id in latest
-                and (not issue_id or row_issue_id == issue_id)
-            ]
+            seen: set[str] = set()
+            rows: list[dict[str, Any]] = []
+            for article, _source, row_issue_id in contexts:
+                if article.id in seen:
+                    continue
+                if article.current_version_id not in latest:
+                    continue
+                if issue_id and row_issue_id != issue_id:
+                    continue
+                seen.add(article.id)
+                score = latest[article.current_version_id]
+                rows.append(
+                    {
+                        "entity_type": "article",
+                        "entity_id": article.id,
+                        "label": article.title,
+                        "x": score.x,
+                        "y": score.y,
+                        "z": score.z,
+                        "sensationalism": score.sensationalism,
+                        "confidence": float(score.confidence),
+                    }
+                )
+            return rows
         grouped: dict[str, tuple[Source, list[ScoreVersion]]] = {}
         for article, source, _ in contexts:
             if article.current_version_id in latest:
@@ -1212,6 +1267,7 @@ class ProductRepositoryMixin:
                 "x": round(fmean(row.x for row in scores), 2),
                 "y": round(fmean(row.y for row in scores), 2),
                 "z": round(fmean(row.z for row in scores), 2),
+                "sensationalism": round(fmean(row.sensationalism for row in scores), 2),
                 "confidence": min(1.0, len(scores) / 20),
             }
             for source, scores in grouped.values()

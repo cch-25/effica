@@ -338,13 +338,34 @@ class PlatformState:
         *,
         publication_confirmed: bool = True,
     ) -> dict[str, Any]:
-        profile = next(
-            (profile for profile in self.profiles.values() if profile["user_id"] == user_id and profile["active"]),
-            {"x": 0, "y": 0, "z": 0, "confidence": 0},
+        active_profiles = [
+            profile
+            for profile in self.profiles.values()
+            if profile.get("user_id") == user_id and profile.get("active")
+        ]
+        # Keep the memory adapter's profile choice equivalent to the SQL
+        # repository, which reads the newest active profile.  The insertion
+        # index breaks ties for fixture rows with identical timestamps.
+        profile = (
+            max(
+                enumerate(active_profiles),
+                key=lambda item: (str(item[1].get("created_at", "")), item[0]),
+            )[1]
+            if active_profiles
+            else {"x": 0, "y": 0, "z": 0, "confidence": 0}
+        )
+        profile_kind = str(profile.get("kind", "")).casefold()
+        is_behavioral = profile_kind in {"behavioral", "behavioral_profile"}
+        raw_sensationalism = profile.get("sensationalism") if is_behavioral else None
+        sensationalism = (
+            None if raw_sensationalism is None else float(raw_sensationalism)
         )
         total = sum(entry["delta"] for entry in self.credits.get(user_id, []))
+        level = max(1, total // 100 + 1)
+        tier = "Explorer" if level < 3 else "Bridge Builder" if level < 6 else "Navigator"
         raw_token = secrets.token_urlsafe(32)
         card_id = new_id()
+        confirmed_at = utcnow()
         png = base64.b64decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
         )
@@ -357,13 +378,26 @@ class PlatformState:
             "template": template,
             "display_name": display_name,
             "snapshot": {
-                "coordinate": {key: profile[key] for key in ("x", "y", "z", "confidence")},
-                "tier": "Explorer" if total < 100 else "Bridge Builder",
+                "x": profile.get("x", 0),
+                "y": profile.get("y", 0),
+                "z": profile.get("z", 0),
+                "sensationalism": sensationalism,
+                "confidence": profile.get("confidence", 0),
+                "coordinate": {
+                    "x": profile.get("x", 0),
+                    "y": profile.get("y", 0),
+                    "z": profile.get("z", 0),
+                    "sensationalism": sensationalism,
+                    "confidence": profile.get("confidence", 0),
+                },
+                "tier": tier,
+                "activity": total,
                 "credit_total": total,
+                "created_at": confirmed_at.isoformat(),
                 "political_data_publication_confirmed": publication_confirmed,
                 "publication_consent": {
                     "confirmation_version": "share-card-publication-v1",
-                    "confirmed_at": utcnow().isoformat(),
+                    "confirmed_at": confirmed_at.isoformat(),
                     "actor_id": user_id,
                 },
             },

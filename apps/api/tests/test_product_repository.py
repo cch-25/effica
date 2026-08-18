@@ -220,6 +220,9 @@ async def test_db_product_engagement_vertical_slice() -> None:
         )
         assert job["status"] == "PENDING"
         assert card["public_token"]
+        assert card["snapshot"]["sensationalism"] is None
+        assert card["snapshot"]["coordinate"]["sensationalism"] is None
+        assert card["snapshot"]["activity"] == card["snapshot"]["credit_total"] == 0
         assert (await repository.public_share_card(card["public_token"])) is not None
         assert await repository.revoke_share_card(card_id=card["id"], user_id=user_id)
         assert (await repository.public_share_card(card["public_token"])) is None
