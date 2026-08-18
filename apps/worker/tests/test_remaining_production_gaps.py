@@ -103,3 +103,159 @@ def test_wq012_reaper_matches_canonical_and_payload_crawl_run_ids() -> None:
         assert statements[0][1]["now"] == moment
 
     asyncio.run(scenario())
+
+
+def test_crawl_fail_updates_only_pending_or_running_runs() -> None:
+    statements: list[str] = []
+
+    class Result:
+        def __init__(self, rows=None, rowcount=0):
+            self._rows = list(rows or [])
+            self.rowcount = rowcount
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return list(self._rows)
+
+        def first(self):
+            return self._rows[0] if self._rows else None
+
+    class Session:
+        async def execute(self, statement, params):
+            query = str(statement)
+            statements.append(query)
+            lowered = query.lower()
+            if "select" in lowered and "from jobs" in lowered:
+                return Result(
+                    [
+                        {
+                            "id": "job-1",
+                            "job_type": "crawl",
+                            "payload_json": {"crawl_run_id": "run-1"},
+                            "status": "LEASED",
+                            "dedupe_key": None,
+                            "priority": 0,
+                            "available_at": moment,
+                            "lease_owner": "worker-1",
+                            "lease_expires_at": moment,
+                            "attempts": 1,
+                            "max_attempts": 3,
+                            "last_error_json": None,
+                            "created_at": moment,
+                            "updated_at": moment,
+                        }
+                    ]
+                )
+            return Result(rowcount=1)
+
+        async def close(self):
+            return None
+
+    moment = datetime(2026, 1, 1, tzinfo=UTC)
+
+    async def scenario() -> None:
+        repository = MariaDBQueueRepository(lambda: Session(), table_name="jobs")
+        await repository.fail(
+            "job-1",
+            "worker-1",
+            {"code": "SOURCE_FETCH_FAILED", "message": "boom"},
+            retryable=False,
+            now=moment,
+        )
+
+    asyncio.run(scenario())
+    crawl_updates = [query for query in statements if "update crawl_runs" in query.lower()]
+    assert len(crawl_updates) == 1
+    assert "status IN ('PENDING', 'RUNNING')" in crawl_updates[0]
+
+
+def test_export_records_lookup_covers_oauth_sessions_and_impressions_without_secrets() -> None:
+    queries: list[str] = []
+
+    class Result:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+        def first(self):
+            return None
+
+    class Session:
+        async def execute(self, statement, params):
+            queries.append(str(statement))
+            return Result()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    async def scenario() -> None:
+        from apps.worker.worker.lookups import MariaDBWorkerLookups
+
+        lookups = MariaDBWorkerLookups(lambda: Session(), encryption_secret="unit-test-secret")
+        records = await lookups.export_records_lookup("user-1")
+        assert "oauth_accounts" in records
+        assert "sessions" in records
+        assert "feed_impressions" in records
+
+    asyncio.run(scenario())
+    sql = "\n".join(queries)
+    assert "FROM oauth_accounts" in sql
+    assert "provider_subject" in sql
+    assert "FROM sessions" in sql
+    assert "token_hash" in sql
+    assert "expires_at" in sql
+    assert "revoked_at" in sql
+    assert "FROM feed_impressions" in sql
+    for secret in ("access_token", "refresh_token", "session_token", "raw_token", "secret"):
+        assert secret not in sql.lower().replace("encryption_secret", "")
+
+
+def test_vote_snapshot_lookup_returns_latest_revision_and_as_service_binding() -> None:
+    class Result:
+        def mappings(self):
+            return self
+
+        def first(self):
+            return {
+                "article_id": "article-1",
+                "version": 7,
+                "aggregate_json": '{"x": 1}',
+                "segment_json": '{"all": {"count": 7}}',
+                "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+            }
+
+    queries: list[str] = []
+
+    class Session:
+        async def execute(self, statement, params):
+            queries.append(str(statement))
+            return Result()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    async def scenario() -> None:
+        from apps.worker.worker.lookups import MariaDBWorkerLookups
+
+        lookups = MariaDBWorkerLookups(lambda: Session(), encryption_secret="unit-test-secret")
+        snapshot = await lookups.vote_snapshot_lookup("article-1")
+        assert snapshot is not None
+        assert snapshot["version"] == 7
+        assert snapshot["vote_revision"] == 7
+        assert snapshot["aggregate"] == {"x": 1}
+        assert snapshot["segments"] == {"all": {"count": 7}}
+        assert lookups.as_services()["vote_snapshot_lookup"] == lookups.vote_snapshot_lookup
+
+    asyncio.run(scenario())
+    assert "FROM vote_aggregate_snapshots" in queries[0]
+    assert "ORDER BY version DESC" in queries[0]

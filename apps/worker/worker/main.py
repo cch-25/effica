@@ -294,10 +294,10 @@ class WorkerRuntime:
                 {
                     "code": "RESULT_APPLICATION_FAILED",
                     "message": str(exc) or exc.__class__.__name__,
-                    "retryable": True,
+                    "retryable": bool(exc.retryable),
                     "details": {"exception": exc.__class__.__name__},
                 },
-                retryable=True,
+                retryable=bool(exc.retryable),
             )
         except Exception as exc:  # pragma: no cover - defensive final boundary
             if (
@@ -377,7 +377,9 @@ class WorkerRuntime:
         except ResultApplicationError:
             raise
         except Exception as exc:
-            raise ResultApplicationError(str(exc) or exc.__class__.__name__) from exc
+            raise ResultApplicationError(
+                str(exc) or exc.__class__.__name__, retryable=True
+            ) from exc
 
     async def _heartbeat(self, job: Job, stop_event: asyncio.Event) -> None:
         interval = self.config.heartbeat_interval
@@ -403,6 +405,8 @@ class WorkerRuntime:
         return f"{job.job_type}:{job.dedupe_key or job.id}"
 
     async def _fail(self, job: Job, error: Mapping[str, Any], *, retryable: bool) -> JobStatus:
+        # ResultApplicationError defaults to retryable=False so apply conflicts
+        # (0 share rows, stale aggregates) become FAILED instead of PENDING.
         delay = self.backoff.delay(job.attempts) if retryable else 0.0
         return await self.repository.fail(
             job.id,

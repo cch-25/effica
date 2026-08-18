@@ -252,3 +252,70 @@ def test_fetcher_blocks_credentials_in_redirect_targets() -> None:
 
     asyncio.run(scenario())
     assert len(transport.requests) == 1
+
+
+def test_cross_origin_redirect_drops_body_and_converts_post_to_get() -> None:
+    seen: list[httpx.Request] = []
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if len(seen) == 1:
+            return httpx.Response(
+                302,
+                headers={"location": "https://other.test/next"},
+                content=b"ignored-body",
+            )
+        return httpx.Response(200, content=b'{"ok": true}')
+
+    async def scenario() -> None:
+        service = SourceFetchService(
+            transport=httpx.MockTransport(transport),
+            resolver=lambda _host, _port: ["93.184.216.34"],
+            max_retries=0,
+        )
+        response = await service.fetch(
+            {
+                "url": "https://public.test/start",
+                "config": {"method": "POST", "json": {"secret": "do-not-forward"}},
+            }
+        )
+        assert response.status_code == 200
+
+    asyncio.run(scenario())
+    assert len(seen) == 2
+    assert seen[0].method == "POST"
+    assert b"do-not-forward" in seen[0].content
+    assert seen[1].method == "GET"
+    assert seen[1].content in {b"", None} or len(seen[1].content) == 0
+    assert b"do-not-forward" not in (seen[1].content or b"")
+
+
+def test_cross_origin_307_post_is_refused() -> None:
+    seen: list[httpx.Request] = []
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            307,
+            headers={"location": "https://other.test/next"},
+        )
+
+    async def scenario() -> None:
+        service = SourceFetchService(
+            transport=httpx.MockTransport(transport),
+            resolver=lambda _host, _port: ["93.184.216.34"],
+            max_retries=0,
+        )
+        with pytest.raises(SourceFetchError) as raised:
+            await service.fetch(
+                {
+                    "url": "https://public.test/start",
+                    "config": {"method": "POST", "json": {"secret": "do-not-forward"}},
+                }
+            )
+        assert raised.value.code == "SOURCE_REDIRECT_CROSS_ORIGIN"
+        assert raised.value.retryable is False
+
+    asyncio.run(scenario())
+    assert len(seen) == 1
+    assert seen[0].method == "POST"

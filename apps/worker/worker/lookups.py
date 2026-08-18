@@ -130,6 +130,32 @@ class MariaDBWorkerLookups:
         )
         return rows
 
+    async def vote_snapshot_lookup(self, identifier: Any) -> dict[str, Any] | None:
+        """Return the latest durable vote aggregate for one article.
+
+        ``aggregate_votes`` uses this lookup when an incoming vote payload
+        does not carry a revision.  Returning the aggregate and segment
+        projections as well as both revision spellings keeps the production
+        service aligned with the handler's fixture and in-memory contracts.
+        """
+
+        row = await self._one(
+            """
+            SELECT article_id, version, aggregate_json, segment_json, created_at
+            FROM vote_aggregate_snapshots
+            WHERE article_id = :article_id
+            ORDER BY version DESC
+            LIMIT 1
+            """,
+            {"article_id": str(identifier)},
+        )
+        if row is None:
+            return None
+        row["aggregate"] = _json_value(row.pop("aggregate_json", None), {})
+        row["segments"] = _json_value(row.pop("segment_json", None), {})
+        row["vote_revision"] = row.get("version")
+        return row
+
     async def weights_lookup(self, identifier: Any) -> dict[str, Any] | None:
         identifier = str(identifier)
         where = "status = 'active'" if identifier == "active" else "id = :identifier"
@@ -273,6 +299,9 @@ class MariaDBWorkerLookups:
             "credits": "SELECT event_type, event_key, delta, status, policy_version, created_at FROM credit_ledger WHERE user_id = :user_id ORDER BY created_at",
             "efficacy": "SELECT questionnaire_version_id, normalized_score, submitted_at FROM efficacy_responses WHERE user_id = :user_id ORDER BY submitted_at",
             "share_cards": "SELECT id, template, display_name, snapshot_json, status, expires_at, revoked_at, created_at FROM share_cards WHERE user_id = :user_id ORDER BY created_at",
+            "oauth_accounts": "SELECT provider, provider_subject FROM oauth_accounts WHERE user_id = :user_id ORDER BY provider, provider_subject",
+            "sessions": "SELECT token_hash, csrf_hash, expires_at, revoked_at FROM sessions WHERE user_id = :user_id ORDER BY expires_at",
+            "feed_impressions": "SELECT article_id, issue_id, reason_code, rank, created_at FROM feed_impressions WHERE user_id = :user_id ORDER BY created_at",
         }
         for name, query in queries.items():
             rows = await self._all(query, {"user_id": user_id})
@@ -304,6 +333,7 @@ class MariaDBWorkerLookups:
             "article_version_lookup": self.article_version_lookup,
             "articles_lookup": self.articles_lookup,
             "votes_lookup": self.votes_lookup,
+            "vote_snapshot_lookup": self.vote_snapshot_lookup,
             "weights_lookup": self.weights_lookup,
             "recommendation_lookup": self.recommendation_lookup,
             "share_card_lookup": self.share_card_lookup,
