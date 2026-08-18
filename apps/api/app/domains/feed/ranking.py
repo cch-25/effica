@@ -158,9 +158,10 @@ def reason_code_for(
     item = (
         candidate if isinstance(candidate, FeedCandidate) else FeedCandidate.from_mapping(candidate)
     )
-    _, _, reason = _score(
-        item, _profile_coordinates(user_coordinates), now or datetime.now(UTC), {}, {}
-    )
+    now = now or datetime.now(UTC)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    _, _, reason = _score(item, _profile_coordinates(user_coordinates), now, {}, {})
     return reason
 
 

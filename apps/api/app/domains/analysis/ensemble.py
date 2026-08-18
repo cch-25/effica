@@ -62,7 +62,7 @@ def ensemble_assessments(
             0,
             None,
             0.0,
-            float("inf"),
+            0.0,
             (),
         )
     article_ids = {item.article_version_id for item in values}

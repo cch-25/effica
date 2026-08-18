@@ -280,3 +280,110 @@ def test_wq002_worker_aggregate_accepts_database_qualified_vote() -> None:
     )
     assert result.value["count"] == 1
     assert result.value["aggregate"]["x"] == 10
+
+
+def test_canonical_ipv6_non_default_port_brackets_hostname_only() -> None:
+    url = "https://[2001:db8::1]:8443/x"
+    assert canonicalize_url(url) == "https://[2001:db8::1]:8443/x"
+    assert canonicalize_url(canonicalize_url(url)) == url
+
+
+def test_score_partial_weight_mapping_does_not_inject_profile_defaults() -> None:
+    from app.domains.scoring import ScoreComponents, calculate_article_score
+
+    components = ScoreComponents((100, 0, 0), (100, 0, 0), (100, 0, 0), (0, 0, 0))
+    score = calculate_article_score(components, {"model": 0.5, "source": 0.5})
+    # Missing relative/crowd must be 0, so x = (0.5*100 + 0.5*0) / 1.0 = 50.
+    # Injected 0.20 defaults would yield ~64 instead.
+    assert score.x == 50
+    defaulted = calculate_article_score(components, None)
+    assert defaulted.x == 90
+
+
+def test_vote_sensationalism_rejects_bool_like_axes() -> None:
+    with pytest.raises(ValueError, match="sensationalism"):
+        Vote("v", "u", "a", 1, 0, 0, 0, True)
+
+
+def test_ensemble_spread_is_finite_without_successful_models() -> None:
+    import math
+
+    from app.domains.analysis import AssessmentStatus, ModelAssessment, ensemble_assessments
+
+    failed = ModelAssessment(
+        article_version_id="v1",
+        model_alias="m1",
+        actual_model_id="model",
+        prompt_version="v1",
+        x=0,
+        sensationalism=0,
+        confidence=0.1,
+        status=AssessmentStatus.FAILED,
+    )
+    result = ensemble_assessments([failed])
+    assert result.reason_code == "NO_SUCCESSFUL_MODELS"
+    assert result.successful_model_count == 0
+    assert result.spread is not None
+    assert math.isfinite(result.spread)
+
+
+def test_reason_code_for_normalizes_naive_now_like_rank_feed() -> None:
+    from app.domains.feed import reason_code_for
+
+    candidate = FeedCandidate(
+        "a",
+        "i",
+        "s",
+        published_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    reason = reason_code_for(candidate, now=datetime(2026, 1, 2))
+    assert reason == rank_feed([candidate], now=datetime(2026, 1, 2, tzinfo=UTC), limit=1)[0].reason_code
+
+
+def test_weight_revision_weights_are_immutable_copies() -> None:
+    payload = {"model": 0.5, "source": 0.5}
+    revision = WeightRevision("r0", 0, payload, WeightRevisionStatus.ACTIVE)
+    payload["model"] = 0.9
+    assert revision.weights["model"] == 0.5
+    with pytest.raises(TypeError):
+        revision.weights["model"] = 0.1
+    manager = AutoPilotManager(revision, mode=AutoPilotMode.RECOMMEND)
+    simulation = WeightRevision(
+        "r1", 1, {"model": 0.6, "source": 0.4}, WeightRevisionStatus.SIMULATION
+    )
+    manager.add_draft(simulation)
+    published = manager.publish(
+        "r1",
+        if_match="r0",
+        idempotency_key="publish-immutable",
+        guardrail_result=GuardrailResult(True, ()),
+        reviewer_approved=True,
+    )
+    with pytest.raises(TypeError):
+        published.weights["model"] = 0.0
+    rolled = manager.rollback("r0", if_match="r1", idempotency_key="rollback-immutable")
+    with pytest.raises(TypeError):
+        rolled.weights["source"] = 0.0
+    assert rolled.weights["model"] == 0.5
+
+
+def test_grant_false_empty_then_true_then_false_avoids_naive_datetime_min() -> None:
+    from app.domains.users.models import ConsentPurpose
+    from app.domains.users.service import ConsentService, InMemoryUserRepository, UserService
+
+    repository = InMemoryUserRepository()
+    users = UserService(repository)
+    consents = ConsentService(repository, users)
+    user = users.create_user()
+    version = repository.add_consent_version(
+        purpose=ConsentPurpose.SERVICE,
+        version="1",
+        body_hash="hash",
+    )
+    empty = consents.grant(user.id, version.id, granted=False)
+    assert empty.granted is False
+    granted = consents.grant(user.id, version.id, granted=True)
+    assert granted.granted is True
+    withdrawn = consents.grant(user.id, version.id, granted=False)
+    assert withdrawn.granted is False
+    assert withdrawn.withdrawn_at is not None

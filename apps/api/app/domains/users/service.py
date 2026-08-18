@@ -12,7 +12,7 @@ import math
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from numbers import Real
 from typing import Any, Protocol
 
@@ -88,6 +88,17 @@ def _purpose(value: ConsentPurpose | str) -> ConsentPurpose:
 
 def _clamp(value: float, lower: float = -100.0, upper: float = 100.0) -> float:
     return max(lower, min(upper, value))
+
+
+def _consent_sort_time(item: UserConsent) -> datetime:
+    """Aware timestamp for consent history ordering; never compare naive min."""
+
+    stamp = item.granted_at
+    if stamp is None:
+        return datetime.min.replace(tzinfo=UTC)
+    if stamp.tzinfo is None:
+        return stamp.replace(tzinfo=UTC)
+    return stamp
 
 
 def _numeric_answer(question: QuestionSpec, answer: Any) -> float:
@@ -308,11 +319,7 @@ class InMemoryUserRepository:
     ) -> UserConsent | None:
         target = _purpose(purpose)
         candidates = [item for item in self.user_consents(user_id, target) if item.granted]
-        return (
-            max(candidates, key=lambda item: item.granted_at or datetime.min)
-            if candidates
-            else None
-        )
+        return max(candidates, key=_consent_sort_time) if candidates else None
 
 
 @dataclass(frozen=True)
@@ -412,7 +419,7 @@ class ConsentService:
             # Return a clear historical record for route responses.
             history = self.repository.user_consents(user.id, version.purpose)
             if history:
-                return max(history, key=lambda item: item.granted_at or datetime.min)
+                return max(history, key=_consent_sort_time)
             item = UserConsent(
                 id=new_identifier(),
                 user_id=user.id,

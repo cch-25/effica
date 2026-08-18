@@ -113,13 +113,19 @@ def calculate_article_score(
     if weights is None:
         weights = WeightProfile()
     elif not isinstance(weights, WeightProfile):
-        weights = WeightProfile(
-            model=Decimal(str(weights.get("model", "0.50"))),
-            relative=Decimal(str(weights.get("relative", "0.20"))),
-            crowd=Decimal(str(weights.get("crowd", "0.20"))),
-            source=Decimal(str(weights.get("source", "0.10"))),
-            version=str(weights.get("version", "default")),
-        )
+        component_keys = ("model", "relative", "crowd", "source")
+        if not any(key in weights for key in component_keys):
+            weights = WeightProfile(version=str(weights.get("version", "default")))
+        else:
+            # A partial mapping is intentional: omitted component keys are 0,
+            # not WeightProfile defaults (0.50/0.20/0.20/0.10).
+            weights = WeightProfile(
+                model=Decimal(str(weights.get("model", "0"))),
+                relative=Decimal(str(weights.get("relative", "0"))),
+                crowd=Decimal(str(weights.get("crowd", "0"))),
+                source=Decimal(str(weights.get("source", "0"))),
+                version=str(weights.get("version", "default")),
+            )
     total = weights.total
 
     def combine(axis: int) -> int:

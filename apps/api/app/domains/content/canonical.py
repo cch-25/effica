@@ -73,12 +73,14 @@ def canonicalize_url(url: str) -> str:
         port = parts.port
     except ValueError as exc:
         raise ValueError("invalid URL port") from exc
+    # Bracket IPv6 hostnames before attaching a non-default port so the
+    # canonical form is ``[hostname]:port``, not ``[hostname:port]``.
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     if port is not None and not (
         (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
     ):
         host = f"{host}:{port}"
-    if ":" in host and not host.startswith("[") and parts.hostname.count(":") > 0:
-        host = f"[{host}]"
 
     path = _normalise_percent(parts.path or "/", safe="/:@!$&'()*+,;=")
     # Resolve dot segments and use one spelling for a resource's trailing
