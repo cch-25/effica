@@ -1,0 +1,13 @@
+---
+description: Run Python pytest from the repository root so collection paths resolve.
+alwaysApply: true
+---
+
+# Python tests
+
+`uv run pytest` file arguments are resolved from the **process working directory**, not `pyproject.toml`.
+
+- Set the Shell `working_directory` to the repository root for every `uv run pytest`, `uv run ruff`, and `uv run python -m pytest` call.
+- Do not inherit `apps/web` (or another package directory) from a previous `npm`/`npx` command.
+- Prefer `uv run --directory <repo-root> pytest …` when the current directory is uncertain.
+- Relative paths must look like `apps/api/tests/…`, `apps/worker/tests/…`, or `tests/integration/…`.
