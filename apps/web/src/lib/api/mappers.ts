@@ -120,7 +120,7 @@ export function mapVisualizationPoint(dto: VisualizationPointDto): Visualization
     x: dto.x,
     y: dto.y,
     z: dto.z,
-    sensationalism: null,
+    sensationalism: dto.sensationalism ?? null,
     confidence: dto.confidence,
     scoreVersion: "current",
     observedAt: "",

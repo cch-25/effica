@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { apiRequest } from "@/lib/api/client";
+import { useEffect, useState } from "react";
+import { ApiError, apiRequest } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Toast } from "@/components/ui/toast";
 import { voteSchema, type VoteInput as Vote } from "./model";
@@ -61,6 +61,17 @@ export function VoteForm({ articleId }: { articleId: string }) {
   const [vote, setVote] = useState<Vote>({ x: 0, y: 0, z: 0, sensationalism: 0 });
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void apiRequest<Vote>(`/articles/${encodeURIComponent(articleId)}/vote`)
+      .then((row) => {
+        if (!cancelled) setVote({ x: row.x, y: row.y, z: row.z, sensationalism: row.sensationalism });
+      })
+      .catch((error) => {
+        if (error instanceof ApiError && error.status === 404) return;
+      });
+    return () => { cancelled = true; };
+  }, [articleId]);
   const update = (key: "x" | "sensationalism", value: number) => setVote((current) => ({ ...current, [key]: value }));
   const submit = async () => {
     if (!voteSchema.safeParse(vote).success) return setMessage("각 점수의 허용 범위를 확인해 주세요.");
@@ -86,7 +97,7 @@ export function VoteForm({ articleId }: { articleId: string }) {
       <ChoiceScale legend="편향성 (좌편향 ↔ 우편향)" value={vote.x} choices={BIAS_CHOICES} onChange={(value) => update("x", value)} />
       <ChoiceScale legend="과장성 (낮음 ↔ 높음)" value={vote.sensationalism} choices={SENSATIONALISM_CHOICES} onChange={(value) => update("sensationalism", value)} />
       <div className="notice">독자 투표는 집계 구성요소 중 하나이며 공식 점수를 즉시 교체하지 않습니다.</div>
-      <div className="form-actions"><Button variant="ghost" onClick={remove} disabled={busy}>내 투표 삭제</Button><Button onClick={submit} disabled={busy}>투표 저장·수정</Button></div>
+      <div className="form-actions"><Button variant="ghost" onClick={() => void remove()} disabled={busy}>내 투표 삭제</Button><Button onClick={() => void submit()} disabled={busy}>투표 저장·수정</Button></div>
       {message && <Toast message={message} />}
     </section>
   );

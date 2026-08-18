@@ -89,6 +89,7 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
           <Button variant="secondary" onClick={resetFilters}><RotateCcw size={14} /> 모든 이슈 보기</Button>
         </section>
       )}
+      {query.hasNextPage && <div className="form-actions"><Button variant="secondary" onClick={() => void query.fetchNextPage()} disabled={query.isFetchingNextPage}>{query.isFetchingNextPage ? "불러오는 중…" : "더 보기"}</Button></div>}
 
       <Drawer open={drawerOpen} title="주제·기간 필터" onClose={() => setDrawerOpen(false)}>
         <fieldset className="issue-filter-group">

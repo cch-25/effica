@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "./client";
 import {
   mapArticle,
@@ -18,12 +18,58 @@ import {
   type VisualizationPointPageDto,
 } from "./mappers";
 
+function flattenPages<T>(pages: Array<{ items: T[]; next_cursor: string | null }> | undefined) {
+  if (!pages) return undefined;
+  return {
+    items: pages.flatMap((page) => page.items),
+    next_cursor: pages.at(-1)?.next_cursor ?? null,
+  };
+}
+
+async function loadAllVisualizationPages(
+  type: "article" | "user" | "source",
+): Promise<VisualizationPointPageDto["items"]> {
+  const items: VisualizationPointPageDto["items"] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | null = null;
+  do {
+    const params = new URLSearchParams({ type });
+    if (cursor) params.set("cursor", cursor);
+    const page = await apiRequest<VisualizationPointPageDto>(`/visualization/points?${params}`);
+    items.push(...page.items);
+    if (!page.next_cursor) break;
+    if (seenCursors.has(page.next_cursor)) throw new Error("Visualization cursor cycle detected");
+    seenCursors.add(page.next_cursor);
+    cursor = page.next_cursor;
+  } while (cursor);
+  return items;
+}
+
 export function useFeedQuery() {
-  return useQuery({ queryKey: ["feed"], queryFn: async () => mapFeedPage(await apiRequest<FeedPageDto>("/feed")) });
+  const query = useInfiniteQuery({
+    queryKey: ["feed", "personalized"],
+    queryFn: async ({ pageParam }) => {
+      const params = new URLSearchParams({ mode: "personalized" });
+      if (pageParam) params.set("cursor", pageParam);
+      return mapFeedPage(await apiRequest<FeedPageDto>(`/feed?${params}`));
+    },
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
+  });
+  return { ...query, data: flattenPages(query.data?.pages) };
 }
 
 export function useIssuesQuery() {
-  return useQuery({ queryKey: ["issues"], queryFn: async () => mapIssuePage(await apiRequest<IssuePageDto>("/issues")) });
+  const query = useInfiniteQuery({
+    queryKey: ["issues"],
+    queryFn: async ({ pageParam }) => {
+      const suffix = pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : "";
+      return mapIssuePage(await apiRequest<IssuePageDto>(`/issues${suffix}`));
+    },
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
+  });
+  return { ...query, data: flattenPages(query.data?.pages) };
 }
 
 export function useIssueQuery(issueId: string) {
@@ -69,7 +115,17 @@ export function useArticleAnalysisQuery(articleId: string) {
 }
 
 export function useVisualizationPointsQuery() {
-  return useQuery({ queryKey: ["visualization", "points"], queryFn: async () => mapVisualizationPointPage(await apiRequest<VisualizationPointPageDto>("/visualization/points")) });
+  return useQuery({
+    queryKey: ["visualization", "points"],
+    queryFn: async () => {
+      const types = ["article", "user", "source"] as const;
+      const pages = await Promise.all(types.map(loadAllVisualizationPages));
+      return mapVisualizationPointPage({
+        items: pages.flat(),
+        next_cursor: null,
+      });
+    },
+  });
 }
 
 export function useVoteMutation(articleId: string) {
