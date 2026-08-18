@@ -49,7 +49,7 @@ export function AdminResourcePage({ configKey, role }: { configKey: string; role
     catch { setError("변경 값은 올바른 JSON 객체여야 합니다."); return; }
     setBusy(true); setError(""); setConflict(false);
     try {
-      const headers = new Headers({ "Idempotency-Key": pending.key });
+      const headers = new Headers({ "Idempotency-Key": createIdempotencyKey() });
       if (pending.action.ifMatch) {
         const versionSource = pending.action.ifMatchPath ? await apiRequest<Record<string, unknown>>(pending.action.ifMatchPath) : pending.item;
         headers.set("If-Match", String(versionSource.etag ?? versionSource.version ?? versionSource.revision ?? ""));
