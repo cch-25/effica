@@ -22,19 +22,22 @@ function ProviderIcon({ provider }: { provider: Provider }) {
 export function LoginOptions({ returnTo }: { returnTo: string }) {
   const router = useRouter();
   const query = useQuery({ queryKey: ["auth", "providers"], queryFn: () => apiRequest<Provider[]>("/auth/providers") });
-  const begin = (provider: Provider) => {
-    if (provider === "mock" && isMockMode()) {
-      router.push("/onboarding/consent");
+  const begin = async (provider: Provider) => {
+    const callback = `${window.location.origin}/api/v1/auth/${provider}/callback`;
+    const params = new URLSearchParams({ redirect_uri: callback, returnTo });
+    const startPath = `/api/v1/auth/${provider}/start?${params}`;
+    if (isMockMode()) {
+      const response = await fetch(startPath, { redirect: "manual" });
+      const location = response.headers.get("Location") || "/onboarding/consent";
+      router.push(location);
       return;
     }
-    const callback = `${window.location.origin}/api/v1/auth/${provider}/callback`;
-    const query = new URLSearchParams({ redirect_uri: callback, returnTo });
-    window.open(`/api/v1/auth/${provider}/start?${query}`, "_self", "noopener");
+    window.open(startPath, "_self", "noopener");
   };
 
   if (query.isError) return <StatePanel state="error" onRetry={() => void query.refetch()} />;
   if (query.isPending) return <StatePanel state="loading" />;
   const providers = query.data;
   if (providers.length === 0) return <StatePanel state="empty" />;
-  return <div className="oauth-list">{providers.map((provider) => <Button key={provider} variant="secondary" className="oauth-button" onClick={() => begin(provider)}><ProviderIcon provider={provider} /> {labels[provider]}로 계속하기</Button>)}</div>;
+  return <div className="oauth-list">{providers.map((provider) => <Button key={provider} variant="secondary" className="oauth-button" onClick={() => void begin(provider)}><ProviderIcon provider={provider} /> {labels[provider]}로 계속하기</Button>)}</div>;
 }
