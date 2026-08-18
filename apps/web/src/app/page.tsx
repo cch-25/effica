@@ -27,7 +27,7 @@ export default function HomePage() {
 
       <section className="card card--padded" style={{ marginTop: "1rem" }}>
         <p className="eyebrow">추천 원칙</p><h2>정반대가 아니라, 이해할 수 있는 거리부터</h2>
-        <p style={{ maxWidth: 720, color: "var(--muted)" }}>사이는 사용자의 현재 관점과 가깝지만 다른 기사, 덜 본 출처, 같은 이슈의 보완 관점을 우선합니다. 추천 이유는 모든 카드에 표시됩니다.</p>
+        <p style={{ maxWidth: 720, color: "var(--muted)" }}>EFFICA는 사용자의 현재 관점과 가깝지만 다른 기사, 덜 본 출처, 같은 이슈의 보완 관점을 우선합니다. 추천 이유는 모든 카드에 표시됩니다.</p>
       </section>
     </>
   );

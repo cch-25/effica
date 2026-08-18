@@ -11,6 +11,7 @@ export default defineConfig({
   reporter: "html",
   use: {
     baseURL: webBaseUrl,
+    headless: true,
     trace: "on-first-retry",
   },
   projects: [
@@ -18,7 +19,7 @@ export default defineConfig({
     { name: "mobile", use: { ...devices["Pixel 7"] } },
   ],
   webServer: {
-    command: `npm run dev -- --hostname 127.0.0.1 --port ${webPort}`,
+    command: `NEXT_DIST_DIR=.next-playwright-${webPort} NEXT_PUBLIC_API_MODE=mock npm run dev -- --hostname 127.0.0.1 --port ${webPort}`,
     url: webBaseUrl,
     reuseExistingServer: !process.env.CI,
   },

@@ -1,4 +1,5 @@
 import type { ApiErrorBody } from "./types";
+import { isMockMode } from "./mode";
 
 const API_PREFIX = "/api/v1";
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -21,7 +22,7 @@ export class ApiError extends Error {
 }
 
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  if (typeof window !== "undefined" && process.env.NEXT_PUBLIC_API_MODE !== "real") {
+  if (typeof window !== "undefined" && isMockMode()) {
     const { startMockWorker } = await import("@/mocks/browser");
     await startMockWorker();
   }

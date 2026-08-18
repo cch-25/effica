@@ -6,6 +6,14 @@ import { fileURLToPath } from "node:url";
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 loadEnvConfig(repositoryRoot);
 
+const apiMode = process.env.NEXT_PUBLIC_API_MODE;
+if (apiMode !== undefined && apiMode !== "mock" && apiMode !== "real") {
+  throw new Error("NEXT_PUBLIC_API_MODE must be either 'mock' or 'real'.");
+}
+if ((process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production") && apiMode !== "real") {
+  throw new Error("NEXT_PUBLIC_API_MODE=real is required for production builds.");
+}
+
 function backendApiBase(): string {
   const configured = process.env.API_BACKEND_URL;
   if (!configured && process.env.VERCEL_ENV === "production") {

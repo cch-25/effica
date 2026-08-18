@@ -9,6 +9,8 @@ import { CheckboxField, SelectField } from "@/components/ui/form-controls";
 import { useIssuesQuery } from "@/lib/api/queries";
 import type { Issue } from "@/lib/api/types";
 import { IssueCard } from "./issue-card";
+import { isMockMode } from "@/lib/api/mode";
+import { StatePanel } from "@/components/ui/state-panel";
 
 type Period = "all" | "day" | "week" | "month";
 
@@ -33,8 +35,8 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
   const [period, setPeriod] = useState<Period>("all");
 
   const issues = useMemo(() => {
-    const fallbackById = new Map(fallback.map((issue) => [issue.id, issue]));
-    const source = query.data?.items.length ? query.data.items : fallback;
+    const fallbackById = new Map((isMockMode() ? fallback : []).map((issue) => [issue.id, issue]));
+    const source = query.data?.items ?? (isMockMode() ? fallback : []);
     return source.map((issue) => ({
       ...issue,
       topic: issue.topic === "일반" ? fallbackById.get(issue.id)?.topic ?? issue.topic : issue.topic,
@@ -57,6 +59,9 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
     setTopics([]);
     setPeriod("all");
   };
+
+  if (query.isPending && !isMockMode()) return <StatePanel state="loading" />;
+  if (query.isError && !isMockMode()) return <StatePanel state="error" onRetry={() => void query.refetch()} />;
 
   return (
     <>

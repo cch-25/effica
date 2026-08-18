@@ -54,6 +54,20 @@ export function useArticleQuery(articleId: string) {
   });
 }
 
+export function useArticleAnalysisQuery(articleId: string) {
+  return useQuery({
+    queryKey: ["article", articleId, "analysis"],
+    queryFn: async () => {
+      const id = encodeURIComponent(articleId);
+      const [assessments, history] = await Promise.all([
+        apiRequest<{ article_version_id: string; assessments: Array<Record<string, unknown>> }>(`/articles/${id}/assessments`),
+        apiRequest<{ items: Array<Record<string, unknown>>; next_cursor?: string | null }>(`/articles/${id}/score-history`),
+      ]);
+      return { assessments, history };
+    },
+  });
+}
+
 export function useVisualizationPointsQuery() {
   return useQuery({ queryKey: ["visualization", "points"], queryFn: async () => mapVisualizationPointPage(await apiRequest<VisualizationPointPageDto>("/visualization/points")) });
 }

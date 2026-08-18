@@ -1,18 +1,47 @@
-import type { AdminItem, Role } from "@/lib/api/types";
+import type { Role } from "@/lib/api/types";
 
-export type AdminAction = { label: string; level: "operate" | "review" | "publish"; destructive?: boolean; conflict?: boolean };
-export type AdminConfig = { eyebrow: string; title: string; description: string; items: AdminItem[]; actions: AdminAction[]; minimumRole: Role };
+export type AdminAction = {
+  label: string;
+  level: "operate" | "review" | "publish";
+  method: "POST" | "PATCH" | "PUT";
+  path: (itemId: string) => string;
+  destructive?: boolean;
+  needsValues?: boolean;
+  ifMatch?: boolean;
+  ifMatchPath?: string;
+  defaultValues?: Record<string, unknown>;
+  body: (reason: string, values: Record<string, unknown>) => Record<string, unknown>;
+};
 
-const items = (rows: Array<[string, string, string, string, Array<[string,string]>]>): AdminItem[] => rows.map(([id,title,subtitle,status,metadata]) => ({ id,title,subtitle,status,metadata: metadata.map(([label,value]) => ({ label,value })) }));
+export type AdminConfig = { eyebrow: string; title: string; description: string; listPath: string; actions: AdminAction[]; minimumRole: Role };
+const reasonBody = (reason: string) => ({ reason });
 
 export const adminConfigs: Record<string, AdminConfig> = {
-  sources: { eyebrow: "Collection policy", title: "출처와 수집 정책", description: "API·RSS를 우선하며 robots·약관 승인이 없는 crawler 실행을 차단합니다.", minimumRole: "analyst", actions: [{ label: "수집 실행", level: "operate" }, { label: "정책 수정", level: "publish" }], items: items([["src-01","서울데일리","RSS · 정책 승인","ACTIVE",[["최근 수집","4분 전"],["성공률","99.2%"],["속도 제한","30/min"]]],["src-02","글로벌브리프","API · 정책 승인","ACTIVE",[["최근 수집","11분 전"],["성공률","97.8%"],["속도 제한","20/min"]]],["src-03","지역포커스","CRAWLER · 약관 검토 필요","BLOCKED",[["최근 수집","없음"],["robots","허용"],["약관","검토 중"]]]]) },
-  crawls: { eyebrow: "Ingestion runs", title: "수집 실행과 오류", description: "외부 사이트 대신 정책 승인된 adapter의 실행·오류·통계를 확인합니다.", minimumRole: "analyst", actions: [{ label: "재시도", level: "operate" }], items: items([["crawl-01","RSS 정기 수집","서울데일리 · 238개 처리","SUCCEEDED",[["신규","18"],["수정","4"],["소요","42s"]]],["crawl-02","API 정기 수집","글로벌브리프 · provider timeout","FAILED",[["시도","3/5"],["다음 실행","13:52"],["오류","UPSTREAM_TIMEOUT"]]]]) },
-  issues: { eyebrow: "Issue desk", title: "이슈 군집 검수", description: "자동 후보를 검토하고 기사 관계를 merge·split합니다. 변경은 작업 큐와 감사 로그에 남습니다.", minimumRole: "analyst", actions: [{ label: "Merge", level: "operate" }, { label: "Split", level: "operate" }], items: items([["issue-01","도심 주택 공급 대책","기사 14개 · 자동 군집 confidence 91%","BALANCED",[["버전","v18"],["최근 활동","8분 전"],["관점 범위","62"]]],["issue-02","AI 기본법 시행 준비","기사 4개 · 균형 조건 미충족","PREPARING",[["버전","v7"],["최근 활동","31분 전"],["관점 범위","18"]]]]) },
-  models: { eyebrow: "Model observatory", title: "모델 상태와 불일치", description: "alias별 비용·지연·성공률·관점 spread를 검토합니다. 실제 시크릿 값은 표시하지 않습니다.", minimumRole: "analyst", actions: [{ label: "분석 재실행", level: "operate" }, { label: "모델 수정", level: "publish" }], items: items([["model-01","analysis-balanced-a","provider A · actual-model-2026-07","HEALTHY",[["p95 지연","1.8s"],["성공률","99.4%"],["오늘 비용","₩48,200"]]],["model-02","analysis-balanced-b","provider B · actual-model-2026-05","DEGRADED",[["p95 지연","4.2s"],["성공률","91.8%"],["평균 spread","24.6"]]]]) },
-  weights: { eyebrow: "Weight control", title: "가중치 revision", description: "immutable draft를 7일·30일 shadow simulation 후 publish하며 If-Match 충돌 시 반드시 재검토합니다.", minimumRole: "analyst", actions: [{ label: "7·30일 simulation", level: "operate" }, { label: "Publish", level: "publish", conflict: true }, { label: "Rollback", level: "publish", destructive: true }], items: items([["weight-18","Revision 18","활성 profile · published by admin-02","ACTIVE",[["model","0.42"],["relative","0.24"],["crowd/source","0.18 / 0.16"]]],["weight-19","Revision 19","7일·30일 guardrail 통과","SIMULATION",[["다양성","+3.8%"],["오차","−1.2%"],["최대 이동","4.1"]]]]) },
-  autopilot: { eyebrow: "Auto Pilot", title: "추천 inbox와 guardrail", description: "기본 모드는 RECOMMEND입니다. LIMITED_AUTO도 실패·데이터 부족·비용 초과 시 publish하지 않습니다.", minimumRole: "analyst", actions: [{ label: "Approve", level: "review" }, { label: "Reject", level: "review", destructive: true }, { label: "설정 변경", level: "publish" }], items: items([["rec-01","추천 #028","Revision 18 기반 · 7일/30일 통과","PENDING_REVIEW",[["모드","RECOMMEND"],["최대 변화","3.2%"],["근거 window","30d"]]],["rec-02","추천 #027","집단별 오류 악화 제한 실패","GUARDRAIL_FAILED",[["모드","제안만"],["실패 항목","cohort error"],["변화","+5.8%"]]]]) },
-  jobs: { eyebrow: "MariaDB queue", title: "작업 큐", description: "lease·attempt·backoff 상태를 확인하고 reviewer 권한으로 retry·cancel합니다.", minimumRole: "analyst", actions: [{ label: "Retry", level: "review" }, { label: "Cancel", level: "review", destructive: true }], items: items([["job-01","ANALYZE_ARTICLE","article-03 · worker-02 lease","LEASED",[["시도","1/5"],["lease 만료","13:49:20"],["우선순위","70"]]],["job-02","RENDER_SHARE","card-18 · exponential backoff","FAILED",[["시도","3/5"],["다음 실행","13:56:00"],["오류","BLOB_WRITE"]]]]) },
-  audit: { eyebrow: "Audit trail", title: "변경 감사 로그", description: "actor·action·before·after·reason·request ID로 운영 변경을 재현합니다.", minimumRole: "reviewer", actions: [], items: items([["audit-01","WEIGHT_PUBLISH","actor admin-02 · weight revision 18","SUCCEEDED",[["before","revision 17"],["after","revision 18"],["reason","30일 guardrail 통과"]]],["audit-02","JOB_RETRY","actor reviewer-04 · job-02","SUCCEEDED",[["before","FAILED"],["after","PENDING"],["reason","provider 정상화 확인"]]]]) },
-  "metrics/efficacy": { eyebrow: "Protected aggregate", title: "효능감 cohort 지표", description: "작은 cohort는 숨기고 aggregate 변화는 인과가 아닌 관찰된 상관관계로만 표시합니다.", minimumRole: "analyst", actions: [], items: items([["cohort-01","전체 활성 회원","최근 90일 follow-up 응답자","VISIBLE",[["표본","1,284"],["평균 delta","+4.8"],["응답률","38.2%"]]],["cohort-02","소규모 지역 segment","보호 임계값 미만","HIDDEN",[["표본","비공개"],["평균 delta","비공개"],["응답률","비공개"]]]]) },
+  sources: { eyebrow: "Collection policy", title: "출처와 수집 정책", description: "서버에 저장된 수집 정책과 실행 상태입니다.", listPath: "/admin/sources", minimumRole: "analyst", actions: [
+    { label: "수집 실행", level: "operate", method: "POST", path: (id) => `/admin/sources/${id}/crawl`, body: reasonBody },
+    { label: "정책 수정", level: "publish", method: "PATCH", path: (id) => `/admin/sources/${id}`, needsValues: true, ifMatch: true, body: (reason, values) => ({ reason, values }) },
+  ] },
+  crawls: { eyebrow: "Ingestion runs", title: "수집 실행과 오류", description: "실제 수집 실행과 오류를 읽기 전용으로 확인합니다.", listPath: "/admin/crawls", minimumRole: "analyst", actions: [] },
+  issues: { eyebrow: "Issue desk", title: "이슈 군집 검수", description: "기사 관계 변경은 작업 큐와 감사 로그에 남습니다.", listPath: "/issues", minimumRole: "analyst", actions: [
+    { label: "Merge", level: "operate", method: "POST", path: (id) => `/admin/issues/${id}/merge`, needsValues: true, body: (reason, values) => ({ reason, target_issue_id: values.target_issue_id }) },
+    { label: "Split", level: "operate", method: "POST", path: (id) => `/admin/issues/${id}/split`, needsValues: true, body: (reason, values) => ({ reason, article_ids: values.article_ids }) },
+  ] },
+  models: { eyebrow: "Model observatory", title: "모델 상태와 불일치", description: "서버에 등록된 모델 alias 상태를 확인하고 수정합니다.", listPath: "/admin/models", minimumRole: "analyst", actions: [
+    { label: "모델 수정", level: "publish", method: "PATCH", path: (id) => `/admin/models/${id}`, needsValues: true, ifMatch: true, body: (reason, values) => ({ reason, values }) },
+  ] },
+  weights: { eyebrow: "Weight control", title: "가중치 revision", description: "simulation 결과를 확인한 뒤 publish 또는 rollback합니다.", listPath: "/admin/weights", minimumRole: "analyst", actions: [
+    { label: "7·30일 simulation", level: "operate", method: "POST", path: (id) => `/admin/weights/${id}/simulate`, defaultValues: { windows: [7, 30] }, body: (reason, values) => ({ reason, windows: values.windows ?? [7, 30] }) },
+    { label: "Publish", level: "publish", method: "POST", path: (id) => `/admin/weights/${id}/publish`, ifMatch: true, ifMatchPath: "/admin/autopilot/settings", body: reasonBody },
+    { label: "Rollback", level: "publish", method: "POST", path: (id) => `/admin/weights/${id}/rollback`, destructive: true, needsValues: true, ifMatch: true, ifMatchPath: "/admin/autopilot/settings", body: (reason, values) => ({ reason, target_revision_id: values.target_revision_id }) },
+  ] },
+  autopilot: { eyebrow: "Auto Pilot", title: "추천 inbox와 guardrail", description: "서버가 생성한 추천을 승인하거나 거절합니다.", listPath: "/admin/autopilot/recommendations", minimumRole: "analyst", actions: [
+    { label: "Approve", level: "review", method: "POST", path: (id) => `/admin/autopilot/recommendations/${id}/approve`, body: reasonBody },
+    { label: "Reject", level: "review", method: "POST", path: (id) => `/admin/autopilot/recommendations/${id}/reject`, destructive: true, body: reasonBody },
+  ] },
+  jobs: { eyebrow: "MariaDB queue", title: "작업 큐", description: "lease와 attempt 상태를 확인하고 운영 재시도·취소를 실행합니다.", listPath: "/admin/jobs", minimumRole: "analyst", actions: [
+    { label: "Retry", level: "review", method: "POST", path: (id) => `/admin/jobs/${id}/retry`, body: reasonBody },
+    { label: "Cancel", level: "review", method: "POST", path: (id) => `/admin/jobs/${id}/cancel`, destructive: true, body: reasonBody },
+  ] },
+  audit: { eyebrow: "Audit trail", title: "변경 감사 로그", description: "actor·action·before·after·reason·request ID를 확인합니다.", listPath: "/admin/audit", minimumRole: "reviewer", actions: [] },
+  "metrics/efficacy": { eyebrow: "Protected aggregate", title: "효능감 cohort 지표", description: "서버에서 suppression된 집계만 표시합니다.", listPath: "/admin/metrics/efficacy", minimumRole: "analyst", actions: [] },
 };

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { isMockMode } from "@/lib/api/mode";
 
 export function Providers({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -15,7 +16,7 @@ export function Providers({ children }: { children: ReactNode }) {
   }));
 
   useEffect(() => {
-    if (process.env.NEXT_PUBLIC_API_MODE !== "real") {
+    if (isMockMode()) {
       void import("@/mocks/browser").then(({ startMockWorker }) => startMockWorker());
     }
   }, []);

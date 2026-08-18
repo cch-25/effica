@@ -9,10 +9,11 @@ import { Button } from "@/components/ui/button";
 import { articles } from "@/mocks/fixtures/content";
 import { clampScore, formatBiasScore, formatConfidence, formatSensationalismScore } from "@/lib/api/formatters";
 import { RealArticleDetail } from "@/features/articles/real-article-detail";
+import { isMockMode } from "@/lib/api/mode";
 
 export default async function ArticlePage({ params }: { params: Promise<{ articleId: string }> }) {
   const { articleId } = await params;
-  if (process.env.NEXT_PUBLIC_API_MODE === "real") return <RealArticleDetail articleId={articleId} />;
+  if (!isMockMode()) return <RealArticleDetail articleId={articleId} />;
   const article = articles.find((item) => item.id === articleId);
   if (!article) notFound();
   return (
@@ -39,7 +40,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ articl
           <div className="axis" aria-label={`과장성 ${formatSensationalismScore(article.sensationalism)}`}>
             <div className="axis__head"><strong>과장성</strong><span>{formatSensationalismScore(article.sensationalism)}</span></div>
             <div className="axis__labels"><span>낮음</span><span>높음</span></div>
-            <div className="axis__track" aria-hidden="true"><span className="axis__marker" style={{ left: `${clampScore(article.sensationalism, 0, 100)}%` }} /></div>
+            {article.sensationalism === null ? <small>이 버전에는 과장성 측정값이 없습니다.</small> : <div className="axis__track" aria-hidden="true"><span className="axis__marker" style={{ left: `${clampScore(article.sensationalism, 0, 100)}%` }} /></div>}
             <small>허위 판정이 아닌 표현 강도 평가</small>
           </div>
           <a className="external-link" href={article.originalUrl} target="_blank" rel="noreferrer">언론사 원문 새 창에서 보기 <ExternalLink size={15} /></a>

@@ -27,3 +27,11 @@ it("7단계 편향성·과장성 선택을 숨은 y/z 중앙값과 함께 제출
     body: JSON.stringify({ x: 67, y: 0, z: 0, sensationalism: 83 }),
   }));
 });
+
+it("DELETE 성공 뒤에만 투표 화면을 초기화한다", async () => {
+  mocks.apiRequest.mockResolvedValue(undefined);
+  render(<VoteForm articleId="article-1" />);
+  fireEvent.click(screen.getByRole("button", { name: "내 투표 삭제" }));
+  await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith("/articles/article-1/vote", { method: "DELETE" }));
+  expect(screen.getByText(/활성 투표가 삭제/)).toBeVisible();
+});

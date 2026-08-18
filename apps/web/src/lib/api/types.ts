@@ -1,4 +1,4 @@
-export type Role = "guest" | "member" | "analyst" | "reviewer" | "admin";
+export type { Role } from "./contracts";
 export type ResourceState =
   | "ready"
   | "loading"
@@ -21,7 +21,8 @@ export type AxisScores = {
   confidence: number;
 };
 
-export type Article = AxisScores & {
+export type Article = Omit<AxisScores, "sensationalism"> & {
+  sensationalism: number | null;
   id: string;
   issueId: string;
   sourceId: string;
@@ -46,7 +47,8 @@ export type Issue = {
   articleIds: string[];
 };
 
-export type VisualizationPoint = AxisScores & {
+export type VisualizationPoint = Omit<AxisScores, "sensationalism"> & {
+  sensationalism: number | null;
   id: string;
   label: string;
   type: "article" | "source" | "user";
