@@ -1,11 +1,8 @@
 import Link from "next/link";
 import { LoginOptions } from "@/features/auth/login-options";
+import { safeReturnTo } from "@/lib/navigation/return-to";
 
 export const metadata = { title: "로그인" };
-
-function safeReturnTo(candidate: string | undefined): string {
-  return candidate?.startsWith("/") && !candidate.startsWith("//") ? candidate : "/";
-}
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ returnTo?: string }> }) {
   const returnTo = safeReturnTo((await searchParams).returnTo);

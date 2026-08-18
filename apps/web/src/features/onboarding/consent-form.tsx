@@ -7,10 +7,11 @@ import { Button } from "@/components/ui/button";
 import { CheckboxField } from "@/components/ui/form-controls";
 import { apiRequest } from "@/lib/api/client";
 import type { ConsentSubmission, ConsentView } from "@/lib/api/contracts";
+import { withReturnTo } from "@/lib/navigation/return-to";
 
 const schema = z.object({ service: z.literal(true), privacy: z.literal(true), political: z.literal(true) });
 
-export function ConsentForm() {
+export function ConsentForm({ returnTo }: { returnTo: string }) {
   const router = useRouter();
   const [error, setError] = useState("");
   const [consents, setConsents] = useState<ConsentView[] | null>(null);
@@ -31,12 +32,12 @@ export function ConsentForm() {
         const body: ConsentSubmission = { consent_version_id: consent.id, granted: true };
         await apiRequest<ConsentView>("/me/consents", { method: "POST", body: JSON.stringify(body) });
       }
-      router.push("/onboarding/questionnaire");
+      router.push(withReturnTo("/onboarding/questionnaire", returnTo));
     } catch { setError("동의를 저장하지 못했습니다. 서버 상태를 확인하고 다시 시도해 주세요."); }
     finally { setBusy(false); }
   };
   return (
-    <form action="/onboarding/questionnaire" method="get" onSubmit={submit}>
+    <form action={withReturnTo("/onboarding/questionnaire", returnTo)} method="get" onSubmit={submit}>
       <div className="choice-grid">
         <CheckboxField name="service" label="[필수] 서비스 이용약관" description="서비스 제공과 계정 운영에 필요한 기본 약관입니다." />
         <CheckboxField name="privacy" label="[필수] 개인정보 처리" description="계정·활동 기록 처리 목적과 보관 기간을 확인합니다." />
