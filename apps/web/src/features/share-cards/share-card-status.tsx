@@ -29,7 +29,7 @@ export function ShareCardStatus({ initialCard }: { initialCard: ShareCardView })
     }, 2_000);
     return () => window.clearInterval(timer);
   }, [card.id, card.status]);
-  const publicPath = card.public_token ? `/api/v1/public/share/${encodeURIComponent(card.public_token)}` : null;
+  const publicPath = card.public_token ? `/share/p/${encodeURIComponent(card.public_token)}` : null;
   const share = async () => {
     if (!publicPath) return;
     const publicUrl = new URL(publicPath, window.location.origin).toString();
