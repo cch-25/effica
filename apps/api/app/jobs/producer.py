@@ -83,17 +83,29 @@ async def _transaction(session: Any) -> AsyncIterator[Any]:
     if begin is None:
         yield session
         return
-    context = await _maybe_await(begin())
+    # SQLAlchemy's AsyncSessionTransaction is both awaitable and an async
+    # context manager.  Awaiting ``begin()`` before entering it starts the
+    # same transaction twice and raises ``InvalidRequestError`` on a real
+    # AsyncSession.  Enter the context first; only await custom/fake begin
+    # implementations that do not expose the async context protocol.
+    context = begin()
+    if not hasattr(context, "__aenter__"):
+        context = await _maybe_await(context)
     if hasattr(context, "__aenter__"):
         async with context:
             yield session
+        return
+    try:
+        yield session
+    except BaseException:
+        rollback = getattr(session, "rollback", None)
+        if rollback is not None:
+            await _maybe_await(rollback())
+        raise
     else:
-        try:
-            yield session
-        finally:
-            commit = getattr(session, "commit", None)
-            if commit is not None:
-                await _maybe_await(commit())
+        commit = getattr(session, "commit", None)
+        if commit is not None:
+            await _maybe_await(commit())
 
 
 def _first_mapping(result: Any) -> Mapping[str, Any] | None:

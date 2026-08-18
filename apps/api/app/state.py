@@ -10,6 +10,8 @@ from typing import Any
 
 import ulid
 
+from apps.api.app.jobs.payloads import validate_job_payload
+
 
 def new_id() -> str:
     return str(ulid.new())
@@ -110,7 +112,12 @@ class PlatformState:
             "REVIEWER": reviewer_id,
             "ADMIN": admin_id,
         }
-        service_consent, political_consent, questionnaire = new_id(), new_id(), new_id()
+        service_consent, political_consent, questionnaire, efficacy_questionnaire = (
+            new_id(),
+            new_id(),
+            new_id(),
+            new_id(),
+        )
         self.consents[service_consent] = {
             "id": service_consent,
             "purpose": "SERVICE",
@@ -129,9 +136,35 @@ class PlatformState:
         self.consent_grants[(member_id, political_consent)] = True
         self.questionnaires[questionnaire] = {
             "id": questionnaire,
-            "kind": "POLITICAL_ONBOARDING",
+            "kind": "onboarding",
             "version": "1.0",
             "keys": ["economic", "social", "international"],
+            "schema_json": {
+                "questions": [
+                    {"id": key, "required": True, "minimum": -100, "maximum": 100}
+                    for key in ("economic", "social", "international")
+                ]
+            },
+            "scoring_json": {
+                "axes": {"x": "economic", "y": "social", "z": "international"},
+                "confidence": 0.65,
+            },
+            "active_from": utcnow(),
+        }
+        self.questionnaires[efficacy_questionnaire] = {
+            "id": efficacy_questionnaire,
+            "kind": "efficacy",
+            "version": "1.0",
+            "keys": ["baseline", "current"],
+            "schema_json": {
+                "scale": {"minimum": 0, "maximum": 100},
+                "questions": [
+                    {"id": "baseline", "required": True, "minimum": 0, "maximum": 100},
+                    {"id": "current", "required": True, "minimum": 0, "maximum": 100},
+                ],
+            },
+            "scoring_json": {"method": "mean", "reverse_items": []},
+            "active_from": utcnow(),
         }
         source_ids = [new_id(), new_id(), new_id()]
         for index, (source_id, name, source_type) in enumerate(
@@ -250,6 +283,7 @@ class PlatformState:
         }
 
     def enqueue(self, job_type: str, dedupe_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+        payload = validate_job_payload(job_type, payload)
         with self.lock:
             for job in self.jobs.values():
                 if job["job_type"] == job_type and job["dedupe_key"] == dedupe_key:
@@ -296,7 +330,14 @@ class PlatformState:
             }
         )
 
-    def create_share_card(self, user_id: str, template: str, display_name: str | None) -> dict[str, Any]:
+    def create_share_card(
+        self,
+        user_id: str,
+        template: str,
+        display_name: str | None,
+        *,
+        publication_confirmed: bool = True,
+    ) -> dict[str, Any]:
         profile = next(
             (profile for profile in self.profiles.values() if profile["user_id"] == user_id and profile["active"]),
             {"x": 0, "y": 0, "z": 0, "confidence": 0},
@@ -319,7 +360,12 @@ class PlatformState:
                 "coordinate": {key: profile[key] for key in ("x", "y", "z", "confidence")},
                 "tier": "Explorer" if total < 100 else "Bridge Builder",
                 "credit_total": total,
-                "political_data_publication_confirmed": True,
+                "political_data_publication_confirmed": publication_confirmed,
+                "publication_consent": {
+                    "confirmation_version": "share-card-publication-v1",
+                    "confirmed_at": utcnow().isoformat(),
+                    "actor_id": user_id,
+                },
             },
             "png": png,
             "etag": f'"{stable_hash(png)}"',

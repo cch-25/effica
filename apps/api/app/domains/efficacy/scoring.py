@@ -146,13 +146,29 @@ def aggregate_efficacy(
         "cohorts": {},
         "suppressed_cohorts": 0,
     }
-    groups: dict[str, list[float]] = {}
+    groups: dict[str, dict[str, tuple[EfficacyResponse, float]]] = {}
     for item, score in scored:
         if item.cohort_key:
-            groups.setdefault(item.cohort_key, []).append(score)
-    for cohort, scores in sorted(groups.items()):
+            cohort_group = groups.setdefault(item.cohort_key, {})
+            prior = cohort_group.get(item.user_id)
+            if prior is None or _response_order(item) > _response_order(prior[0]):
+                cohort_group[item.user_id] = (item, score)
+    for cohort, by_user in sorted(groups.items()):
+        scores = [item[1] for item in by_user.values()]
         if len(scores) >= min_cohort_size:
             result["cohorts"][cohort] = {"count": len(scores), "mean": round(mean(scores), 6)}
         else:
             result["suppressed_cohorts"] += 1
     return result
+
+
+def _response_order(response: EfficacyResponse) -> tuple[float, str]:
+    stamp = response.submitted_at
+    if isinstance(stamp, str):
+        try:
+            stamp = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        except ValueError:
+            return float("-inf"), response.response_id
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+    return stamp.timestamp(), response.response_id

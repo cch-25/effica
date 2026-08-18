@@ -16,7 +16,7 @@ from apps.api.app.core.logging import configure_logging
 from apps.api.app.state import new_id
 
 logger = configure_logging(logger_name="perspective.api")
-EXPECTED_DB_REVISION = "0006_openai_single_model"
+EXPECTED_DB_REVISION = "0007_credit_reversal_uniqueness"
 
 
 @asynccontextmanager

@@ -102,6 +102,13 @@ def create_engine(database_url: str | None = None, **kwargs: Any) -> AsyncEngine
     global _engine, _session_factory
     url = _normalize_url(database_url or database_url_from_env())
     kwargs.setdefault("pool_pre_ping", True)
+    # Request handlers perform several reads before their write-side locks are
+    # acquired (authentication, consent checks, and resource lookup).  MariaDB
+    # REPEATABLE READ can therefore retain a stale snapshot after waiting for
+    # a lock and raise error 1020 on the current row.  READ COMMITTED keeps
+    # those serialized transactions on the latest committed state.
+    if url.startswith(("mariadb+", "mysql+")):
+        kwargs.setdefault("isolation_level", "READ COMMITTED")
     _engine = create_async_engine(url, **kwargs)
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False, autoflush=False)
     return _engine

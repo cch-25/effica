@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, field_validator
 
 ULID_PATTERN = r"^[0-9A-HJKMNP-TV-Z]{26}$"
 Axis = int
@@ -52,7 +53,14 @@ class StatusResponse(ContractModel):
 
 class JobAccepted(ContractModel):
     job_id: str = Field(pattern=ULID_PATTERN)
-    status: Literal["PENDING"] = "PENDING"
+    # A replay of an idempotent request can legitimately return a terminal
+    # status.  Keep the accepted envelope stable while allowing the durable
+    # queue's complete lifecycle rather than validating only first enqueue.
+    status: JobStatus = JobStatus.PENDING
+
+
+class ShareCardJobAccepted(JobAccepted):
+    share_card_id: str = Field(pattern=ULID_PATTERN)
 
 
 class AuthStartResponse(ContractModel):
@@ -67,6 +75,20 @@ class UserView(ContractModel):
     consent_complete: bool
     onboarding_complete: bool
     behavioral_profile_active: bool = False
+
+
+class QuestionnaireVersionView(ContractModel):
+    id: str = Field(pattern=ULID_PATTERN)
+    kind: Literal["onboarding", "efficacy"]
+    version: str
+    # Use an internal name to avoid shadowing BaseModel.schema while retaining
+    # the stable wire property consumed by generated clients.
+    questionnaire_definition: dict[str, Any] = Field(alias="schema_json")
+    scoring_json: dict[str, Any]
+    active_from: datetime
+    # ``keys`` is a compact compatibility projection for local clients.  DB
+    # definitions carry the richer schema_json object and may omit it.
+    keys: list[str] = Field(default_factory=list)
 
 
 class ConsentView(ContractModel):
@@ -85,7 +107,17 @@ class ConsentSubmission(ContractModel):
 
 class QuestionnaireSubmission(ContractModel):
     questionnaire_version_id: str = Field(pattern=ULID_PATTERN)
-    answers: dict[str, int | float | str | bool]
+    answers: dict[str, StrictInt | StrictFloat]
+
+    @field_validator("answers")
+    @classmethod
+    def finite_numeric_answers(
+        cls, answers: dict[str, StrictInt | StrictFloat]
+    ) -> dict[str, StrictInt | StrictFloat]:
+        for key, value in answers.items():
+            if isinstance(value, bool) or not math.isfinite(float(value)):
+                raise ValueError(f"answer for {key} must be a finite number")
+        return answers
 
 
 class ProfileView(Coordinate):
@@ -277,6 +309,7 @@ class SourceCreate(ContractModel):
     robots_status: Literal["UNKNOWN", "APPROVED", "REJECTED"] = "UNKNOWN"
     terms_status: Literal["UNKNOWN", "APPROVED", "REJECTED"] = "UNKNOWN"
     active: bool = True
+    reason: str = Field(min_length=1, max_length=500)
 
 
 class PatchDocument(ContractModel):
@@ -321,7 +354,7 @@ class RollbackRequest(ReasonRequest):
     target_revision_id: str
 
 
-class SimulationRequest(ContractModel):
+class SimulationRequest(ReasonRequest):
     windows: list[Literal[7, 30]] = Field(default_factory=lambda: [7, 30])
 
 
@@ -336,11 +369,20 @@ class AutopilotSettingsPut(ContractModel):
     reason: str
 
 
-class MergeIssueRequest(ContractModel):
+class AutopilotSettingsView(ContractModel):
+    mode: Literal["OFF", "RECOMMEND", "LIMITED_AUTO"]
+    guardrails: dict[str, float]
+    manual_locks: list[str] = Field(default_factory=list)
+    version: int
+    updated_by: str | None = None
+    updated_at: datetime | None = None
+
+
+class MergeIssueRequest(ReasonRequest):
     target_issue_id: str
 
 
-class SplitIssueRequest(ContractModel):
+class SplitIssueRequest(ReasonRequest):
     article_ids: list[str] = Field(min_length=1)
 
 

@@ -38,7 +38,7 @@ def _response_payload(**overrides: object) -> dict[str, object]:
                 "article_version_id": "version-1",
                 "start": 0,
                 "end": 8,
-                "quote": "A short",
+                "quote": "A short ",
                 "rationale": "opening",
             }
         ],
@@ -222,7 +222,7 @@ def test_masking_and_public_redaction_cover_source_identity_secrets_and_long_quo
                         "article_version_id": "version-1",
                         "start": 0,
                         "end": 20,
-                        "quote": body[:80],
+                            "quote": "[SOURCE] reported this "[:20],
                         "rationale": "api_key=do-not-publish",
                     }
                 ],

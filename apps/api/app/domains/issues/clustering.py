@@ -234,7 +234,9 @@ class IssueClusterStore:
 
         if operation_key in self._operations:
             return self._operations[operation_key]
-        source_ids = sorted(set(source_issue_ids) | {target_issue_id})
+        # Validate only actual sources before creating a missing target. The
+        # target is an output of the merge and need not already be present.
+        source_ids = sorted(set(source_issue_ids) - {target_issue_id})
         source = [self._require(item) for item in source_ids]
         target = self.issues.get(target_issue_id)
         if target is None:
@@ -290,6 +292,8 @@ class IssueClusterStore:
             ids = [f"{issue_id}-split-{index + 1}" for index in range(len(groups_clean))]
         if len(set(ids)) != len(ids):
             raise ValueError("new issue ids must be unique")
+        if issue_id in ids:
+            raise ValueError("split target issue cannot be the source issue")
         result: list[Issue] = []
         for index, (group, new_id) in enumerate(zip(groups_clean, ids, strict=True)):
             new_issue = self.issues.get(new_id)
@@ -302,6 +306,12 @@ class IssueClusterStore:
                 )
             new_issue.version += 1
             result.append(new_issue)
+        # Move memberships rather than copying them. This prevents the same
+        # article from remaining active in both the split source and new
+        # issue(s). Unselected memberships remain on the source for partial
+        # splits.
+        for article_id in requested:
+            source.memberships.pop(article_id, None)
         source.status = "split"
         source.version += 1
         self._operations[operation_key] = result

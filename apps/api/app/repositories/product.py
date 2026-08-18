@@ -9,13 +9,16 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import math
 from datetime import timedelta
 from statistics import fmean
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 
 from apps.api.app.db.enums import (
+    CreditStatus,
     ProfileKind,
     QuestionnaireKind,
     ReadSessionStatus,
@@ -39,6 +42,7 @@ from apps.api.app.db.models import (
     ShareCard,
     Source,
     StoredBlob,
+    User,
     UserConsent,
     UserProfile,
     Vote,
@@ -56,6 +60,9 @@ from apps.api.app.domains.scoring.behavior import (
 
 def _value(value: Any) -> Any:
     return getattr(value, "value", value)
+
+
+_TERMINAL_ISSUE_STATUSES = ("merged", "closed", "archived")
 
 
 class ProductConflictError(RuntimeError):
@@ -120,7 +127,14 @@ class ProductRepositoryMixin:
                 select(Article, Source, IssueMembership.issue_id)
                 .join(Source, Article.source_id == Source.id)
                 .outerjoin(IssueMembership, IssueMembership.article_id == Article.id)
-                .where(Article.id == article_id)
+                .outerjoin(Issue, Issue.id == IssueMembership.issue_id)
+                .where(
+                    Article.id == article_id,
+                    or_(
+                        Issue.id.is_(None),
+                        Issue.status.not_in(_TERMINAL_ISSUE_STATUSES),
+                    ),
+                )
                 .limit(1)
             )
         ).first()
@@ -160,11 +174,35 @@ class ProductRepositoryMixin:
                     select(Article, Source, IssueMembership.issue_id)
                     .join(Source, Article.source_id == Source.id)
                     .outerjoin(IssueMembership, IssueMembership.article_id == Article.id)
-                    .where(Article.current_version_id.is_not(None))
-                    .order_by(Article.published_at.desc(), Article.id.desc())
+                    .outerjoin(Issue, Issue.id == IssueMembership.issue_id)
+                    .where(
+                        Article.current_version_id.is_not(None),
+                        or_(
+                            Issue.id.is_(None),
+                            Issue.status.not_in(_TERMINAL_ISSUE_STATUSES),
+                        ),
+                    )
+                    .order_by(
+                        Article.published_at.desc(),
+                        Article.id.desc(),
+                        IssueMembership.issue_id.asc(),
+                    )
                 )
             ).all()
         )
+        # A merge/split transition and retries can leave more than one active
+        # membership while the transaction settles.  Feed has one invariant:
+        # an article may be emitted at most once.  Terminal memberships were
+        # filtered in SQL above; retain the first deterministic live context.
+        unique_contexts: list[tuple[Article, Source, str | None]] = []
+        seen_article_ids: set[str] = set()
+        for context in contexts:
+            article = context[0]
+            if article.id in seen_article_ids:
+                continue
+            seen_article_ids.add(article.id)
+            unique_contexts.append(context)
+        contexts = unique_contexts
         latest = await self._latest_scores()
         candidates: list[tuple[Article, Source, str | None, ScoreVersion]] = []
         for article, source, issue_id in contexts:
@@ -192,6 +230,7 @@ class ProductRepositoryMixin:
             if personalized and profile is not None
             else None,
             max_consecutive_source=1,
+            max_per_issue=1,
         )
         items: list[dict[str, Any]] = []
         for ranked_item in ranked:
@@ -456,12 +495,20 @@ class ProductRepositoryMixin:
     ) -> bool:
         if await self.session.get(Article, article_id) is None:
             return False
+        # Lock a stable parent row before checking for an active session.  A
+        # missing active-session row cannot itself be locked, so this parent
+        # lock serializes concurrent create requests for the same user.
+        user = await self.session.scalar(
+            select(User).where(User.id == user_id).with_for_update()
+        )
+        if user is None:
+            return False
         active = await self.session.scalar(
             select(ReadSession).where(
                 ReadSession.user_id == user_id,
                 ReadSession.status.in_([ReadSessionStatus.CREATED, ReadSessionStatus.OUTBOUND]),
                 ReadSession.expires_at > utc_now(),
-            )
+            ).with_for_update()
         )
         if active:
             raise ProductConflictError("READ_SESSION_OVERLAP")
@@ -485,7 +532,9 @@ class ProductRepositoryMixin:
     async def use_read_redirect(
         self, *, session_id: str, user_id: str, article_id: str, token: str
     ) -> str:
-        row = await self.session.get(ReadSession, session_id)
+        row = await self.session.scalar(
+            select(ReadSession).where(ReadSession.id == session_id).with_for_update()
+        )
         if (
             row is None
             or row.user_id != user_id
@@ -510,7 +559,9 @@ class ProductRepositoryMixin:
     async def return_read_session_row(
         self, *, session_id: str, user_id: str, client_elapsed_ms: int | None
     ) -> dict[str, Any] | None:
-        row = await self.session.get(ReadSession, session_id)
+        row = await self.session.scalar(
+            select(ReadSession).where(ReadSession.id == session_id).with_for_update()
+        )
         if row is None or row.user_id != user_id:
             return None
         now = utc_now()
@@ -564,8 +615,9 @@ class ProductRepositoryMixin:
                 CreditLedger.user_id == user_id,
                 CreditLedger.event_type == "QUALIFIED_READ",
                 CreditLedger.event_key == event_key,
-            )
+            ).with_for_update()
         )
+        credited_delta = delta
         if delta and existing is None:
             self.session.add(
                 CreditLedger(
@@ -581,12 +633,17 @@ class ProductRepositoryMixin:
                 )
             )
             await self._append_behavior_event(user_id=user_id, article_id=row.article_id)
+        elif delta:
+            # The response must describe the durable insert, not merely the
+            # eligibility calculation.  A recovered/duplicate ledger row is
+            # a zero-credit replay even if the session had not yet advanced.
+            credited_delta = 0
         await self.session.commit()
         return {
             "status": "eligible" if eligible else "rejected",
             "reason_code": reason,
             "server_elapsed_ms": result.server_elapsed_ms,
-            "credit_delta": delta,
+            "credit_delta": credited_delta,
         }
 
     async def vote_aggregate(self, article_id: str) -> dict[str, Any] | None:
@@ -620,7 +677,21 @@ class ProductRepositoryMixin:
     async def put_vote_row(
         self, *, user_id: str, article_id: str, values: dict[str, int]
     ) -> dict[str, Any] | None:
-        if await self.session.get(Article, article_id) is None:
+        # Article is the stable serialization point for the aggregate version.
+        # Per-user vote rows cannot provide a global sequence because two users
+        # can both submit their first vote at revision 1.
+        article = await self.session.scalar(
+            select(Article).where(Article.id == article_id).with_for_update()
+        )
+        if article is None:
+            return None
+        # First votes have no child row to lock.  The user row is a stable
+        # serialization point for revision allocation and also protects the
+        # active-row transition below.
+        user = await self.session.scalar(
+            select(User).where(User.id == user_id).with_for_update()
+        )
+        if user is None:
             return None
         rows = list(
             (
@@ -636,7 +707,21 @@ class ProductRepositoryMixin:
             if row.active:
                 row.active = False
                 row.updated_at = utc_now()
-        revision = rows[0].revision + 1 if rows else 1
+        # Use a locking read here.  Under MariaDB's default REPEATABLE READ,
+        # a plain MAX() can keep the transaction's earlier snapshot even after
+        # waiting for the article lock, causing two users to allocate the same
+        # global revision.
+        latest_revision = int(
+            await self.session.scalar(
+                select(Vote.revision)
+                .where(Vote.article_id == article_id)
+                .order_by(Vote.revision.desc())
+                .limit(1)
+                .with_for_update()
+            )
+            or 0
+        )
+        revision = latest_revision + 1
         now = utc_now()
         vote = Vote(
             id=new_ulid(),
@@ -659,7 +744,7 @@ class ProductRepositoryMixin:
         await self.enqueue(
             "aggregate_votes",
             f"{article_id}:{revision}",
-            {"article_id": article_id, "vote_revision": revision},
+            {"article_id": article_id, "version": revision},
         )
         return {**values, "revision": revision, "quality_status": "QUALIFIED", "active": True}
 
@@ -732,7 +817,7 @@ class ProductRepositoryMixin:
                 x=round(updated_profile.x),
                 y=round(updated_profile.y),
                 z=round(updated_profile.z),
-                confidence=updated_profile.confidence,
+                confidence=round(updated_profile.confidence, 4),
                 source_version=updated_profile.policy_version,
                 active=True,
                 created_at=utc_now(),
@@ -740,6 +825,11 @@ class ProductRepositoryMixin:
         )
 
     async def delete_vote_row(self, *, user_id: str, article_id: str) -> bool:
+        article = await self.session.scalar(
+            select(Article).where(Article.id == article_id).with_for_update()
+        )
+        if article is None:
+            return False
         row = await self.session.scalar(
             select(Vote)
             .where(Vote.user_id == user_id, Vote.article_id == article_id, Vote.active.is_(True))
@@ -748,13 +838,24 @@ class ProductRepositoryMixin:
         )
         if row is None:
             return False
+        latest_revision = int(
+            await self.session.scalar(
+                select(Vote.revision)
+                .where(Vote.article_id == article_id)
+                .order_by(Vote.revision.desc())
+                .limit(1)
+                .with_for_update()
+            )
+            or 0
+        )
+        row.revision = latest_revision + 1
         row.active = False
         row.updated_at = utc_now()
         await self.session.flush()
         await self.enqueue(
             "aggregate_votes",
-            f"{article_id}:delete:{row.revision}",
-            {"article_id": article_id, "deleted_vote_revision": row.revision},
+            f"{article_id}:{row.revision}",
+            {"article_id": article_id, "version": row.revision},
         )
         return True
 
@@ -780,6 +881,80 @@ class ProductRepositoryMixin:
             }
             for row in rows
         ]
+
+    async def reverse_credit_row(
+        self,
+        *,
+        user_id: str,
+        original_ledger_id: str,
+        event_key: str,
+        policy_version: str,
+    ) -> dict[str, Any] | None:
+        """Create one durable reversal for an original ledger entry.
+
+        The original row is the serialization point: locking it prevents two
+        requests from both observing an un-reversed entry.  The unique
+        ``reversed_ledger_id`` constraint remains the database backstop for
+        dialects that do not honor row locks (and for independent writers).
+        """
+
+        original = await self.session.scalar(
+            select(CreditLedger)
+            .where(CreditLedger.id == original_ledger_id, CreditLedger.user_id == user_id)
+            .with_for_update()
+        )
+        if original is None:
+            return None
+        if _value(original.status) == CreditStatus.REVERSED.value or str(
+            original.event_type
+        ).upper() == "REVERSAL":
+            raise ProductConflictError("CREDIT_REVERSAL_CHAIN")
+        existing = await self.session.scalar(
+            select(CreditLedger)
+            .where(CreditLedger.reversed_ledger_id == original.id)
+            .with_for_update()
+        )
+        if existing is not None:
+            if existing.event_key == event_key:
+                return {
+                    "id": existing.id,
+                    "event_type": existing.event_type,
+                    "event_key": existing.event_key,
+                    "delta": existing.delta,
+                    "policy_version": existing.policy_version,
+                    "status": _value(existing.status),
+                    "reversed_ledger_id": existing.reversed_ledger_id,
+                    "created_at": existing.created_at,
+                }
+            raise ProductConflictError("CREDIT_ALREADY_REVERSED")
+        reversal = CreditLedger(
+            id=new_ulid(),
+            user_id=user_id,
+            event_type="REVERSAL",
+            event_key=event_key,
+            delta=-original.delta,
+            policy_version=policy_version,
+            status=CreditStatus.REVERSED,
+            reversed_ledger_id=original.id,
+            created_at=utc_now(),
+        )
+        self.session.add(reversal)
+        try:
+            await self.session.flush()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise ProductConflictError("CREDIT_ALREADY_REVERSED") from exc
+        await self.session.commit()
+        return {
+            "id": reversal.id,
+            "event_type": reversal.event_type,
+            "event_key": reversal.event_key,
+            "delta": reversal.delta,
+            "policy_version": reversal.policy_version,
+            "status": _value(reversal.status),
+            "reversed_ledger_id": reversal.reversed_ledger_id,
+            "created_at": reversal.created_at,
+        }
 
     async def progress_view(self, user_id: str) -> dict[str, Any]:
         total = int(
@@ -826,11 +1001,14 @@ class ProductRepositoryMixin:
         version = await self.session.get(QuestionnaireVersion, questionnaire_version_id)
         if version is None or _value(version.kind) != QuestionnaireKind.EFFICACY.value:
             return None
-        numeric = [
-            float(value)
-            for value in answers.values()
-            if isinstance(value, (int, float)) and not isinstance(value, bool)
-        ]
+        numeric: list[float] = []
+        for value in answers.values():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ProductValidationError("EFFICACY_ANSWERS_INVALID")
+            number = float(value)
+            if not math.isfinite(number):
+                raise ProductValidationError("EFFICACY_ANSWERS_INVALID")
+            numeric.append(number)
         if not numeric:
             raise ProductValidationError("EFFICACY_ANSWERS_INVALID")
         normalized = round(max(0.0, min(100.0, fmean(numeric))), 4)
@@ -861,7 +1039,12 @@ class ProductRepositoryMixin:
         return base64.urlsafe_b64encode(digest).decode().rstrip("=")
 
     async def create_share_card_row(
-        self, *, user_id: str, template: str, display_name: str | None
+        self,
+        *,
+        user_id: str,
+        template: str,
+        display_name: str | None,
+        publication_confirmed: bool = True,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         profile = await self.session.scalar(
             select(UserProfile)
@@ -873,6 +1056,7 @@ class ProductRepositoryMixin:
         progress = await self.progress_view(user_id)
         card_id = new_ulid()
         token = self._share_token(card_id)
+        confirmed_at = utc_now()
         snapshot = {
             "x": profile.x,
             "y": profile.y,
@@ -880,7 +1064,13 @@ class ProductRepositoryMixin:
             "confidence": float(profile.confidence),
             "tier": progress["tier"],
             "activity": progress["credit_total"],
-            "created_at": utc_now().isoformat(),
+            "created_at": confirmed_at.isoformat(),
+            "political_data_publication_confirmed": bool(publication_confirmed),
+            "publication_consent": {
+                "confirmation_version": "share-card-publication-v1",
+                "confirmed_at": confirmed_at.isoformat(),
+                "actor_id": user_id,
+            },
         }
         card = ShareCard(
             id=card_id,

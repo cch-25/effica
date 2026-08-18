@@ -284,7 +284,7 @@ def test_efficacy_normalization_delta_and_small_cohort_hiding():
 def test_autopilot_guardrails_and_immutable_rollback():
     initial = WeightRevision("r0", 0, {"model": 0.5, "source": 0.5}, WeightRevisionStatus.ACTIVE)
     manager = AutoPilotManager(initial, mode=AutoPilotMode.RECOMMEND)
-    draft = WeightRevision("r1", 1, {"model": 0.55, "source": 0.45}, WeightRevisionStatus.DRAFT)
+    draft = WeightRevision("r1", 1, {"model": 0.55, "source": 0.45}, WeightRevisionStatus.SIMULATION)
     manager.add_draft(draft)
     metrics = [
         SimulationMetrics(7, 0.1, 0.7, 0.01, 0.99, 1, 10),

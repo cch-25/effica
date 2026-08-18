@@ -63,6 +63,7 @@ from apps.api.app.db.models import (
 )
 from apps.api.app.db.ulid import new_ulid
 from apps.api.app.db.utc import utc_now
+from apps.api.app.jobs.payloads import JobPayloadError, validate_job_payload
 
 T = TypeVar("T")
 
@@ -685,10 +686,11 @@ class AdminRepositoryMixin:
         *,
         actor_id: str | None = None,
         idempotency_key: str | None = None,
+        reason: str = "enqueue crawl",
         request_id: str | None = None,
         mode: str = "live",
     ) -> dict[str, Any]:
-        payload_input = {"source_id": source_id, "mode": mode}
+        payload_input = {"source_id": source_id, "mode": mode, "reason": reason}
 
         async def operation() -> tuple[dict[str, Any], Any, Any]:
             source = await self.session.get(Source, source_id)
@@ -713,6 +715,7 @@ class AdminRepositoryMixin:
                 "source_type": source_type,
                 **statuses,
                 "actor_id": actor_id,
+                "reason": reason,
                 "mode": mode,
             }
             dedupe = f"{source.id}:{idempotency_key or _payload_digest(job_payload)}"
@@ -744,7 +747,7 @@ class AdminRepositoryMixin:
             action="CRAWL_ENQUEUED",
             target_type="source",
             target_id=source_id,
-            reason="enqueue crawl",
+            reason=reason,
             request_id=request_id,
             operation=operation,
         )
@@ -801,9 +804,10 @@ class AdminRepositoryMixin:
         *,
         actor_id: str | None = None,
         idempotency_key: str | None = None,
+        reason: str = "enqueue issue merge",
         request_id: str | None = None,
     ) -> dict[str, Any]:
-        payload = {"source_issue_id": issue_id, "target_issue_id": target_issue_id}
+        payload = {"source_issue_id": issue_id, "target_issue_id": target_issue_id, "reason": reason}
 
         async def operation() -> tuple[dict[str, Any], Any, Any]:
             if issue_id == target_issue_id:
@@ -811,17 +815,45 @@ class AdminRepositoryMixin:
                     "An issue cannot be merged into itself.",
                     details={"code": "INVALID_ISSUE_OPERATION_PAYLOAD"},
                 )
-            source = await self.session.get(Issue, issue_id)
-            target = await self.session.get(Issue, target_issue_id)
-            if source is None or target is None:
-                raise AdminNotFoundError("Issue was not found.")
+            # Lock the source before deriving a missing target.  The merge
+            # output is allowed to be a new issue; only the source must exist
+            # at enqueue time.  Creating the target in this same mutation
+            # keeps the target row, queue row, and enqueue audit atomic.
+            source = await self.session.scalar(
+                select(Issue).where(Issue.id == issue_id).with_for_update()
+            )
+            if source is None:
+                raise AdminNotFoundError(
+                    "Source issue was not found.", details={"issue_id": issue_id}
+                )
+            target = await self.session.scalar(
+                select(Issue).where(Issue.id == target_issue_id).with_for_update()
+            )
+            target_created = target is None
+            if target_created:
+                now = utc_now()
+                target = Issue(
+                    id=target_issue_id,
+                    title=source.title,
+                    summary=source.summary,
+                    status=IssueStatus.CANDIDATE,
+                    opened_at=now,
+                    last_activity_at=now,
+                    version=1,
+                )
+                self.session.add(target)
+                await self.session.flush()
             job_payload = {**payload, "actor_id": actor_id}
             dedupe = (
                 f"{issue_id}:{target_issue_id}:{idempotency_key or _payload_digest(job_payload)}"
             )
             job = await self._enqueue_job_row("merge_issue", dedupe, job_payload)
             result = {"job_id": job.id, "status": JobStatus.PENDING.value}
-            return result, None, {"job": result, **payload}
+            return result, None, {
+                "job": result,
+                **payload,
+                "target_created": target_created,
+            }
 
         return await self._run_mutation(
             scope=f"admin:merge-issue:{issue_id}:{target_issue_id}",
@@ -831,7 +863,7 @@ class AdminRepositoryMixin:
             action="ISSUE_MERGE_ENQUEUED",
             target_type="issue",
             target_id=issue_id,
-            reason="enqueue issue merge",
+            reason=reason,
             request_id=request_id,
             operation=operation,
         )
@@ -843,10 +875,11 @@ class AdminRepositoryMixin:
         *,
         actor_id: str | None = None,
         idempotency_key: str | None = None,
+        reason: str = "enqueue issue split",
         request_id: str | None = None,
     ) -> dict[str, Any]:
         article_list = [str(item) for item in article_ids]
-        payload = {"issue_id": issue_id, "article_ids": article_list}
+        payload = {"issue_id": issue_id, "article_ids": article_list, "reason": reason}
 
         async def operation() -> tuple[dict[str, Any], Any, Any]:
             if not article_list or len(set(article_list)) != len(article_list):
@@ -887,7 +920,7 @@ class AdminRepositoryMixin:
             action="ISSUE_SPLIT_ENQUEUED",
             target_type="issue",
             target_id=issue_id,
-            reason="enqueue issue split",
+            reason=reason,
             request_id=request_id,
             operation=operation,
         )
@@ -1209,13 +1242,20 @@ class AdminRepositoryMixin:
     async def _enqueue_job_row(
         self, job_type: str, dedupe_key: str, payload: Mapping[str, Any]
     ) -> Job:
+        try:
+            validated_payload = validate_job_payload(job_type, payload)
+        except JobPayloadError as exc:
+            raise AdminValidationError(
+                str(exc) or "invalid job payload",
+                details=exc.as_dict().get("details", {}),
+            ) from exc
         existing = await self.session.scalar(
             select(Job)
             .where(Job.job_type == job_type, Job.dedupe_key == dedupe_key)
             .with_for_update()
         )
         if existing is not None:
-            if _payload_digest(existing.payload_json or {}) != _payload_digest(payload):
+            if _payload_digest(existing.payload_json or {}) != _payload_digest(validated_payload):
                 raise IdempotencyConflictError(
                     "A queue job already exists for this operation with a different payload.",
                     details={"job_type": job_type, "dedupe_key": dedupe_key},
@@ -1232,7 +1272,7 @@ class AdminRepositoryMixin:
             lease_expires_at=None,
             attempts=0,
             max_attempts=5,
-            payload_json=deepcopy(dict(payload)),
+            payload_json=deepcopy(validated_payload),
             last_error_json=None,
             created_at=utc_now(),
             updated_at=utc_now(),
@@ -1422,7 +1462,13 @@ class AdminRepositoryMixin:
     def _simulation_passed(row: WeightSimulation) -> bool:
         result = row.guardrail_result or {}
         if isinstance(result, str):
-            return result.upper() in {"PASS", "PASSED", "OK"}
+            normalized = result.strip()
+            if normalized.upper() in {"PASS", "PASSED", "OK"}:
+                return True
+            try:
+                result = json.loads(normalized)
+            except (TypeError, ValueError):
+                return False
         if isinstance(result, Mapping):
             return bool(
                 result.get("passed", result.get("pass", result.get("status") in {"PASS", "PASSED"}))
@@ -1436,12 +1482,13 @@ class AdminRepositoryMixin:
         *,
         actor_id: str | None = None,
         idempotency_key: str | None = None,
+        reason: str = "enqueue 7/30 weight simulation",
         request_id: str | None = None,
     ) -> dict[str, Any]:
         if isinstance(windows, Mapping):
             windows = windows.get("windows", [])
         window_values = [int(item) for item in windows]
-        payload = {"weight_id": weight_id, "windows": window_values}
+        payload = {"weight_id": weight_id, "windows": window_values, "reason": reason}
 
         async def operation() -> tuple[dict[str, Any], Any, Any]:
             if set(window_values) != {7, 30} or len(window_values) != 2:
@@ -1490,6 +1537,7 @@ class AdminRepositoryMixin:
                 "weights": deepcopy(row.weights_json or {}),
                 "windows": window_values,
                 "actor_id": actor_id,
+                "reason": reason,
             }
             dedupe = f"{weight_id}:{idempotency_key or _payload_digest(job_payload)}"
             job = await self._enqueue_job_row("simulate_weights", dedupe, job_payload)
@@ -1522,7 +1570,7 @@ class AdminRepositoryMixin:
             action="WEIGHT_SIMULATION_ENQUEUED",
             target_type="weight",
             target_id=weight_id,
-            reason="enqueue 7/30 weight simulation",
+            reason=reason,
             request_id=request_id,
             operation=operation,
         )
@@ -1731,6 +1779,20 @@ class AdminRepositoryMixin:
                     "Active and target revisions are required.",
                     details={"code": "ROLLBACK_TARGET_INVALID"},
                 )
+            # Rollback is a lifecycle transition from an older immutable
+            # profile.  A draft/simulation/active row or a self-target must
+            # not be promoted by this endpoint.  ``published_at`` remains
+            # nullable for legacy archived rows, so status and revision are
+            # the portable lifecycle markers here.
+            if (
+                active.id == target.id
+                or _value(target.status) != RevisionStatus.ARCHIVED.value
+                or int(target.revision) >= int(active.revision)
+            ):
+                raise AdminConflictError(
+                    "Only an older archived revision can be used as a rollback target.",
+                    details={"code": "ROLLBACK_TARGET_INVALID"},
+                )
             settings = await self._ensure_autopilot_row(actor_id=actor_id)
             if settings.version != expected:
                 raise AdminConflictError(
@@ -1740,6 +1802,32 @@ class AdminRepositoryMixin:
                         "expected": expected,
                         "actual": settings.version,
                     },
+                )
+            recommendation = await self.session.get(WeightRecommendation, target.id)
+            if recommendation is not None and _value(recommendation.status) not in {
+                RecommendationStatus.APPROVED.value,
+                RecommendationStatus.PUBLISHED.value,
+            }:
+                raise GuardrailError(
+                    "The archived revision does not have reviewer approval.",
+                    details={"code": "REVIEWER_APPROVAL_REQUIRED"},
+                )
+            # A recommendation may be present for a manually archived row;
+            # when simulation evidence exists, require both production
+            # windows to have passed just as publishing does.
+            simulations = list(
+                (
+                    await self.session.scalars(
+                        select(WeightSimulation).where(
+                            WeightSimulation.recommendation_id == target.id
+                        )
+                    )
+                ).all()
+            )
+            if simulations and not await self._weight_guardrails_pass(target.id):
+                raise GuardrailError(
+                    "Passing 7-day and 30-day simulations are required.",
+                    details={"code": "GUARDRAIL_NOT_SATISFIED"},
                 )
             revisions = list(
                 (
@@ -2096,6 +2184,10 @@ class AdminRepositoryMixin:
                 )
             before = self._job_view(row)
             row.status = JobStatus.PENDING
+            # A manual retry starts a fresh queue attempt budget.  Leaving a
+            # DEAD row at max_attempts makes its next claim terminal again
+            # without invoking the handler.
+            row.attempts = 0
             row.available_at = utc_now()
             row.lease_owner = None
             row.lease_expires_at = None
@@ -2229,13 +2321,30 @@ class AdminRepositoryMixin:
                 int((row.aggregate_json or {}).get("count", 0) or 0) for row in latest.values()
             )
         else:
-            count = int(
-                await self.session.scalar(select(func.count()).select_from(EfficacyResponse)) or 0
+            # Efficacy is longitudinal: a user can have a baseline and many
+            # follow-up responses.  Administrative cohorts must represent
+            # people, not response rows.  Read the newest deterministic row
+            # per user before applying the small-cohort suppression and mean.
+            responses = list(
+                (
+                    await self.session.scalars(
+                        select(EfficacyResponse).order_by(
+                            EfficacyResponse.submitted_at.desc(), EfficacyResponse.id.desc()
+                        )
+                    )
+                ).all()
             )
+            latest_by_user: dict[str, EfficacyResponse] = {}
+            for response in responses:
+                latest_by_user.setdefault(response.user_id, response)
+            representatives = list(latest_by_user.values())
+            count = len(representatives)
             total = count
             if count >= minimum_cohort_size:
-                mean = await self.session.scalar(
-                    select(func.avg(EfficacyResponse.normalized_score))
+                mean = (
+                    sum(float(response.normalized_score) for response in representatives) / count
+                    if representatives
+                    else None
                 )
                 cohorts.append(
                     {

@@ -6,7 +6,7 @@ import hashlib
 import posixpath
 import re
 import unicodedata
-from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlsplit, urlunsplit
 
 # Common analytics/campaign keys are not part of a resource identity.  The
 # allow-list approach for all other keys avoids accidentally dropping a
@@ -94,9 +94,16 @@ def canonicalize_url(url: str) -> str:
         key_lower = key.lower()
         if key_lower in _TRACKING_KEYS or key_lower.startswith(_TRACKING_PREFIXES):
             continue
-        pairs.append((_normalise_percent(key), _normalise_percent(value)))
+        # ``parse_qsl`` has already decoded one layer of percent escapes and
+        # translated ``+`` to a space. Quote the decoded components exactly
+        # once; passing pre-escaped values through ``urlencode`` would turn
+        # ``%20`` into ``%2520`` and change the resource identity.
+        pairs.append((key, value))
     pairs.sort()
-    query = urlencode(pairs, doseq=True, safe="-._~")
+    query = "&".join(
+        f"{quote(str(key), safe='-._~')}={quote(str(value), safe='-._~')}"
+        for key, value in pairs
+    )
     return urlunsplit((scheme, host, path, query, ""))
 
 
