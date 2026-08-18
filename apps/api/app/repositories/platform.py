@@ -64,6 +64,21 @@ def _is_deadlock(error: BaseException) -> bool:
     )
 
 
+_EFFICACY_QUESTIONNAIRE_VERSION = "1.1"
+
+
+def _efficacy_questionnaire_schema() -> dict[str, Any]:
+    """Return the immutable efficacy schema for the current revision."""
+
+    return {
+        "scale": {"minimum": 0, "maximum": 100},
+        "questions": [
+            {"id": "baseline", "required": True, "minimum": 0, "maximum": 100},
+            {"id": "current", "required": True, "minimum": 0, "maximum": 100},
+        ],
+    }
+
+
 class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
     """Request-scoped SQLAlchemy repository for user/security/product state.
 
@@ -78,7 +93,13 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
     _OAUTH_CHALLENGE_JOB_TYPE = "__oauth_challenge__"
 
     async def bootstrap_policy_records(self) -> None:
-        """Install mandatory versioned policy records when a fresh DB is empty."""
+        """Install missing mandatory policy records without rewriting definitions.
+
+        Questionnaire definitions are immutable.  In particular, installations
+        that already have the original efficacy ``1.0`` scale-only row receive
+        the question-bearing ``1.1`` revision rather than having that row
+        rewritten in place.
+        """
 
         if not (await self.session.scalar(select(func.count()).select_from(ConsentVersion))):
             now = utc_now()
@@ -100,35 +121,54 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
                     ),
                 ]
             )
-        if not (await self.session.scalar(select(func.count()).select_from(QuestionnaireVersion))):
-            self.session.add_all(
-                [
-                    QuestionnaireVersion(
-                        id=new_ulid(),
-                        kind=QuestionnaireKind.ONBOARDING,
-                        version="1.0",
-                        schema_json={
-                            "questions": [
-                                {"id": "economic", "required": True, "minimum": -100, "maximum": 100},
-                                {"id": "social", "required": True, "minimum": -100, "maximum": 100},
-                                {"id": "international", "required": True, "minimum": -100, "maximum": 100},
-                            ]
-                        },
-                        scoring_json={
-                            "axes": {"x": "economic", "y": "social", "z": "international"},
-                            "confidence": 0.65,
-                        },
-                        active_from=utc_now(),
-                    ),
-                    QuestionnaireVersion(
-                        id=new_ulid(),
-                        kind=QuestionnaireKind.EFFICACY,
-                        version="1.0",
-                        schema_json={"scale": {"minimum": 0, "maximum": 100}},
-                        scoring_json={"method": "mean", "reverse_items": []},
-                        active_from=utc_now(),
-                    ),
-                ]
+        # Keep the two questionnaire kinds independent.  A migration may
+        # already have inserted efficacy 1.1 into an otherwise empty table;
+        # checking one table-wide count in that case would skip onboarding.
+        onboarding_current = await self.session.scalar(
+            select(QuestionnaireVersion.id)
+            .where(QuestionnaireVersion.kind == QuestionnaireKind.ONBOARDING)
+            .limit(1)
+        )
+        if onboarding_current is None:
+            self.session.add(
+                QuestionnaireVersion(
+                    id=new_ulid(),
+                    kind=QuestionnaireKind.ONBOARDING,
+                    version="1.0",
+                    schema_json={
+                        "questions": [
+                            {"id": "economic", "required": True, "minimum": -100, "maximum": 100},
+                            {"id": "social", "required": True, "minimum": -100, "maximum": 100},
+                            {"id": "international", "required": True, "minimum": -100, "maximum": 100},
+                        ]
+                    },
+                    scoring_json={
+                        "axes": {"x": "economic", "y": "social", "z": "international"},
+                        "confidence": 0.65,
+                    },
+                    active_from=utc_now(),
+                )
+            )
+
+        # Older installations may already have efficacy 1.0 rows.  Add the
+        # new immutable revision when migrations have not yet supplied it;
+        # never mutate the old schema in place.
+        efficacy_current = await self.session.scalar(
+            select(QuestionnaireVersion.id).where(
+                QuestionnaireVersion.kind == QuestionnaireKind.EFFICACY,
+                QuestionnaireVersion.version == _EFFICACY_QUESTIONNAIRE_VERSION,
+            )
+        )
+        if efficacy_current is None:
+            self.session.add(
+                QuestionnaireVersion(
+                    id=new_ulid(),
+                    kind=QuestionnaireKind.EFFICACY,
+                    version=_EFFICACY_QUESTIONNAIRE_VERSION,
+                    schema_json=_efficacy_questionnaire_schema(),
+                    scoring_json={"method": "mean", "reverse_items": []},
+                    active_from=utc_now(),
+                )
             )
         await self.session.commit()
 

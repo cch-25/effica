@@ -96,6 +96,7 @@ db/alembic/versions/0004_mariadb_ledger_fk.py
 db/alembic/versions/0005_remove_migration_index.py
 db/alembic/versions/0006_openai_single_model.py
 db/alembic/versions/0007_credit_reversal_uniqueness.py
+db/alembic/versions/0008_efficacy_questionnaire.py
 db/seeds/__init__.py
 db/seeds/analyze_articles.py
 db/seeds/articles.json

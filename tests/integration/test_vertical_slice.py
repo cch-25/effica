@@ -163,6 +163,8 @@ def test_external_network_free_full_vertical_slice() -> None:
         )
         assert share_job.status_code == 202
         card = next(iter(state.share_cards.values()))
+        assert card["snapshot"]["sensationalism"] is None
+        assert card["snapshot"]["coordinate"]["sensationalism"] is None
         render_job = state.jobs[share_job.json()["job_id"]]
         rendered = asyncio.run(render_share_card(render_job["payload"]))
         png = base64.b64decode(rendered.value["png_base64"])

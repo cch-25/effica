@@ -21,7 +21,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from apps.api.app.db.base import Base
-from apps.api.app.db.enums import JobStatus, ProfileKind, ShareCardStatus
+from apps.api.app.db.enums import JobStatus, ProfileKind, QuestionnaireKind, ShareCardStatus
 from apps.api.app.db.models import (
     ConsentVersion,
     Job,
@@ -113,6 +113,60 @@ async def test_bootstrap_policy_records_is_complete_and_idempotent(
         "onboarding",
         "efficacy",
     }
+    efficacy = next(
+        row
+        for row in questionnaire_versions
+        if getattr(row.kind, "value", row.kind) == QuestionnaireKind.EFFICACY.value
+    )
+    assert efficacy.version == "1.1"
+    assert [question["id"] for question in efficacy.schema_json["questions"]] == [
+        "baseline",
+        "current",
+    ]
+
+
+async def test_bootstrap_adds_new_efficacy_revision_without_rewriting_legacy_schema(
+    session: AsyncSQLiteSession,
+) -> None:
+    legacy_schema = {"scale": {"minimum": 0, "maximum": 100}}
+    session.add_all(
+        [
+            QuestionnaireVersion(
+                id="01K00000000000000000000101",
+                kind=QuestionnaireKind.ONBOARDING,
+                version="1.0",
+                schema_json={"questions": []},
+                scoring_json={},
+                active_from=utc_now(),
+            ),
+            QuestionnaireVersion(
+                id="01K00000000000000000000102",
+                kind=QuestionnaireKind.EFFICACY,
+                version="1.0",
+                schema_json=legacy_schema,
+                scoring_json={"method": "mean", "reverse_items": []},
+                active_from=utc_now(),
+            ),
+        ]
+    )
+    await session.commit()
+
+    repo = repository(session)
+    await bootstrap(repo)
+    await bootstrap(repo)
+
+    questionnaire_versions = (await session.scalars(select(QuestionnaireVersion))).all()
+    assert len(questionnaire_versions) == 3
+    legacy = await session.get(QuestionnaireVersion, "01K00000000000000000000102")
+    assert legacy is not None
+    assert legacy.version == "1.0"
+    assert legacy.schema_json == legacy_schema
+    current = next(row for row in questionnaire_versions if row.version == "1.1")
+    assert current.kind == QuestionnaireKind.EFFICACY
+    assert [question["id"] for question in current.schema_json["questions"]] == [
+        "baseline",
+        "current",
+    ]
 
 
 async def test_oauth_user_session_csrf_lookup_rotation_and_revocation(
