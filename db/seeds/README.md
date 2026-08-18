@@ -20,8 +20,8 @@ MariaDB에 한 트랜잭션으로 적재합니다. 이 작업은 worker의 웹 �
 
 ```sh
 uv run python -m db.seeds.analyze_articles  # 새 기사 추가 후 LLM 평가 생성
-./run.sh seed --dry-run
-./run.sh seed
+uv run python -m db.seeds.seed --dry-run
+uv run python -m db.seeds.seed
 ```
 
 스냅샷에는 계정, OAuth 주체, 토큰, 설문 응답, 비공개 URL, 비밀 값이 없어야
