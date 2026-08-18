@@ -10,6 +10,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
+from types import MappingProxyType
 from typing import Any
 
 
@@ -100,13 +101,16 @@ class WeightRecommendation:
 class WeightRevision:
     revision_id: str
     revision: int
-    weights: dict[str, float]
+    weights: Mapping[str, float]
     status: WeightRevisionStatus
     based_on_revision_id: str | None = None
     created_by: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     published_at: datetime | None = None
     guardrail_result: GuardrailResult | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "weights", MappingProxyType(dict(self.weights)))
 
 
 def validate_weights(
@@ -334,7 +338,7 @@ class AutoPilotManager:
                 self.revisions[old.revision_id] = WeightRevision(
                     old.revision_id,
                     old.revision,
-                    old.weights,
+                    dict(old.weights),
                     WeightRevisionStatus.ARCHIVED,
                     old.based_on_revision_id,
                     old.created_by,
@@ -397,7 +401,7 @@ class AutoPilotManager:
                 self.revisions[active.revision_id] = WeightRevision(
                     active.revision_id,
                     active.revision,
-                    active.weights,
+                    dict(active.weights),
                     WeightRevisionStatus.ARCHIVED,
                     active.based_on_revision_id,
                     active.created_by,

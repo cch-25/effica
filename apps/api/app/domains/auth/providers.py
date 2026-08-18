@@ -10,14 +10,22 @@ of the returned identity object or persisted by this module.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import inspect
 import json
+import math
+import time
 from collections.abc import Callable, Mapping, MutableMapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Protocol
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 
 class OAuthError(Exception):
@@ -62,6 +70,8 @@ class OAuthProviderConfig:
     max_retries: int = 2
     retry_backoff_seconds: float = 0.1
     enabled: bool = True
+    issuer: str = ""
+    jwks_endpoint: str = ""
 
     def normalized_provider(self) -> str:
         value = (
@@ -293,6 +303,37 @@ class ConfiguredOAuthProvider:
             raise OAuthResponseError(f"OAuth {context} response is missing {key}")
         return value.strip()
 
+    @staticmethod
+    def _require_subject(payload: Mapping[str, Any], key: str, *, context: str) -> str:
+        """Accept a string or integer subject; JSON numbers are common (Kakao)."""
+
+        value = payload.get(key)
+        if isinstance(value, bool) or value is None:
+            raise OAuthResponseError(f"OAuth {context} response is missing {key}")
+        if isinstance(value, int):
+            return str(value)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        raise OAuthResponseError(f"OAuth {context} response is missing {key}")
+
+    async def _validate_token_response(
+        self, token_response: Mapping[str, Any]
+    ) -> Mapping[str, Any] | None:
+        """Validate provider-specific token claims before requesting userinfo."""
+
+        del token_response
+        return None
+
+    def _merge_token_claims(
+        self,
+        profile: OAuthUserInfo,
+        token_claims: Mapping[str, Any] | None,
+    ) -> OAuthUserInfo:
+        """Merge claims already validated by a provider-specific adapter."""
+
+        del token_claims
+        return profile
+
     def _validate_nonce(self, profile: OAuthUserInfo, expected_nonce: str | None) -> None:
         if expected_nonce is None:
             return
@@ -325,6 +366,7 @@ class ConfiguredOAuthProvider:
             },
         )
         access_token = self._require_string(token_response, "access_token", context="token")
+        token_claims = await self._validate_token_response(token_response)
         # ``access_token`` exists only in this local variable and is passed to
         # the user-info request.  It is never returned or persisted.
         profile_payload = await self._request(
@@ -333,12 +375,40 @@ class ConfiguredOAuthProvider:
             headers={"Authorization": f"Bearer {access_token}"},
         )
         profile = self._parse_profile(profile_payload)
+        profile = self._merge_token_claims(profile, token_claims)
         self._validate_nonce(profile, expected_nonce)
         return profile
 
     def _parse_profile(self, payload: Mapping[str, Any]) -> OAuthUserInfo:
         subject = self._require_string(payload, "sub", context="profile")
         return OAuthUserInfo(provider=self.name, subject=subject)
+
+
+def _decode_base64url(value: Any, *, context: str) -> bytes:
+    """Decode an unpadded base64url value without accepting junk characters."""
+
+    if not isinstance(value, str) or not value or any(
+        character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        for character in value
+    ):
+        raise OAuthResponseError(f"OAuth {context} contains invalid base64url data")
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        return base64.urlsafe_b64decode(padded.encode("ascii"))
+    except (UnicodeError, binascii.Error, ValueError) as exc:
+        raise OAuthResponseError(f"OAuth {context} contains invalid base64url data") from exc
+
+
+def _decode_json_object(value: Any, *, context: str) -> Mapping[str, Any]:
+    if not isinstance(value, str):
+        raise OAuthResponseError(f"OAuth {context} is invalid")
+    try:
+        decoded = json.loads(_decode_base64url(value, context=context).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise OAuthResponseError(f"OAuth {context} is invalid") from exc
+    if not isinstance(decoded, Mapping):
+        raise OAuthResponseError(f"OAuth {context} must be an object")
+    return decoded
 
 
 def hmac_compare(left: str, right: str) -> bool:
@@ -354,7 +424,7 @@ class KakaoOAuthProvider(ConfiguredOAuthProvider):
     default_scopes = ("profile_nickname", "account_email")
 
     def _parse_profile(self, payload: Mapping[str, Any]) -> OAuthUserInfo:
-        subject = self._require_string(payload, "id", context="profile")
+        subject = self._require_subject(payload, "id", context="profile")
         account = payload.get("kakao_account")
         account_map = account if isinstance(account, Mapping) else {}
         properties = payload.get("properties")
@@ -389,7 +459,7 @@ class NaverOAuthProvider(ConfiguredOAuthProvider):
     def _parse_profile(self, payload: Mapping[str, Any]) -> OAuthUserInfo:
         nested = payload.get("response")
         profile = nested if isinstance(nested, Mapping) else payload
-        subject = self._require_string(profile, "id", context="profile")
+        subject = self._require_subject(profile, "id", context="profile")
         return OAuthUserInfo(
             provider=self.name,
             subject=subject,
@@ -411,6 +481,127 @@ class NaverOAuthProvider(ConfiguredOAuthProvider):
 class GoogleOAuthProvider(ConfiguredOAuthProvider):
     name = ProviderName.GOOGLE.value
     default_scopes = ("openid", "email", "profile")
+    issuer = "https://accounts.google.com"
+    jwks_endpoint = "https://www.googleapis.com/oauth2/v3/certs"
+    id_token_algorithm = "RS256"
+
+    def __init__(
+        self,
+        config: OAuthProviderConfig,
+        *,
+        transport: TransportLike | None = None,
+        clock: Callable[[], float] | None = None,
+    ):
+        super().__init__(config, transport=transport)
+        self._clock = clock or time.time
+
+    async def _validate_google_id_token(self, id_token: str) -> Mapping[str, Any]:
+        parts = id_token.split(".")
+        if len(parts) != 3 or any(not part for part in parts):
+            raise OAuthResponseError("Google id_token is not a compact JWS")
+
+        header = _decode_json_object(parts[0], context="Google id_token header")
+        claims = _decode_json_object(parts[1], context="Google id_token claims")
+        if header.get("alg") != self.id_token_algorithm:
+            raise OAuthResponseError("Google id_token uses an unsupported signing algorithm")
+        kid = header.get("kid")
+        if not isinstance(kid, str) or not kid:
+            raise OAuthResponseError("Google id_token is missing a signing key id")
+        signature = _decode_base64url(parts[2], context="Google id_token signature")
+        try:
+            signing_input = f"{parts[0]}.{parts[1]}".encode("ascii")
+        except UnicodeEncodeError as exc:
+            raise OAuthResponseError("Google id_token contains non-ASCII segments") from exc
+        signing_key = await self._get_jwks_key(kid)
+        try:
+            signing_key.verify(signature, signing_input, padding.PKCS1v15(), hashes.SHA256())
+        except (InvalidSignature, ValueError, TypeError) as exc:
+            raise OAuthResponseError("Google id_token signature verification failed") from exc
+
+        expected_issuer = self.config.issuer
+        valid_issuers = (
+            (expected_issuer,)
+            if expected_issuer
+            else (self.issuer, "accounts.google.com")
+        )
+        if claims.get("iss") not in valid_issuers:
+            raise OAuthResponseError("Google id_token issuer is invalid")
+        audience = claims.get("aud")
+        if isinstance(audience, str):
+            audiences = (audience,)
+        elif isinstance(audience, list) and audience and all(
+            isinstance(item, str) and item for item in audience
+        ):
+            audiences = tuple(audience)
+        else:
+            raise OAuthResponseError("Google id_token audience is invalid")
+        if self.config.client_id not in audiences:
+            raise OAuthResponseError("Google id_token audience does not match client_id")
+        if len(audiences) > 1 and claims.get("azp") != self.config.client_id:
+            raise OAuthResponseError("Google id_token authorized party is invalid")
+
+        expiry = claims.get("exp")
+        if isinstance(expiry, bool) or not isinstance(expiry, (int, float)):
+            raise OAuthResponseError("Google id_token expiry is invalid")
+        if not math.isfinite(float(expiry)) or self._clock() >= float(expiry):
+            raise OAuthResponseError("Google id_token is expired")
+
+        subject = claims.get("sub")
+        if not isinstance(subject, str) or not subject:
+            raise OAuthResponseError("Google id_token subject is invalid")
+        nonce = claims.get("nonce")
+        if nonce is not None and (not isinstance(nonce, str) or not nonce):
+            raise OAuthResponseError("Google id_token nonce is invalid")
+        return claims
+
+    async def _get_jwks_key(self, kid: str) -> rsa.RSAPublicKey:
+        endpoint = self.config.jwks_endpoint or self.jwks_endpoint
+        jwks = await self._request("GET", endpoint)
+        keys = jwks.get("keys")
+        if not isinstance(keys, list):
+            raise OAuthResponseError("Google JWKS response is invalid")
+        candidates = [
+            key
+            for key in keys
+            if isinstance(key, Mapping)
+            and key.get("kid") == kid
+            and key.get("kty") == "RSA"
+            and key.get("alg", self.id_token_algorithm) == self.id_token_algorithm
+            and key.get("use", "sig") == "sig"
+        ]
+        if len(candidates) != 1:
+            raise OAuthResponseError("Google JWKS does not contain a unique signing key")
+        key = candidates[0]
+        modulus = _decode_base64url(key.get("n"), context="Google JWKS modulus")
+        exponent = _decode_base64url(key.get("e"), context="Google JWKS exponent")
+        try:
+            return rsa.RSAPublicNumbers(
+                int.from_bytes(exponent, byteorder="big"),
+                int.from_bytes(modulus, byteorder="big"),
+            ).public_key()
+        except (TypeError, ValueError) as exc:
+            raise OAuthResponseError("Google JWKS signing key is invalid") from exc
+
+    async def _validate_token_response(
+        self, token_response: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        id_token = token_response.get("id_token")
+        if not isinstance(id_token, str):
+            raise OAuthResponseError("Google token response is missing id_token")
+        return await self._validate_google_id_token(id_token)
+
+    def _merge_token_claims(
+        self,
+        profile: OAuthUserInfo,
+        token_claims: Mapping[str, Any] | None,
+    ) -> OAuthUserInfo:
+        if token_claims is None:
+            raise OAuthResponseError("Google ID-token claims were not validated")
+        token_subject = token_claims.get("sub")
+        if token_subject != profile.subject:
+            raise OAuthResponseError("Google ID-token subject does not match userinfo")
+        nonce = token_claims.get("nonce")
+        return replace(profile, nonce=nonce if isinstance(nonce, str) else None)
 
     def _parse_profile(self, payload: Mapping[str, Any]) -> OAuthUserInfo:
         subject = self._require_string(payload, "sub", context="profile")
@@ -477,6 +668,8 @@ def provider_from_config(
             max_retries=config.max_retries,
             retry_backoff_seconds=config.retry_backoff_seconds,
             enabled=config.enabled,
+            issuer=config.issuer,
+            jwks_endpoint=config.jwks_endpoint,
         )
     cls = {
         ProviderName.KAKAO.value: KakaoOAuthProvider,

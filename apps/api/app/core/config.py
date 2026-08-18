@@ -28,7 +28,13 @@ class Settings(BaseSettings):
     session_secret: str = "local-development-placeholder-change-me"
     public_base_url: str = "http://localhost:8000"
     web_base_url: str = "http://localhost:3000"
-    oauth_redirect_allowlist: str = "http://localhost:3000/auth/callback"
+    oauth_redirect_allowlist: str = (
+        "http://localhost:3000/api/v1/auth/kakao/callback,"
+        "http://localhost:3000/api/v1/auth/naver/callback,"
+        "http://localhost:3000/api/v1/auth/google/callback,"
+        "http://localhost:3000/api/v1/auth/mock/callback,"
+        "http://localhost:3000/auth/callback"
+    )
     llm_provider_mode: str = "auto"
     openai_api_key: str | None = None
     openai_endpoint: str = "https://api.openai.com/v1/responses"

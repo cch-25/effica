@@ -41,7 +41,11 @@ class Vote:
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool) or not -100 <= value <= 100:
                 raise ValueError(f"{name} must be an integer in [-100, 100]")
-        if not isinstance(self.sensationalism, int) or not 0 <= self.sensationalism <= 100:
+        if (
+            not isinstance(self.sensationalism, int)
+            or isinstance(self.sensationalism, bool)
+            or not 0 <= self.sensationalism <= 100
+        ):
             raise ValueError("sensationalism must be in [0, 100]")
         if self.revision < 1:
             raise ValueError("revision must be positive")
