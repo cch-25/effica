@@ -1,5 +1,6 @@
 .next/
 .next-real/
+.next-playwright-*/
 next-env.d.ts
 node_modules/
 coverage/
