@@ -192,7 +192,7 @@ def test_external_network_free_full_vertical_slice() -> None:
         ).json()
         client.post(
             f"/api/v1/admin/weights/{created['id']}/simulate",
-            json={"windows": [7, 30]},
+            json={"reason": "integration simulation", "windows": [7, 30]},
             headers={**analyst, "Idempotency-Key": "simulate-weight-1"},
         )
         approval = client.post(

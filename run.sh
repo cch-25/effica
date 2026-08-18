@@ -59,6 +59,50 @@ PY
 )"
 }
 
+check_secret_files() {
+  local path mode
+  for path in "$ENV_FILE" "$ROOT/apps/web/.env.local"; do
+    [[ -f "$path" ]] || continue
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      mode="$(stat -f '%Lp' "$path")"
+    else
+      mode="$(stat -c '%a' "$path")"
+    fi
+    [[ "$mode" == "600" ]] || die "secret file permissions must be 600: $path (current: $mode)"
+  done
+
+  # A local environment file may exist untracked, but secret-bearing files must
+  # never be committed or introduced as an untracked deployment artifact.
+  while IFS= read -r -d '' path; do
+    case "$path" in
+      .env.example|*/.env.example) ;;
+      .env|*/.env|.env.*|*/.env.*|*.pem|*.key|*.p12)
+        die "secret-bearing file must not be tracked or staged: $path" ;;
+    esac
+  done < <(git ls-files --cached --others --exclude-standard -z)
+
+  local private_key_pattern='BEGIN[[:space:]]+(RSA|EC|OPENSSH|PRIVATE)[[:space:]]+KEY'
+  local access_key_prefix='AKIA'
+  local vercel_key_name='VERCEL_OIDC_TOKEN'
+  if git grep -nE "$private_key_pattern|${access_key_prefix}[0-9A-Z]{16}|${vercel_key_name}[[:space:]]*=[[:space:]]*[^<[:space:]]" -- ':!*.example'; then
+    die "tracked secret material detected; remove it and rotate the credential"
+  fi
+}
+
+audit_dependencies() {
+  uv lock --check
+  local dependency_snapshot
+  dependency_snapshot="$(mktemp "${TMPDIR:-/tmp}/perspective-python-freeze.XXXXXX")"
+  uv pip freeze --exclude-editable >"$dependency_snapshot"
+  [[ -s "$dependency_snapshot" ]] || die "uv pip freeze returned no installed dependencies"
+  uv run --no-project --with pip-audit pip-audit \
+    --requirement "$dependency_snapshot" --no-deps --disable-pip --strict --format=columns
+  rm -f "$dependency_snapshot"
+  if command -v npm >/dev/null 2>&1 && [[ -f "$ROOT/apps/web/package-lock.json" ]]; then
+    (cd "$ROOT/apps/web" && npm audit --audit-level=high)
+  fi
+}
+
 required_env() {
   local name="$1"
   [[ -n "${!name:-}" ]] || die ".env에 $name 값이 필요합니다."
@@ -169,10 +213,12 @@ CHECKSUM = ROOT / "contracts" / "checksum.txt"
 METHODS = {"get", "post", "put", "patch", "delete"}
 EXPECTED_OPERATIONS = {
     ("GET", "/health/live"), ("GET", "/health/ready"),
+    ("GET", "/api/v1/auth/providers"),
     ("GET", "/api/v1/auth/{provider}/start"), ("GET", "/api/v1/auth/{provider}/callback"),
     ("POST", "/api/v1/auth/logout"), ("GET", "/api/v1/me"),
     ("GET", "/api/v1/consents"), ("POST", "/api/v1/me/consents"),
-    ("POST", "/api/v1/me/questionnaire-responses"), ("PATCH", "/api/v1/me/demographics"),
+    ("GET", "/api/v1/questionnaires"), ("POST", "/api/v1/me/questionnaire-responses"),
+    ("PATCH", "/api/v1/me/demographics"),
     ("POST", "/api/v1/me/export"), ("DELETE", "/api/v1/me"),
     ("GET", "/api/v1/feed"), ("GET", "/api/v1/issues"),
     ("GET", "/api/v1/issues/{issue_id}"), ("GET", "/api/v1/issues/{issue_id}/articles"),
@@ -203,7 +249,8 @@ EXPECTED_OPERATIONS = {
     ("POST", "/api/v1/admin/autopilot/recommendations/generate"),
     ("POST", "/api/v1/admin/autopilot/recommendations/{recommendation_id}/approve"),
     ("POST", "/api/v1/admin/autopilot/recommendations/{recommendation_id}/reject"),
-    ("PUT", "/api/v1/admin/autopilot/settings"), ("GET", "/api/v1/admin/jobs"),
+    ("GET", "/api/v1/admin/autopilot/settings"), ("PUT", "/api/v1/admin/autopilot/settings"),
+    ("GET", "/api/v1/admin/jobs"),
     ("POST", "/api/v1/admin/jobs/{job_id}/retry"), ("POST", "/api/v1/admin/jobs/{job_id}/cancel"),
     ("GET", "/api/v1/admin/audit"), ("GET", "/api/v1/admin/metrics/efficacy"),
 }
@@ -267,6 +314,18 @@ verify_paths() {
   printf 'MAS_B path ownership verified\n'
 }
 
+verify_web() {
+  prepare_web
+  (cd "$ROOT/apps/web" && npm test)
+  (cd "$ROOT/apps/web" && npm run lint)
+  (cd "$ROOT/apps/web" && npm run typecheck)
+  (cd "$ROOT/apps/web" && NEXT_PUBLIC_API_MODE=real npm run build)
+  (cd "$ROOT/apps/web" && npx playwright install chromium)
+  (cd "$ROOT/apps/web" && npm run test:e2e)
+  (cd "$ROOT/apps/web" && npm run test:a11y)
+  (cd "$ROOT/apps/web" && npm run test:e2e:real)
+}
+
 start_all() {
   prepare_remote_db
   sync_python
@@ -298,7 +357,9 @@ Usage: ./run.sh [command]
   test          백엔드 단위 테스트
   integration   통합 테스트
   openapi       OpenAPI 계약 검증 (--write로 갱신)
-  verify        lint, type check, test, OpenAPI, 소유 경로 전체 검증
+  security      secret file permissions, dependency audit, and lock checks
+  ownership     MAS_B 협업 ownership guard (explicit opt-in)
+  verify        backend + web lint, type check, test, build, OpenAPI 전체 검증
 EOF
 }
 
@@ -346,13 +407,23 @@ case "$command_name" in
     sync_python
     openapi "$@"
     ;;
+  security)
+    sync_python
+    check_secret_files
+    audit_dependencies
+    ;;
+  ownership)
+    verify_paths
+    ;;
   verify)
     sync_python
+    check_secret_files
     uv run ruff check apps db tests
-    uv run mypy apps/api/app apps/worker/worker
+    uv run mypy apps tests
     uv run pytest
     openapi
-    verify_paths
+    verify_web
+    audit_dependencies
     ;;
   help|-h|--help)
     usage

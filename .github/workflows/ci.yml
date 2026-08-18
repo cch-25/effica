@@ -1,0 +1,168 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+env:
+  UV_CACHE_DIR: /tmp/uv-cache
+  CI_MARIADB_URL: mysql+asyncmy://effica:effica@127.0.0.1:3306/effica
+  CI_WORKER_PROCESSES: "2"
+
+jobs:
+  backend-mariadb:
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MARIADB_DATABASE: effica
+          MARIADB_USER: effica
+          MARIADB_PASSWORD: effica
+          MARIADB_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mariadb-admin ping -h 127.0.0.1 -u root -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.3"
+          enable-cache: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install locked Python dependencies
+        run: uv sync --frozen --all-groups
+      - name: Migrate MariaDB from zero
+        env:
+          APP_ENV: test
+          APP_BACKEND: mariadb
+          DATABASE_URL: ${{ env.CI_MARIADB_URL }}
+          SESSION_SECRET: ci-session-secret-with-at-least-32-bytes
+          LLM_PROVIDER_MODE: stub
+        run: |
+          uv run alembic -c db/alembic.ini upgrade head
+      - name: Run Python checks and MariaDB/concurrency coverage
+        env:
+          APP_ENV: test
+          # The unit/domain suite is intentionally backend-neutral.  The
+          # dedicated smoke step below exercises the real MariaDB application
+          # lifespan without making fixture-oriented tests depend on a shared
+          # service database.
+          APP_BACKEND: memory
+          DATABASE_URL: ${{ env.CI_MARIADB_URL }}
+          SESSION_SECRET: ci-session-secret-with-at-least-32-bytes
+          LLM_PROVIDER_MODE: stub
+        run: |
+          uv run ruff check apps db tests
+          uv run mypy apps tests
+          uv run pytest
+      - name: Run MariaDB API plus two independent worker processes
+        env:
+          APP_ENV: test
+          APP_BACKEND: mariadb
+          DATABASE_URL: ${{ env.CI_MARIADB_URL }}
+          SESSION_SECRET: ci-session-secret-with-at-least-32-bytes
+          LLM_PROVIDER_MODE: stub
+          CI_API_BASE_URL: http://127.0.0.1:8200
+        run: |
+          set -Eeuo pipefail
+          uv run uvicorn apps.api.app.main:app --host 127.0.0.1 --port 8200 >/tmp/effica-mariadb-api.log 2>&1 &
+          api_pid=$!
+          cleanup() {
+            kill "$api_pid" 2>/dev/null || true
+            wait "$api_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          for attempt in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:8200/health/ready >/dev/null && break
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8200/health/ready >/dev/null
+          # The integration test submits through the live API and launches
+          # exactly CI_WORKER_PROCESSES independent worker processes. Each
+          # process must claim one durable job and expose its worker ID in the
+          # audit result; ProcessPoolExecutor propagates any worker failure.
+          uv run pytest tests/integration/test_mariadb_runtime.py -q
+
+  web-real-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.3"
+          enable-cache: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install locked dependencies
+        run: |
+          uv sync --frozen --all-groups
+          npm ci --prefix apps/web
+          npx --prefix apps/web playwright install --with-deps chromium
+      - name: Run real-mode browser flows
+        env:
+          APP_ENV: test
+          APP_BACKEND: memory
+          SESSION_SECRET: ci-session-secret-with-at-least-32-bytes
+          LLM_PROVIDER_MODE: stub
+          NEXT_PUBLIC_API_MODE: real
+          API_BACKEND_URL: http://127.0.0.1:8100
+        run: |
+          npm run test:e2e --prefix apps/web
+          npm run test:a11y --prefix apps/web
+          npm run test:e2e:real --prefix apps/web
+
+  security-and-manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.3"
+          enable-cache: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install locked dependencies
+        run: |
+          uv sync --frozen --all-groups
+          npm ci --prefix apps/web
+      - name: Audit Python and JavaScript dependencies
+        run: |
+          uv lock --check
+          dependency_snapshot="$(mktemp /tmp/effica-python-freeze.XXXXXX)"
+          uv pip freeze --exclude-editable >"$dependency_snapshot"
+          test -s "$dependency_snapshot"
+          uv run --no-project --with pip-audit pip-audit \
+            --requirement "$dependency_snapshot" --no-deps --disable-pip --strict --format=columns
+          rm -f "$dependency_snapshot"
+          npm audit --prefix apps/web --audit-level=high
+      - name: Validate deployment manifest and secret boundaries
+        run: |
+          test -f deploy.manifest
+          ! rg -n '(^|/)(\.env($|\.)|.*\.pem$|.*\.key$)' deploy.manifest
+          if git ls-files | rg -n '(^|/)(\.env($|\.)|.*\.pem$|.*\.key$)' | rg -v '(^|/)\.env\.example$'; then
+            echo 'tracked secret-bearing file found' >&2
+            exit 1
+          fi
+          git diff --check
