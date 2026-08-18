@@ -1,4 +1,4 @@
-.agent/
+.agents/
 tmp/
 .env
 .venv/
@@ -13,6 +13,9 @@ build/
 *.egg-info/
 apps/web/.next/
 apps/web/.next-real/
+apps/web/.next-playwright-*/
 apps/web/node_modules/
 .vercel/
 .DS_Store
+.playwright-cli/
+.mypy_cache/
