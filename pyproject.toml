@@ -37,10 +37,12 @@ dev = [
 packages = ["apps/api/app", "apps/worker/worker"]
 
 [tool.pytest.ini_options]
-addopts = "-q --strict-markers"
+addopts = "-q --strict-markers -p tests.pytest_repo_root"
 testpaths = ["apps/api/tests", "apps/worker/tests", "tests/integration"]
 pythonpath = ["."]
 asyncio_mode = "auto"
+faulthandler_timeout = 60
+norecursedirs = [".git", ".venv", "node_modules", "dist", "build"]
 markers = [
   "mariadb: requires a live MariaDB service (skipped unless CI_MARIADB_URL is set)",
 ]
