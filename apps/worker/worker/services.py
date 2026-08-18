@@ -251,26 +251,25 @@ class MariaDBIdempotencyStore:
             LIMIT 1
             """.strip()
         )
-        try:
-            async with _session_scope(self.session_factory) as session:
-                result = await _maybe_await(
-                    session.execute(query, {"target_id": suffix, "idempotency_key": key})
-                )
-                rows = _rows(result)
-            if rows:
-                value = _row(rows[0], "after_json")
-                if isinstance(value, str):
-                    try:
-                        value = json.loads(value)
-                    except ValueError:
-                        pass
-                if isinstance(value, Mapping) and "result" in value:
-                    value = value["result"]
-                return "cached", value
-        except Exception:
-            # Availability of the idempotency read must not make a healthy
-            # queue unusable; the transactional applier remains authoritative.
-            return token, None
+        async with _session_scope(self.session_factory) as session:
+            # An operational error here must reach the worker runtime.  A
+            # missing/failed idempotency read is not evidence that no result
+            # exists; treating it as a cache miss would permit a replayed
+            # domain side effect during a DB outage.
+            result = await _maybe_await(
+                session.execute(query, {"target_id": suffix, "idempotency_key": key})
+            )
+            rows = _rows(result)
+        if rows:
+            value = _row(rows[0], "after_json")
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except ValueError:
+                    pass
+            if isinstance(value, Mapping) and "result" in value:
+                value = value["result"]
+            return "cached", value
         return token, None
 
     async def complete(self, key: str, owner_token: str, result: Any) -> None:
@@ -317,17 +316,12 @@ class MariaDBResultApplier:
                 # Serialize replay with the current lease holder.  The query
                 # is intentionally harmless for small fake sessions used by
                 # SQL contract tests.
-                try:
-                    await _maybe_await(
-                        session.execute(
-                            _sql("SELECT id FROM jobs WHERE id = :job_id FOR UPDATE"),
-                            {"job_id": job.id},
-                        )
+                await _maybe_await(
+                    session.execute(
+                        _sql("SELECT id FROM jobs WHERE id = :job_id FOR UPDATE"),
+                        {"job_id": job.id},
                     )
-                except Exception:
-                    # A caller may use a result-only fake or an additive queue
-                    # view.  Domain writes still run in the surrounding tx.
-                    pass
+                )
 
                 existing = await self._existing_result(session, job.id)
                 if existing is not None:
@@ -355,11 +349,8 @@ class MariaDBResultApplier:
             LIMIT 1 FOR UPDATE
             """.strip()
         )
-        try:
-            result = await _maybe_await(session.execute(query, {"job_id": job_id}))
-            rows = _rows(result)
-        except Exception:
-            return None
+        result = await _maybe_await(session.execute(query, {"job_id": job_id}))
+        rows = _rows(result)
         if not rows:
             return None
         value = _row(rows[0], "after_json")
@@ -684,6 +675,56 @@ class MariaDBResultApplier:
         target = str(result.get("target_issue_id") or job.payload.get("target_issue_id"))
         if not source or not target or source == target:
             raise ResultApplicationError("merge result requires distinct source and target issue IDs")
+        # The target is the merge output and may legitimately not exist when
+        # the queue item is claimed (for example, an API producer can enqueue
+        # before a separate target projection is materialised).  Lock and
+        # validate the source first, then create the target in this same
+        # result-application transaction.  Membership copy, source cleanup,
+        # and the job-linked audit written by ``apply`` therefore commit as a
+        # single unit.
+        source_result = await self._execute(
+            session,
+            """
+            SELECT id, title, summary
+            FROM issues
+            WHERE id = :source_id
+            LIMIT 1
+            FOR UPDATE
+            """,
+            {"source_id": source},
+        )
+        source_rows = _rows(source_result)
+        if not source_rows:
+            raise ResultApplicationError("merge source issue was not found")
+        target_result = await self._execute(
+            session,
+            """
+            SELECT id
+            FROM issues
+            WHERE id = :target_id
+            LIMIT 1
+            FOR UPDATE
+            """,
+            {"target_id": target},
+        )
+        if not _rows(target_result):
+            source_row = source_rows[0]
+            source_title = str(_row(source_row, "title", "Untitled issue") or "Untitled issue")
+            source_summary = _row(source_row, "summary")
+            await self._execute(
+                session,
+                """
+                INSERT INTO issues
+                  (id, title, summary, status, opened_at, last_activity_at, version)
+                VALUES (:target_id, :title, :summary, 'candidate', :now, :now, 1)
+                """,
+                {
+                    "target_id": target,
+                    "title": source_title,
+                    "summary": source_summary,
+                    "now": now,
+                },
+            )
         await self._execute(
             session,
             """
@@ -693,6 +734,13 @@ class MariaDBResultApplier:
             ON DUPLICATE KEY UPDATE confidence = GREATEST(confidence, VALUES(confidence))
             """,
             {"target_id": target, "source_id": source, "created_at": now},
+        )
+        # A merge moves membership.  Leaving source rows active causes feed
+        # queries to surface the same article under both issues.
+        await self._execute(
+            session,
+            "DELETE FROM issue_memberships WHERE issue_id = :source_id",
+            {"source_id": source},
         )
         await self._execute(
             session,
@@ -741,6 +789,15 @@ class MariaDBResultApplier:
                 """,
                 {"new_id": new_id, "source_id": issue_id, "article_id": str(article_id), "created_at": now},
             )
+            # Splitting moves the selected membership to its new issue.  The
+            # insert and delete are part of the same transaction, so a failed
+            # copy cannot silently lose the source membership.
+            if new_id != issue_id:
+                await self._execute(
+                    session,
+                    "DELETE FROM issue_memberships WHERE issue_id = :source_id AND article_id = :article_id",
+                    {"source_id": issue_id, "article_id": str(article_id)},
+                )
         await self._execute(
             session,
             "UPDATE issues SET version = version + 1, last_activity_at = :now WHERE id = :source_id",
@@ -762,7 +819,7 @@ class MariaDBResultApplier:
             if not isinstance(item, Mapping):
                 continue
             alias = str(item.get("model_alias") or item.get("alias") or "unknown")
-            alias_id = str(item.get("model_alias_id") or _new_id())
+            requested_alias_id = str(item.get("model_alias_id") or _new_id())
             await self._execute(
                 session,
                 """
@@ -770,8 +827,24 @@ class MariaDBResultApplier:
                 VALUES (:id, :alias, :provider, :actual_model_id, 'ACTIVE', :config_json)
                 ON DUPLICATE KEY UPDATE actual_model_id = VALUES(actual_model_id), provider = VALUES(provider)
                 """,
-                {"id": alias_id, "alias": alias, "provider": str(item.get("provider", "worker")), "actual_model_id": str(item.get("actual_model_id", alias)), "config_json": _json({})},
+                {"id": requested_alias_id, "alias": alias, "provider": str(item.get("provider", "worker")), "actual_model_id": str(item.get("actual_model_id", alias)), "config_json": _json({})},
             )
+            # ``alias`` is the durable identity.  On a duplicate-key upsert,
+            # the requested/generated ID is not the canonical row's ID; using
+            # it for the assessment would violate model_assessments' FK on the
+            # second analysis of an alias.  Read the row while the transaction
+            # is locked and always use the database-owned ID.
+            alias_result = await self._execute(
+                session,
+                "SELECT id FROM model_aliases WHERE alias = :alias LIMIT 1 FOR UPDATE",
+                {"alias": alias},
+            )
+            alias_rows = _rows(alias_result)
+            if not alias_rows:
+                raise ResultApplicationError("model alias upsert did not return a canonical ID")
+            alias_id = str(_row(alias_rows[0], "id", ""))
+            if not alias_id:
+                raise ResultApplicationError("model alias canonical ID is empty")
             evidence = item.get("evidence", item.get("evidence_json", []))
             assessment_id = str(item.get("id") or item.get("assessment_id") or _new_id())
             await self._execute(
@@ -813,7 +886,47 @@ class MariaDBResultApplier:
         article_id = str(result.get("article_id") or job.payload.get("article_id") or "")
         if not article_id:
             raise ResultApplicationError("vote aggregate result is missing article_id")
-        version = int(result.get("version", job.payload.get("version", 1)))
+        raw_revision = result.get(
+            "vote_revision",
+            result.get(
+                "source_revision",
+                result.get("version", job.payload.get("vote_revision", job.payload.get("version", 1))),
+            ),
+        )
+        if isinstance(raw_revision, bool):
+            raise ResultApplicationError("vote aggregate revision must be a positive integer")
+        try:
+            version = int(raw_revision)
+        except (TypeError, ValueError) as exc:
+            raise ResultApplicationError("vote aggregate revision must be a positive integer") from exc
+        if version < 1 or (isinstance(raw_revision, float) and raw_revision != version):
+            raise ResultApplicationError("vote aggregate revision must be a positive integer")
+
+        # Lock a stable parent row before reading the latest snapshot.  A
+        # ``FOR UPDATE`` on an empty snapshot set would lock nothing, allowing
+        # two first aggregates to race into the same version.
+        await self._execute(
+            session,
+            "SELECT id FROM articles WHERE id = :article_id LIMIT 1 FOR UPDATE",
+            {"article_id": article_id},
+        )
+        latest_result = await self._execute(
+            session,
+            """
+            SELECT version FROM vote_aggregate_snapshots
+            WHERE article_id = :article_id
+            ORDER BY version DESC
+            LIMIT 1 FOR UPDATE
+            """,
+            {"article_id": article_id},
+        )
+        latest_rows = _rows(latest_result)
+        if latest_rows:
+            latest_version = int(_row(latest_rows[0], "version", 0) or 0)
+            if version <= latest_version:
+                raise ResultApplicationError(
+                    "stale vote aggregate revision",
+                )
         aggregate = result.get("aggregate", result)
         segments = result.get("segments", {})
         await self._execute(
@@ -822,7 +935,6 @@ class MariaDBResultApplier:
             INSERT INTO vote_aggregate_snapshots
               (id, article_id, version, aggregate_json, segment_json, created_at)
             VALUES (:id, :article_id, :version, :aggregate_json, :segment_json, :created_at)
-            ON DUPLICATE KEY UPDATE aggregate_json = VALUES(aggregate_json), segment_json = VALUES(segment_json)
             """,
             {"id": str(result.get("snapshot_id") or _new_id()), "article_id": article_id, "version": version, "aggregate_json": _json(aggregate), "segment_json": _json(segments), "created_at": now},
         )
@@ -995,12 +1107,35 @@ class MariaDBResultApplier:
                 {"user_id": user_id},
             )
         if "share_artifacts" in purge:
-            # Removing the BLOB first activates the FK's SET NULL behavior;
-            # the row remains as an auditable revoked-card tombstone while
-            # its public snapshot and display name are erased.
+            # Remove only blobs that become unreferenced after this user's
+            # cards are redacted.  ``stored_blobs.sha256`` is globally
+            # deduplicated, so deleting every blob selected by the user's
+            # cards would break another user's card that points at the same
+            # row.  Keep the checks for the other string-based blob references
+            # as well; those legacy columns do not have FK constraints.
             await self._execute(
                 session,
-                "DELETE FROM stored_blobs WHERE id IN (SELECT blob_id FROM share_cards WHERE user_id = :user_id AND blob_id IS NOT NULL)",
+                """
+                DELETE FROM stored_blobs
+                WHERE id IN (
+                    SELECT blob_id FROM share_cards
+                    WHERE user_id = :user_id AND blob_id IS NOT NULL
+                )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM share_cards other_cards
+                    WHERE other_cards.blob_id = stored_blobs.id
+                      AND other_cards.user_id <> :user_id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM article_versions versions
+                    WHERE versions.normalized_text_ref = stored_blobs.id
+                       OR versions.raw_payload_ref = stored_blobs.id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM model_assessments assessments
+                    WHERE assessments.raw_response_ref = stored_blobs.id
+                  )
+                """,
                 {"user_id": user_id},
             )
             await self._execute(

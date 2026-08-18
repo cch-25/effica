@@ -11,14 +11,17 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import ipaddress
 import json
 import math
+import socket
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -31,10 +34,12 @@ except ImportError:  # pragma: no cover - supports PYTHONPATH=apps/worker.
 
 
 _RETRYABLE_STATUS_CODES = frozenset({408, 425, 429})
+_REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
 _DEFAULT_USER_AGENT = "perspective-news-worker/1.0"
 _DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 _APPROVED_POLICY_STATUS = "APPROVED"
 _DEFAULT_RATE_LIMIT_PER_MINUTE = 0
+_IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 
 class SourceFetchError(RuntimeError):
@@ -179,6 +184,7 @@ class SourceFetchService:
         clock: ClockCallable = time.monotonic,
         follow_redirects: bool = True,
         max_redirects: int = 10,
+        resolver: Callable[[str, int], Any] | None = None,
     ) -> None:
         if transport is not None and client is not None:
             raise ValueError("transport and client are mutually exclusive")
@@ -222,6 +228,14 @@ class SourceFetchService:
         if isinstance(max_redirects, bool) or not isinstance(max_redirects, int) or max_redirects < 0:
             raise ValueError("max_redirects must be a non-negative integer")
         self.max_redirects = max_redirects
+        # A resolver hook keeps DNS rebinding and redirect tests deterministic.
+        # The default is deliberately synchronous-but-offloaded below so the
+        # worker event loop is never blocked by libc name resolution.
+        self.resolver = resolver or self._default_resolver
+        self._resolver_injected = resolver is not None
+        self._test_transport = self._is_test_transport(transport) or self._is_test_transport(
+            getattr(client, "_transport", None)
+        )
 
     @staticmethod
     def _positive_finite(value: float, name: str) -> float:
@@ -269,6 +283,20 @@ class SourceFetchService:
                 retryable=False,
             )
         try:
+            raw_parts = urlsplit(str(raw_url).strip())
+            if raw_parts.username is not None or raw_parts.password is not None:
+                raise SourceFetchError(
+                    "source URL cannot contain credentials",
+                    code="SOURCE_URL_CREDENTIALS_BLOCKED",
+                    retryable=False,
+                )
+        except ValueError as exc:
+            raise SourceFetchError(
+                "source URL is invalid",
+                code="INVALID_SOURCE_URL",
+                retryable=False,
+            ) from exc
+        try:
             url = canonicalize_url(str(raw_url))
         except (TypeError, ValueError) as exc:
             raise SourceFetchError(
@@ -313,10 +341,185 @@ class SourceFetchService:
         async with httpx.AsyncClient(
             transport=self.transport,
             timeout=timeout,
-            follow_redirects=settings.follow_redirects,
+            # Redirects are followed one hop at a time by this service so the
+            # target can be validated before httpx opens the next connection.
+            follow_redirects=False,
             max_redirects=settings.max_redirects,
         ) as owned_client:
             return await self._request_with_client(owned_client, url, source, settings=settings)
+
+    @staticmethod
+    async def _default_resolver(host: str, port: int) -> Any:
+        return await asyncio.to_thread(socket.getaddrinfo, host, port, type=socket.SOCK_STREAM)
+
+    @staticmethod
+    def _is_test_transport(transport: Any) -> bool:
+        # MockTransport never performs DNS or network I/O.  Existing unit
+        # callers intentionally use non-resolving ``example.test`` hosts; the
+        # literal/private-address checks still run for those calls.
+        return isinstance(transport, httpx.MockTransport)
+
+    @staticmethod
+    def _address_from_resolution(value: Any) -> _IPAddress | None:
+        if isinstance(value, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
+            return value
+        if isinstance(value, str):
+            try:
+                return ipaddress.ip_address(value)
+            except ValueError:
+                return None
+        if isinstance(value, tuple) and value:
+            # ``socket.getaddrinfo`` returns
+            # ``(family, type, proto, canonname, sockaddr)``.  The address
+            # lives at ``sockaddr[0]``; treating the family integer as the
+            # address makes every normal public hostname look unresolved.
+            sockaddr = value[4] if len(value) >= 5 else value
+            candidate = sockaddr[0] if isinstance(sockaddr, tuple) and sockaddr else None
+            if isinstance(candidate, str):
+                try:
+                    return ipaddress.ip_address(candidate)
+                except ValueError:
+                    return None
+        return None
+
+    @classmethod
+    def _assert_public_address(cls, value: _IPAddress) -> None:
+        # ``is_global`` is intentionally not the sole check: mapped IPv4,
+        # documentation, reserved, and unspecified ranges must all be
+        # rejected explicitly, including on IPv6.
+        mapped = getattr(value, "ipv4_mapped", None)
+        if mapped is not None:
+            value = mapped
+        if (
+            value.is_private
+            or value.is_loopback
+            or value.is_link_local
+            or value.is_reserved
+            or value.is_unspecified
+            or value.is_multicast
+            or not value.is_global
+        ):
+            raise SourceFetchError(
+                "source URL resolves to a non-public network address",
+                code="SOURCE_PRIVATE_NETWORK_BLOCKED",
+                retryable=False,
+            )
+
+    async def _validate_network_target(self, url: str) -> _IPAddress | None:
+        """Validate a URL and return the address that the request must use."""
+
+        parts = urlsplit(url)
+        if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
+            raise SourceFetchError(
+                "source URL is invalid",
+                code="INVALID_SOURCE_URL",
+                retryable=False,
+            )
+        if parts.username is not None or parts.password is not None:
+            raise SourceFetchError(
+                "source URL cannot contain credentials",
+                code="SOURCE_URL_CREDENTIALS_BLOCKED",
+                retryable=False,
+            )
+        try:
+            port = parts.port or (443 if parts.scheme.lower() == "https" else 80)
+        except ValueError as exc:
+            raise SourceFetchError(
+                "source URL has an invalid port",
+                code="INVALID_SOURCE_URL",
+                retryable=False,
+            ) from exc
+        host = parts.hostname.rstrip(".").lower()
+        # Well-known private names must fail even with a mock transport, which
+        # intentionally skips DNS resolution.
+        if host == "localhost" or host.endswith(".localhost") or host.endswith(".internal"):
+            raise SourceFetchError(
+                "source URL targets a private network name",
+                code="SOURCE_PRIVATE_NETWORK_BLOCKED",
+                retryable=False,
+            )
+        try:
+            literal = ipaddress.ip_address(host)
+        except ValueError:
+            literal = None
+        if literal is not None:
+            self._assert_public_address(literal)
+            return literal
+        try:
+            resolved = self.resolver(host, port)
+            if inspect.isawaitable(resolved):
+                resolved = await resolved
+        except (OSError, socket.gaierror) as exc:
+            # ``example.test`` is the non-resolving host used by the legacy
+            # MockTransport unit fixtures.  No real socket is opened in that
+            # mode; all other unresolved hosts fail closed even under a test
+            # transport.  Production clients never take this exception.
+            if self._test_transport and not self._resolver_injected and host == "example.test":
+                return None
+            raise SourceFetchError(
+                "source hostname could not be resolved",
+                code="SOURCE_DNS_RESOLUTION_FAILED",
+                retryable=False,
+            ) from exc
+        except Exception as exc:
+            raise SourceFetchError(
+                "source hostname could not be resolved",
+                code="SOURCE_DNS_RESOLUTION_FAILED",
+                retryable=False,
+                details={"exception": exc.__class__.__name__},
+            ) from exc
+        if isinstance(resolved, (str, ipaddress.IPv4Address, ipaddress.IPv6Address)):
+            resolved = [resolved]
+        addresses: list[_IPAddress] = []
+        for item in resolved or ():
+            candidate = self._address_from_resolution(item)
+            if candidate is not None:
+                addresses.append(candidate)
+        if not addresses:
+            raise SourceFetchError(
+                "source hostname has no usable address",
+                code="SOURCE_DNS_RESOLUTION_FAILED",
+                retryable=False,
+            )
+        for address in addresses:
+            self._assert_public_address(address)
+        # The URL is rewritten to this validated address immediately before
+        # sending.  Keeping the hostname in Host/SNI preserves virtual-host
+        # routing and HTTPS certificate validation without allowing HTTPX to
+        # perform a second, independently resolved connection.
+        return addresses[0]
+
+    @staticmethod
+    def _connection_target(
+        url: str,
+        headers: Mapping[str, str],
+        validated_address: _IPAddress | None,
+        *,
+        pin_address: bool,
+    ) -> tuple[str, dict[str, str], dict[str, Any]]:
+        """Build a pinned URL while retaining the URL host at the protocol layer."""
+
+        if validated_address is None or not pin_address:
+            return url, dict(headers), {}
+        parts = urlsplit(url)
+        host = parts.hostname
+        if not host:
+            return url, dict(headers), {}
+        connect_url = httpx.URL(url).copy_with(host=str(validated_address))
+        request_headers = dict(headers)
+        if not any(str(key).lower() == "host" for key in request_headers):
+            default_port = 443 if parts.scheme.lower() == "https" else 80
+            host_header = host
+            if parts.port is not None and parts.port != default_port:
+                host_header = f"{host}:{parts.port}"
+            request_headers["Host"] = host_header
+        extensions: dict[str, Any] = {}
+        if parts.scheme.lower() == "https":
+            # httpcore uses this extension for TLS SNI.  The URL itself points
+            # at the validated address, while certificate validation remains
+            # against the original DNS name.
+            extensions["sni_hostname"] = host
+        return str(connect_url), request_headers, extensions
 
     async def _request_with_client(
         self,
@@ -327,13 +530,38 @@ class SourceFetchService:
         settings: _RequestSettings | None = None,
     ) -> SourceFetchResponse:
         settings = settings or self._request_settings(source, source_kind="API")
-        total_attempts = settings.max_retries + 1
-        last_error: BaseException | None = None
-        for attempt in range(1, total_attempts + 1):
+        retry_count = 0
+        request_count = 0
+        redirect_count = 0
+        current_url = url
+        current_settings = settings
+        while True:
+            request_count += 1
             try:
-                await self._acquire_rate_limit(self._rate_key(source, url), settings)
+                # Resolve and classify every hop and every retry.  This
+                # catches DNS rebinding between attempts and prevents httpx's
+                # redirect machinery from reaching an unchecked target.
+                validated_address = await self._validate_network_target(current_url)
+                request_url, request_headers, request_extensions = self._connection_target(
+                    current_url,
+                    current_settings.headers,
+                    validated_address,
+                    # MockTransport never opens a socket.  Keeping its URL
+                    # unchanged preserves existing injectable test semantics;
+                    # all real transports are pinned to the validated IP.
+                    pin_address=not self._test_transport,
+                )
+                await self._acquire_rate_limit(
+                    self._rate_key(source, current_url), current_settings
+                )
                 if callable(getattr(client, "stream", None)):
-                    response, body = await self._stream_response(client, url, settings)
+                    response, body = await self._stream_response(
+                        client,
+                        request_url,
+                        current_settings,
+                        headers=request_headers,
+                        extensions=request_extensions,
+                    )
                 else:
                     # Compatibility for very small fake clients used by
                     # older callers.  Real httpx clients always take the
@@ -344,121 +572,221 @@ class SourceFetchService:
                     if not callable(request):
                         raise TypeError("source client must expose request(), get() or stream()")
                     kwargs = {
-                        "headers": dict(settings.headers),
-                        "params": settings.params,
+                        "headers": request_headers,
+                        "params": current_settings.params,
+                        "follow_redirects": False,
                     }
-                    if settings.content is not None:
-                        kwargs["content"] = settings.content
-                    if settings.json_body is not None:
-                        kwargs["json"] = settings.json_body
-                    if request.__name__ == "get":
-                        response_call = request(url, **kwargs)
-                    else:
-                        response_call = request(settings.method, url, **kwargs)
-                    response = await asyncio.wait_for(response_call, timeout=settings.timeout_seconds)
-                    body = self._bounded_body(response.content, settings.max_response_bytes)
+                    if request_extensions:
+                        kwargs["extensions"] = request_extensions
+                    if current_settings.content is not None:
+                        kwargs["content"] = current_settings.content
+                    if current_settings.json_body is not None:
+                        kwargs["json"] = current_settings.json_body
+                    try:
+                        if request.__name__ == "get":
+                            response_call = request(request_url, **kwargs)
+                        else:
+                            response_call = request(current_settings.method, request_url, **kwargs)
+                    except TypeError:
+                        # Small injected fake clients may not accept the
+                        # redirect keyword; they still receive per-hop
+                        # validation from this service.
+                        kwargs.pop("follow_redirects", None)
+                        kwargs.pop("extensions", None)
+                        if request.__name__ == "get":
+                            response_call = request(request_url, **kwargs)
+                        else:
+                            response_call = request(current_settings.method, request_url, **kwargs)
+                    response = await asyncio.wait_for(
+                        response_call, timeout=current_settings.timeout_seconds
+                    )
+                    body = self._bounded_body(
+                        response.content, current_settings.max_response_bytes
+                    )
+                # Re-resolve after the response too.  A DNS answer that
+                # changes while the request is in flight must not become a
+                # trusted redirect/body hop on the next loop iteration.
+                await self._validate_network_target(current_url)
                 status = response.status_code
+                if status in _REDIRECT_STATUS_CODES and current_settings.follow_redirects:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise SourceFetchError(
+                            "source redirect did not include a location",
+                            code="SOURCE_REDIRECT_INVALID",
+                            retryable=False,
+                            details={"status_code": status},
+                        )
+                    if redirect_count >= current_settings.max_redirects:
+                        raise SourceFetchError(
+                            "source redirect limit exceeded",
+                            code="SOURCE_REDIRECT_LIMIT",
+                            retryable=False,
+                            details={"max_redirects": current_settings.max_redirects},
+                        )
+                    try:
+                        raw_redirect_url = urljoin(current_url, location)
+                        redirect_parts = urlsplit(raw_redirect_url)
+                        if redirect_parts.username is not None or redirect_parts.password is not None:
+                            raise SourceFetchError(
+                                "source redirect target cannot contain credentials",
+                                code="SOURCE_URL_CREDENTIALS_BLOCKED",
+                                retryable=False,
+                            )
+                        redirected_url = canonicalize_url(raw_redirect_url)
+                    except (TypeError, ValueError) as exc:
+                        raise SourceFetchError(
+                            "source redirect target is invalid",
+                            code="SOURCE_REDIRECT_INVALID",
+                            retryable=False,
+                        ) from exc
+                    await self._validate_network_target(redirected_url)
+
+                    def origin(value: str) -> tuple[str, str, int]:
+                        parsed = urlsplit(value)
+                        return (
+                            parsed.scheme.lower(),
+                            (parsed.hostname or "").lower(),
+                            parsed.port or (443 if parsed.scheme.lower() == "https" else 80),
+                        )
+
+                    if origin(current_url) != origin(redirected_url):
+                        # Do not leak source credentials across an origin
+                        # redirect.  The target is validated independently,
+                        # but a public attacker-controlled host could still
+                        # receive configured Authorization/Cookie headers.
+                        headers: Mapping[str, str] = {
+                            key: value
+                            for key, value in current_settings.headers.items()
+                            if key.lower() not in {"authorization", "cookie", "proxy-authorization"}
+                        }
+                    else:
+                        headers = current_settings.headers
+                    current_settings = replace(
+                        current_settings,
+                        headers=headers,
+                        # Query parameters were applied to the original URL;
+                        # a Location header is authoritative for the next hop.
+                        params=None,
+                    )
+                    current_url = redirected_url
+                    redirect_count += 1
+                    continue
                 if 200 <= status < 300:
                     return SourceFetchResponse(
-                        url=str(response.url or url),
+                        # ``request_url`` may contain the pinned address.  The
+                        # worker contract exposes the canonical source URL,
+                        # not the connection address used underneath it.
+                        url=str(current_url),
                         status_code=status,
                         headers=dict(response.headers),
                         body=body,
                         fetched_at=datetime.now(UTC),
-                        attempts=attempt,
+                        attempts=request_count,
                     )
-                if self._retryable_status(status) and attempt < total_attempts:
+                retryable = self._retryable_status(status)
+                if retryable and retry_count < settings.max_retries:
+                    retry_count += 1
                     await self._backoff(
-                        attempt,
+                        retry_count,
                         response.headers.get("retry-after"),
-                        base_seconds=settings.backoff_base_seconds,
-                        max_seconds=settings.backoff_max_seconds,
+                        base_seconds=current_settings.backoff_base_seconds,
+                        max_seconds=current_settings.backoff_max_seconds,
                     )
                     continue
                 raise SourceFetchError(
                     self._status_message(status),
-                    code=("SOURCE_FETCH_RETRY_EXHAUSTED" if self._retryable_status(status) else "SOURCE_HTTP_ERROR"),
-                    retryable=self._retryable_status(status),
-                    details={"status_code": status, "attempts": attempt},
+                    code=("SOURCE_FETCH_RETRY_EXHAUSTED" if retryable else "SOURCE_HTTP_ERROR"),
+                    retryable=retryable,
+                    details={"status_code": status, "attempts": request_count},
                 )
             except SourceFetchError:
                 raise
             except (TimeoutError, httpx.TimeoutException) as exc:
-                last_error = exc
-                if attempt < total_attempts:
+                if retry_count < settings.max_retries:
+                    retry_count += 1
                     await self._backoff(
-                        attempt,
+                        retry_count,
                         None,
-                        base_seconds=settings.backoff_base_seconds,
-                        max_seconds=settings.backoff_max_seconds,
+                        base_seconds=current_settings.backoff_base_seconds,
+                        max_seconds=current_settings.backoff_max_seconds,
                     )
                     continue
                 raise SourceFetchError(
                     "source request timed out",
                     code="SOURCE_FETCH_TIMEOUT",
                     retryable=True,
-                    details={"attempts": attempt},
+                    details={"attempts": request_count},
                 ) from exc
             except httpx.TransportError as exc:
-                last_error = exc
-                if attempt < total_attempts:
+                if retry_count < settings.max_retries:
+                    retry_count += 1
                     await self._backoff(
-                        attempt,
+                        retry_count,
                         None,
-                        base_seconds=settings.backoff_base_seconds,
-                        max_seconds=settings.backoff_max_seconds,
+                        base_seconds=current_settings.backoff_base_seconds,
+                        max_seconds=current_settings.backoff_max_seconds,
                     )
                     continue
                 raise SourceFetchError(
                     "source transport failed",
                     code="SOURCE_FETCH_TRANSPORT_ERROR",
                     retryable=True,
-                    details={"attempts": attempt, "exception": exc.__class__.__name__},
+                    details={"attempts": request_count, "exception": exc.__class__.__name__},
                 ) from exc
             except Exception as exc:
                 # A custom transport may raise a non-httpx exception.  Keep
                 # the worker boundary structured and body-free rather than
                 # allowing arbitrary exception text into durable job errors.
-                last_error = exc
-                if attempt < total_attempts:
+                if retry_count < settings.max_retries:
+                    retry_count += 1
                     await self._backoff(
-                        attempt,
+                        retry_count,
                         None,
-                        base_seconds=settings.backoff_base_seconds,
-                        max_seconds=settings.backoff_max_seconds,
+                        base_seconds=current_settings.backoff_base_seconds,
+                        max_seconds=current_settings.backoff_max_seconds,
                     )
                     continue
                 raise SourceFetchError(
                     "source request failed",
                     code="SOURCE_FETCH_ERROR",
                     retryable=True,
-                    details={"attempts": attempt, "exception": exc.__class__.__name__},
+                    details={"attempts": request_count, "exception": exc.__class__.__name__},
                 ) from exc
-        # The loop is finite by construction.  Keep a defensive boundary in
-        # case a future change alters the control flow.
-        raise SourceFetchError(
-            "source request failed",
-            code="SOURCE_FETCH_ERROR",
-            retryable=True,
-            details={"attempts": total_attempts, "exception": type(last_error).__name__ if last_error else None},
-        )
 
     async def _stream_response(
         self,
         client: httpx.AsyncClient,
         url: str,
         settings: _RequestSettings,
+        *,
+        headers: Mapping[str, str] | None = None,
+        extensions: Mapping[str, Any] | None = None,
     ) -> tuple[httpx.Response, bytes]:
         request_kwargs: dict[str, Any] = {
-            "headers": dict(settings.headers),
+            "headers": dict(headers or settings.headers),
             "params": settings.params,
         }
+        if extensions:
+            request_kwargs["extensions"] = dict(extensions)
         if settings.content is not None:
             request_kwargs["content"] = settings.content
         if settings.json_body is not None:
             request_kwargs["json"] = settings.json_body
         try:
-            stream_context = client.stream(settings.method, url, **request_kwargs)
+            try:
+                stream_context = client.stream(
+                    settings.method,
+                    url,
+                    follow_redirects=False,
+                    **request_kwargs,
+                )
+            except TypeError:
+                # Small injected fake clients may not expose httpx's optional
+                # redirect keyword; they still receive per-hop validation from
+                # this service.
+                request_kwargs.pop("extensions", None)
+                stream_context = client.stream(settings.method, url, **request_kwargs)
             async with asyncio.timeout(settings.timeout_seconds):
                 async with stream_context as response:
                     self._check_content_length(response.headers, settings.max_response_bytes)

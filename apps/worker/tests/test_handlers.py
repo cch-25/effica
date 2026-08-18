@@ -77,3 +77,16 @@ def test_analysis_uses_one_dynamically_configured_openai_model():
         assert assessment["provider"] == "openai"
 
     asyncio.run(scenario())
+
+
+def test_aggregate_handler_preserves_vote_revision_contract() -> None:
+    async def scenario():
+        aggregate = build_default_registry().require("aggregate_votes")
+        result = await aggregate(
+            {"article_id": "article-1", "vote_revision": 7, "votes": []}
+        )
+        assert result.value["version"] == 7
+        assert result.value["vote_revision"] == 7
+        assert result.value["source_revision"] == 7
+
+    asyncio.run(scenario())

@@ -252,17 +252,24 @@ def _rowcount(result: Any) -> int:
 class QueueRepository(Protocol):
     """Repository operations required by :class:`WorkerRuntime`."""
 
-    async def enqueue(self, job: Job) -> Job:
-        ...
+    async def enqueue(self, job: Job) -> Job: ...
 
-    async def claim(self, worker_id: str, *, lease_seconds: float = 60.0, now: datetime | None = None) -> Job | None:
-        ...
+    async def claim(
+        self, worker_id: str, *, lease_seconds: float = 60.0, now: datetime | None = None
+    ) -> Job | None: ...
 
-    async def heartbeat(self, job_id: str, worker_id: str, *, lease_seconds: float = 60.0, now: datetime | None = None) -> bool:
-        ...
+    async def heartbeat(
+        self,
+        job_id: str,
+        worker_id: str,
+        *,
+        lease_seconds: float = 60.0,
+        now: datetime | None = None,
+    ) -> bool: ...
 
-    async def complete(self, job_id: str, worker_id: str, *, result: Any = None, now: datetime | None = None) -> bool:
-        ...
+    async def complete(
+        self, job_id: str, worker_id: str, *, result: Any = None, now: datetime | None = None
+    ) -> bool: ...
 
     async def fail(
         self,
@@ -273,17 +280,13 @@ class QueueRepository(Protocol):
         retryable: bool = True,
         now: datetime | None = None,
         backoff_seconds: float = 0.0,
-    ) -> JobStatus:
-        ...
+    ) -> JobStatus: ...
 
-    async def retry(self, job_id: str, *, now: datetime | None = None) -> bool:
-        ...
+    async def retry(self, job_id: str, *, now: datetime | None = None) -> bool: ...
 
-    async def cancel(self, job_id: str, *, now: datetime | None = None) -> bool:
-        ...
+    async def cancel(self, job_id: str, *, now: datetime | None = None) -> bool: ...
 
-    async def release_leases(self, worker_id: str, *, now: datetime | None = None) -> int:
-        ...
+    async def release_leases(self, worker_id: str, *, now: datetime | None = None) -> int: ...
 
 
 class ExponentialBackoff:
@@ -348,7 +351,9 @@ class MemoryQueueRepository:
     lock represents a database transaction; handlers execute outside it.
     """
 
-    def __init__(self, jobs: Iterable[Job] | None = None, *, clock: Callable[[], datetime] = utc_now) -> None:
+    def __init__(
+        self, jobs: Iterable[Job] | None = None, *, clock: Callable[[], datetime] = utc_now
+    ) -> None:
         self._jobs: dict[str, Job] = {}
         self._lock = asyncio.Lock()
         self.clock = clock
@@ -430,10 +435,11 @@ class MemoryQueueRepository:
                     and expired.lease_expires_at <= moment
                 )
                 pending_exhausted = (
-                    expired.status == JobStatus.PENDING
-                    and expired.attempts >= expired.max_attempts
+                    expired.status == JobStatus.PENDING and expired.attempts >= expired.max_attempts
                 )
-                if (lease_expired and expired.attempts >= expired.max_attempts) or pending_exhausted:
+                if (
+                    lease_expired and expired.attempts >= expired.max_attempts
+                ) or pending_exhausted:
                     expired.status = JobStatus.DEAD
                     expired.lease_owner = None
                     expired.lease_expires_at = None
@@ -447,10 +453,7 @@ class MemoryQueueRepository:
             candidates = [
                 job
                 for job in self._jobs.values()
-                if (
-                    job.status == JobStatus.PENDING
-                    and job.available_at <= moment
-                )
+                if (job.status == JobStatus.PENDING and job.available_at <= moment)
                 or (
                     job.status == JobStatus.LEASED
                     and job.lease_expires_at is not None
@@ -681,11 +684,77 @@ class MariaDBQueueRepository:
     add = enqueue
     put = enqueue
 
-    async def _claim_with_skip_locked(self, worker_id: str, lease_seconds: float, moment: datetime) -> Job | None:
-        table = self.table_name
-        exhausted = _sql(
+    async def _mark_exhausted_crawl_runs(
+        self,
+        session: Any,
+        *,
+        moment: datetime,
+        last_error_json: str,
+    ) -> None:
+        """Close crawl runs when claim-time exhaustion makes a job DEAD.
+
+        Crawl runs normally reuse the queue job ID (see the result applier),
+        but older/proxy producers may carry the durable run identifier in
+        ``payload_json.crawl_run_id`` instead.  Match both identifiers while
+        restricting the update to PENDING/RUNNING rows so successful runs are
+        preserved and repeated claim scans remain idempotent.
+        """
+
+        await _maybe_await(
+            session.execute(
+                _sql(
+                    f"""
+                    UPDATE crawl_runs
+                    SET status = 'FAILED', finished_at = :now,
+                        error_json = :last_error_json
+                    WHERE status IN ('PENDING', 'RUNNING')
+                      AND (
+                        id IN (
+                            SELECT id FROM {self.table_name}
+                            WHERE job_type = 'crawl'
+                              AND status = 'DEAD'
+                              AND updated_at = :now
+                        )
+                        OR id IN (
+                            SELECT JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.crawl_run_id'))
+                            FROM {self.table_name}
+                            WHERE job_type = 'crawl'
+                              AND status = 'DEAD'
+                              AND updated_at = :now
+                              AND JSON_EXTRACT(payload_json, '$.crawl_run_id') IS NOT NULL
+                        )
+                      )
+                    """.strip()
+                ),
+                {"now": moment, "last_error_json": last_error_json},
+            )
+        )
+
+    async def _reap_exhausted_jobs(self, moment: datetime) -> None:
+        """Run the global expiry transition once across all worker processes.
+
+        Claiming is intentionally parallel, but expiry is a table-wide
+        maintenance operation.  Running the same range UPDATE in every claim
+        transaction lets two MariaDB processes deadlock before either reaches
+        ``SKIP LOCKED``.  A connection-scoped advisory lock elects one reaper;
+        other workers immediately continue to row-level claiming.
+        """
+
+        exhausted_error = json.dumps(
+            {
+                "code": "MAX_ATTEMPTS_EXHAUSTED",
+                "message": "job lease expired after max attempts",
+                "retryable": False,
+            },
+            sort_keys=True,
+        )
+        # Reaping and claiming both touch the same ordered job range.  They
+        # therefore share one advisory lock; separate locks merely serialized
+        # reapers while still allowing a reaper to deadlock with a claimant.
+        lock_name = f"effica:{self.table_name}:claim"[:64]
+        statement = _sql(
             f"""
-            UPDATE {table}
+            UPDATE {self.table_name}
             SET status = 'DEAD', lease_owner = NULL, lease_expires_at = NULL,
                 last_error_json = :last_error_json, updated_at = :now
             WHERE attempts >= max_attempts
@@ -693,8 +762,56 @@ class MariaDBQueueRepository:
                 (status = 'PENDING' AND available_at <= :now)
                 OR (status = 'LEASED' AND lease_expires_at IS NOT NULL AND lease_expires_at <= :now)
               )
+            ORDER BY id
             """.strip()
         )
+        # The advisory lock must outlive the write transaction's COMMIT.
+        # Releasing it from inside ``_transaction`` lets the next worker enter
+        # while InnoDB still owns the range locks, producing an intermittent
+        # 1213 deadlock.  Keep it on a dedicated connection and release only
+        # after the separate mutation transaction has fully exited.
+        async with _session_scope(self.session_factory) as lock_session:
+            acquired_result = await _maybe_await(
+                lock_session.execute(
+                    _sql("SELECT GET_LOCK(:lock_name, 5) AS acquired"),
+                    {"lock_name": lock_name},
+                )
+            )
+            acquired_rows = _result_rows(acquired_result)
+            acquired = bool(
+                acquired_rows and int(_row_value(acquired_rows[0], "acquired", 0) or 0) == 1
+            )
+            if not acquired:
+                return
+            try:
+                async with _session_scope(self.session_factory) as session:
+                    async with _transaction(session):
+                        await _maybe_await(
+                            session.execute(
+                                statement,
+                                {"last_error_json": exhausted_error, "now": moment},
+                            )
+                        )
+                        await self._mark_exhausted_crawl_runs(
+                            session, moment=moment, last_error_json=exhausted_error
+                        )
+            finally:
+                try:
+                    await _maybe_await(
+                        lock_session.execute(
+                            _sql("SELECT RELEASE_LOCK(:lock_name)"),
+                            {"lock_name": lock_name},
+                        )
+                    )
+                except Exception:
+                    # Closing the dedicated connection also releases the
+                    # advisory lock; preserve the original DB exception.
+                    pass
+
+    async def _claim_with_skip_locked(
+        self, worker_id: str, lease_seconds: float, moment: datetime
+    ) -> Job | None:
+        table = self.table_name
         select = _sql(
             f"""
             SELECT {self._SELECT_COLUMNS} FROM {table}
@@ -717,46 +834,59 @@ class MariaDBQueueRepository:
             WHERE id = :id
             """.strip()
         )
-        async with _session_scope(self.session_factory) as session:
-            async with _transaction(session):
-                await _maybe_await(
-                    session.execute(
-                        exhausted,
-                        {
-                            "last_error_json": json.dumps(
-                                {
-                                    "code": "MAX_ATTEMPTS_EXHAUSTED",
-                                    "message": "job lease expired after max attempts",
-                                    "retryable": False,
-                                },
-                                sort_keys=True,
-                            ),
-                            "now": moment,
-                        },
-                    )
+        await self._reap_exhausted_jobs(moment)
+        # Keep the advisory lock on its own checked-out connection.  A
+        # SQLAlchemy commit may return a transaction connection to the pool;
+        # releasing the named lock through that session afterwards can then
+        # run on a different connection and leak the lock.
+        async with _session_scope(self.session_factory) as lock_session:
+            claim_lock = f"effica:{self.table_name}:claim"[:64]
+            lock_result = await _maybe_await(
+                lock_session.execute(
+                    _sql("SELECT GET_LOCK(:lock_name, 5) AS acquired"),
+                    {"lock_name": claim_lock},
                 )
-                result = await _maybe_await(session.execute(select, {"now": moment}))
-                rows = _result_rows(result)
-                if not rows:
-                    return None
-                candidate = _job_from_row(rows[0])
-                await _maybe_await(
-                    session.execute(
-                        update,
-                        {
-                            "id": candidate.id,
-                            "worker_id": worker_id,
-                            "lease_expires_at": moment + timedelta(seconds=lease_seconds),
-                            "now": moment,
-                        },
-                    )
-                )
-                candidate.status = JobStatus.LEASED
-                candidate.lease_owner = worker_id
-                candidate.lease_expires_at = moment + timedelta(seconds=lease_seconds)
-                candidate.attempts += 1
-                candidate.updated_at = moment
+            )
+            lock_rows = _result_rows(lock_result)
+            acquired = bool(lock_rows and int(_row_value(lock_rows[0], "acquired", 0) or 0) == 1)
+            if not acquired:
+                return None
+            try:
+                candidate: Job | None = None
+                async with _session_scope(self.session_factory) as session:
+                    async with _transaction(session):
+                        result = await _maybe_await(session.execute(select, {"now": moment}))
+                        rows = _result_rows(result)
+                        if rows:
+                            candidate = _job_from_row(rows[0])
+                            await _maybe_await(
+                                session.execute(
+                                    update,
+                                    {
+                                        "id": candidate.id,
+                                        "worker_id": worker_id,
+                                        "lease_expires_at": moment
+                                        + timedelta(seconds=lease_seconds),
+                                        "now": moment,
+                                    },
+                                )
+                            )
+                            candidate.status = JobStatus.LEASED
+                            candidate.lease_owner = worker_id
+                            candidate.lease_expires_at = moment + timedelta(seconds=lease_seconds)
+                            candidate.attempts += 1
+                            candidate.updated_at = moment
                 return candidate
+            finally:
+                try:
+                    await _maybe_await(
+                        lock_session.execute(
+                            _sql("SELECT RELEASE_LOCK(:lock_name)"),
+                            {"lock_name": claim_lock},
+                        )
+                    )
+                except Exception:
+                    pass
 
     async def _claim_with_conditional_update(
         self,
@@ -765,18 +895,6 @@ class MariaDBQueueRepository:
         moment: datetime,
     ) -> Job | None:
         table = self.table_name
-        exhausted = _sql(
-            f"""
-            UPDATE {table}
-            SET status = 'DEAD', lease_owner = NULL, lease_expires_at = NULL,
-                last_error_json = :last_error_json, updated_at = :now
-            WHERE attempts >= max_attempts
-              AND (
-                (status = 'PENDING' AND available_at <= :now)
-                OR (status = 'LEASED' AND lease_expires_at IS NOT NULL AND lease_expires_at <= :now)
-              )
-            """.strip()
-        )
         select = _sql(
             f"""
             SELECT {self._SELECT_COLUMNS} FROM {table}
@@ -802,44 +920,54 @@ class MariaDBQueueRepository:
               )
             """.strip()
         )
-        async with _session_scope(self.session_factory) as session:
-            async with _transaction(session):
-                await _maybe_await(
-                    session.execute(
-                        exhausted,
-                        {
-                            "last_error_json": json.dumps(
-                                {
-                                    "code": "MAX_ATTEMPTS_EXHAUSTED",
-                                    "message": "job lease expired after max attempts",
-                                    "retryable": False,
-                                },
-                                sort_keys=True,
-                            ),
-                            "now": moment,
-                        },
-                    )
+        await self._reap_exhausted_jobs(moment)
+        async with _session_scope(self.session_factory) as lock_session:
+            claim_lock = f"effica:{self.table_name}:claim"[:64]
+            lock_result = await _maybe_await(
+                lock_session.execute(
+                    _sql("SELECT GET_LOCK(:lock_name, 5) AS acquired"),
+                    {"lock_name": claim_lock},
                 )
-                result = await _maybe_await(session.execute(select, {"now": moment}))
-                candidates = _result_rows(result)
-                for row in candidates:
-                    job = _job_from_row(row)
-                    params = {
-                        "id": job.id,
-                        "worker_id": worker_id,
-                        "lease_expires_at": moment + timedelta(seconds=lease_seconds),
-                        "now": moment,
-                    }
-                    updated = await _maybe_await(session.execute(update, params))
-                    if _rowcount(updated) != 1:
-                        continue
-                    job.status = JobStatus.LEASED
-                    job.lease_owner = worker_id
-                    job.lease_expires_at = moment + timedelta(seconds=lease_seconds)
-                    job.attempts += 1
-                    job.updated_at = moment
-                    return job
+            )
+            lock_rows = _result_rows(lock_result)
+            acquired = bool(lock_rows and int(_row_value(lock_rows[0], "acquired", 0) or 0) == 1)
+            if not acquired:
                 return None
+            try:
+                claimed: Job | None = None
+                async with _session_scope(self.session_factory) as session:
+                    async with _transaction(session):
+                        result = await _maybe_await(session.execute(select, {"now": moment}))
+                        candidates = _result_rows(result)
+                        for row in candidates:
+                            job = _job_from_row(row)
+                            params = {
+                                "id": job.id,
+                                "worker_id": worker_id,
+                                "lease_expires_at": moment + timedelta(seconds=lease_seconds),
+                                "now": moment,
+                            }
+                            updated = await _maybe_await(session.execute(update, params))
+                            if _rowcount(updated) != 1:
+                                continue
+                            job.status = JobStatus.LEASED
+                            job.lease_owner = worker_id
+                            job.lease_expires_at = moment + timedelta(seconds=lease_seconds)
+                            job.attempts += 1
+                            job.updated_at = moment
+                            claimed = job
+                            break
+                return claimed
+            finally:
+                try:
+                    await _maybe_await(
+                        lock_session.execute(
+                            _sql("SELECT RELEASE_LOCK(:lock_name)"),
+                            {"lock_name": claim_lock},
+                        )
+                    )
+                except Exception:
+                    pass
 
     async def claim(
         self,
@@ -918,7 +1046,9 @@ class MariaDBQueueRepository:
         async with _session_scope(self.session_factory) as session:
             async with _transaction(session):
                 updated = await _maybe_await(
-                    session.execute(statement, {"id": job_id, "worker_id": worker_id, "now": moment})
+                    session.execute(
+                        statement, {"id": job_id, "worker_id": worker_id, "now": moment}
+                    )
                 )
                 return _rowcount(updated) == 1
 
@@ -930,7 +1060,9 @@ class MariaDBQueueRepository:
             FOR UPDATE
             """.strip()
         )
-        result = await _maybe_await(session.execute(statement, {"id": job_id, "worker_id": worker_id}))
+        result = await _maybe_await(
+            session.execute(statement, {"id": job_id, "worker_id": worker_id})
+        )
         rows = _result_rows(result)
         return None if not rows else _job_from_row(rows[0])
 
@@ -950,9 +1082,7 @@ class MariaDBQueueRepository:
             async with _transaction(session):
                 job = await self._owned_job(session, job_id, worker_id)
                 if job is None:
-                    existing_query = _sql(
-                        f"SELECT status FROM {table} WHERE id = :id LIMIT 1"
-                    )
+                    existing_query = _sql(f"SELECT status FROM {table} WHERE id = :id LIMIT 1")
                     existing_result = await _maybe_await(
                         session.execute(existing_query, {"id": job_id})
                     )
@@ -1004,10 +1134,15 @@ class MariaDBQueueRepository:
                                     SET status = 'FAILED', finished_at = :now,
                                         error_json = :last_error_json
                                     WHERE id = :id
+                                       OR (
+                                           :crawl_run_id IS NOT NULL
+                                           AND id = :crawl_run_id
+                                       )
                                     """.strip()
                                 ),
                                 {
                                     "id": job_id,
+                                    "crawl_run_id": job.payload.get("crawl_run_id"),
                                     "now": moment,
                                     "last_error_json": json.dumps(
                                         dict(error), sort_keys=True, default=str
@@ -1050,7 +1185,9 @@ class MariaDBQueueRepository:
         )
         async with _session_scope(self.session_factory) as session:
             async with _transaction(session):
-                updated = await _maybe_await(session.execute(statement, {"id": job_id, "now": moment}))
+                updated = await _maybe_await(
+                    session.execute(statement, {"id": job_id, "now": moment})
+                )
                 return _rowcount(updated) == 1
 
     async def cancel(self, job_id: str, *, now: datetime | None = None) -> bool:
@@ -1064,7 +1201,9 @@ class MariaDBQueueRepository:
         )
         async with _session_scope(self.session_factory) as session:
             async with _transaction(session):
-                updated = await _maybe_await(session.execute(statement, {"id": job_id, "now": moment}))
+                updated = await _maybe_await(
+                    session.execute(statement, {"id": job_id, "now": moment})
+                )
                 return _rowcount(updated) == 1
 
     async def release_leases(self, worker_id: str, *, now: datetime | None = None) -> int:
@@ -1079,7 +1218,9 @@ class MariaDBQueueRepository:
         )
         async with _session_scope(self.session_factory) as session:
             async with _transaction(session):
-                updated = await _maybe_await(session.execute(statement, {"worker_id": worker_id, "now": moment}))
+                updated = await _maybe_await(
+                    session.execute(statement, {"worker_id": worker_id, "now": moment})
+                )
                 return _rowcount(updated)
 
     # Common aliases used by shutdown/admin integrations.
