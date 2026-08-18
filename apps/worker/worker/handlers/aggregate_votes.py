@@ -39,7 +39,29 @@ async def handle(
     except (TypeError, ValueError) as exc:
         raise NonRetryableHandlerError(str(exc), code="INVALID_VOTE_PAYLOAD") from exc
     result["article_id"] = payload.get("article_id")
-    result["version"] = int(payload.get("version", 1))
+    # Producers historically called this field ``version`` while the vote
+    # repository calls it ``vote_revision``.  Preserve both names at the
+    # worker boundary so the durable applier can reject stale revisions and
+    # allocate a monotonic snapshot version instead of silently defaulting to
+    # one for every job.
+    raw_revision = payload.get("vote_revision", payload.get("version", 1))
+    if isinstance(raw_revision, bool):
+        raise NonRetryableHandlerError(
+            "vote revision must be a positive integer", code="INVALID_VOTE_PAYLOAD"
+        )
+    try:
+        revision = int(raw_revision)
+    except (TypeError, ValueError) as exc:
+        raise NonRetryableHandlerError(
+            "vote revision must be a positive integer", code="INVALID_VOTE_PAYLOAD"
+        ) from exc
+    if revision < 1 or (isinstance(raw_revision, float) and raw_revision != revision):
+        raise NonRetryableHandlerError(
+            "vote revision must be a positive integer", code="INVALID_VOTE_PAYLOAD"
+        )
+    result["version"] = revision
+    result["vote_revision"] = revision
+    result["source_revision"] = revision
     return HandlerResult(
         value=result,
         side_effect_key=(context.idempotency_key if context else None),

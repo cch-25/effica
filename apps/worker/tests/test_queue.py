@@ -133,3 +133,42 @@ def test_pending_cancel_is_idempotently_retryable():
 def test_backoff_is_bounded_and_increases():
     backoff = ExponentialBackoff(base_seconds=2, max_seconds=10, jitter_ratio=0, random_fn=lambda: 0.5)
     assert [backoff.delay(attempt) for attempt in range(1, 5)] == [2, 4, 8, 10]
+
+
+def test_heartbeat_failure_cancels_handler_and_requeues_job() -> None:
+    async def scenario() -> None:
+        class FailingHeartbeatRepository(MemoryQueueRepository):
+            async def heartbeat(self, *args, **kwargs):
+                raise RuntimeError("database unavailable")
+
+        repository = FailingHeartbeatRepository([Job(id="01HEARTBEAT", job_type="slow")])
+        calls: list[str] = []
+
+        async def slow_handler(payload, context):
+            calls.append("started")
+            await asyncio.sleep(0.05)
+            calls.append("finished")
+            return {"ok": True}
+
+        from apps.worker.worker.handlers.registry import HandlerRegistry
+
+        runtime = WorkerRuntime(
+            repository,
+            registry=HandlerRegistry({"slow": slow_handler}),
+            config=WorkerConfig(
+                worker_id="heartbeat-worker",
+                heartbeat_seconds=0.001,
+                backoff_base_seconds=0,
+                backoff_max_seconds=0,
+                backoff_jitter_ratio=0,
+            ),
+        )
+        assert await runtime.process_one()
+        stored = await repository.get("01HEARTBEAT")
+        assert stored is not None
+        assert stored.status == JobStatus.PENDING
+        assert stored.last_error is not None
+        assert stored.last_error["code"] == "LEASE_HEARTBEAT_FAILED"
+        assert calls == ["started"]
+
+    _run(scenario())

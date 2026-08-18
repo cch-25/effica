@@ -34,6 +34,13 @@ from .services import (
 logger = logging.getLogger(__name__)
 
 
+class HeartbeatError(HandlerError):
+    """Lease renewal failed while a handler was still executing."""
+
+    retryable = True
+    code = "LEASE_HEARTBEAT_FAILED"
+
+
 @dataclass
 class WorkerConfig:
     """Runtime timing and concurrency controls."""
@@ -213,6 +220,7 @@ class WorkerRuntime:
         heartbeat_task = asyncio.create_task(self._heartbeat(job, heartbeat_stop))
         idempotency_key = self._idempotency_key(job)
         owner_token: str | None = None
+        idempotency_completed = False
         context = HandlerContext(
             job_id=job.id,
             job_type=job.job_type,
@@ -222,42 +230,64 @@ class WorkerRuntime:
             services=self.services,
         )
         try:
-            if self.idempotency_store is not None:
-                owner_token, cached = await self.idempotency_store.begin(idempotency_key)
-                if owner_token == "cached":
-                    applied = await self._apply_result(job, cached, context)
-                    await self.repository.complete(job.id, self.worker_id, result=applied)
-                    return
-            handler = self.registry.get(job.job_type)
-            if handler is None:
-                raise HandlerError(
-                    f"no handler registered for {job.job_type}",
-                    code="UNKNOWN_JOB_TYPE",
-                    details={"job_type": job.job_type},
-                    retryable=False,
-                )
-            result = await invoke_handler(handler, job.payload, context)
-            # The durable side effect must commit before the queue transition;
-            # a lost lease can then safely replay an idempotent application.
-            applied = await self._apply_result(job, result, context)
-            if self.idempotency_store is not None and owner_token is not None:
-                await self.idempotency_store.complete(idempotency_key, owner_token, applied)
-            completed = await self.repository.complete(job.id, self.worker_id, result=applied)
-            if not completed:
-                # The lease may have expired between handler completion and the
-                # update.  Durable idempotency still prevents a second side
-                # effect; leave the row for the next worker to reconcile.
-                logger.warning("job lease lost before completion: %s", job.id)
+            async def operation() -> None:
+                nonlocal owner_token, idempotency_completed
+                if self.idempotency_store is not None:
+                    owner_token, cached = await self.idempotency_store.begin(idempotency_key)
+                    if owner_token == "cached":
+                        applied = await self._apply_result(job, cached, context)
+                        completed = await self.repository.complete(
+                            job.id, self.worker_id, result=applied
+                        )
+                        if not completed:
+                            logger.warning("job lease lost before cached completion: %s", job.id)
+                        return
+                handler = self.registry.get(job.job_type)
+                if handler is None:
+                    raise HandlerError(
+                        f"no handler registered for {job.job_type}",
+                        code="UNKNOWN_JOB_TYPE",
+                        details={"job_type": job.job_type},
+                        retryable=False,
+                    )
+                result = await invoke_handler(handler, job.payload, context)
+                # The durable side effect must commit before the queue
+                # transition; a lost lease can then safely replay an
+                # idempotent application.
+                applied = await self._apply_result(job, result, context)
+                if self.idempotency_store is not None and owner_token is not None:
+                    await self.idempotency_store.complete(idempotency_key, owner_token, applied)
+                    idempotency_completed = True
+                completed = await self.repository.complete(job.id, self.worker_id, result=applied)
+                if not completed:
+                    # The lease may have expired between handler completion and
+                    # the update.  Durable idempotency still prevents a
+                    # second side effect; leave the row for reconciliation.
+                    logger.warning("job lease lost before completion: %s", job.id)
+
+            await self._run_with_heartbeat(operation(), heartbeat_task)
         except asyncio.CancelledError:
-            if self.idempotency_store is not None and owner_token not in (None, "cached"):
+            if (
+                self.idempotency_store is not None
+                and owner_token not in (None, "cached")
+                and not idempotency_completed
+            ):
                 await self.idempotency_store.abandon(idempotency_key, owner_token)
             raise
         except HandlerError as exc:
-            if self.idempotency_store is not None and owner_token not in (None, "cached"):
+            if (
+                self.idempotency_store is not None
+                and owner_token not in (None, "cached")
+                and not idempotency_completed
+            ):
                 await self.idempotency_store.abandon(idempotency_key, owner_token)
             await self._fail(job, exc.as_error(), retryable=bool(exc.retryable))
         except ResultApplicationError as exc:
-            if self.idempotency_store is not None and owner_token not in (None, "cached"):
+            if (
+                self.idempotency_store is not None
+                and owner_token not in (None, "cached")
+                and not idempotency_completed
+            ):
                 await self.idempotency_store.abandon(idempotency_key, owner_token)
             await self._fail(
                 job,
@@ -270,7 +300,11 @@ class WorkerRuntime:
                 retryable=True,
             )
         except Exception as exc:  # pragma: no cover - defensive final boundary
-            if self.idempotency_store is not None and owner_token not in (None, "cached"):
+            if (
+                self.idempotency_store is not None
+                and owner_token not in (None, "cached")
+                and not idempotency_completed
+            ):
                 await self.idempotency_store.abandon(idempotency_key, owner_token)
             await self._fail(
                 job,
@@ -285,8 +319,42 @@ class WorkerRuntime:
         finally:
             heartbeat_stop.set()
             heartbeat_task.cancel()
-            with suppress(asyncio.CancelledError):
+            with suppress(asyncio.CancelledError, HandlerError):
                 await heartbeat_task
+
+    async def _run_with_heartbeat(
+        self,
+        operation: Any,
+        heartbeat_task: asyncio.Task[Any],
+    ) -> Any:
+        """Run an operation while observing lease renewal failures.
+
+        A background task's exception is otherwise only logged by asyncio and
+        the handler can continue after losing its lease.  Make the heartbeat
+        a first-class completion boundary and cancel the operation as soon as
+        ownership cannot be established.
+        """
+
+        operation_task = asyncio.create_task(operation)
+        done, _ = await asyncio.wait(
+            {operation_task, heartbeat_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if heartbeat_task in done:
+            heartbeat_error = heartbeat_task.exception()
+            if heartbeat_error is not None:
+                operation_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await operation_task
+                raise heartbeat_error
+        result = await operation_task
+        # A heartbeat can fail in the same event-loop turn that the operation
+        # finishes.  Prefer the lease error so the result is not acknowledged
+        # as a successful execution without ownership.
+        if heartbeat_task.done():
+            heartbeat_error = heartbeat_task.exception()
+            if heartbeat_error is not None:
+                raise heartbeat_error
+        return result
 
     async def _apply_result(
         self,
@@ -317,13 +385,19 @@ class WorkerRuntime:
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=interval)
             except TimeoutError:
-                renewed = await self.repository.heartbeat(
-                    job.id,
-                    self.worker_id,
-                    lease_seconds=self.config.lease_seconds,
-                )
+                try:
+                    renewed = await self.repository.heartbeat(
+                        job.id,
+                        self.worker_id,
+                        lease_seconds=self.config.lease_seconds,
+                    )
+                except Exception as exc:
+                    raise HeartbeatError(
+                        "job lease heartbeat failed",
+                        details={"exception": exc.__class__.__name__},
+                    ) from exc
                 if not renewed:
-                    return
+                    raise HeartbeatError("job lease is no longer owned") from None
 
     def _idempotency_key(self, job: Job) -> str:
         return f"{job.job_type}:{job.dedupe_key or job.id}"
