@@ -102,6 +102,57 @@ def test_retryable_failure_reaches_dead():
     _run(scenario())
 
 
+def test_durable_apply_conflict_is_not_retried():
+    async def scenario():
+        from apps.worker.worker.handlers.registry import HandlerRegistry
+        from apps.worker.worker.services import ResultApplicationError
+
+        assert ResultApplicationError("conflict").retryable is False
+
+        repo = MemoryQueueRepository([Job(id="01SHAREFAIL", job_type="noop", max_attempts=5)])
+
+        class RejectingApplier:
+            async def apply(self, job, result, *, context=None):
+                raise ResultApplicationError("share card could not be updated")
+
+        runtime = WorkerRuntime(
+            repo,
+            registry=HandlerRegistry({"noop": lambda payload, context: {"ok": True}}),
+            result_applier=RejectingApplier(),
+            config=WorkerConfig(worker_id="worker", backoff_base_seconds=0, backoff_max_seconds=0),
+        )
+        assert await runtime.process_one()
+        stored = await repo.get("01SHAREFAIL")
+        assert stored.status == JobStatus.FAILED
+        assert stored.attempts == 1
+
+    _run(scenario())
+
+
+def test_non_retryable_fail_is_terminal_while_attempts_remain():
+    async def scenario():
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+        repo = MemoryQueueRepository(
+            [Job(id="01TERM", job_type="noop", max_attempts=5, available_at=now)],
+            clock=lambda: now,
+        )
+        claimed = await repo.claim("worker", lease_seconds=30, now=now)
+        assert claimed is not None
+        status = await repo.fail(
+            "01TERM",
+            "worker",
+            {"code": "RESULT_APPLICATION_FAILED"},
+            retryable=False,
+            now=now,
+        )
+        stored = await repo.get("01TERM")
+        assert status == JobStatus.FAILED
+        assert stored.status == JobStatus.FAILED
+        assert stored.attempts == 1
+
+    _run(scenario())
+
+
 def test_heartbeat_and_graceful_release():
     async def scenario():
         now = datetime(2026, 1, 1, tzinfo=UTC)

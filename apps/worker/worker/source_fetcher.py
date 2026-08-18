@@ -650,21 +650,45 @@ class SourceFetchService:
                             parsed.port or (443 if parsed.scheme.lower() == "https" else 80),
                         )
 
+                    method = current_settings.method
+                    content = current_settings.content
+                    json_body = current_settings.json_body
+                    headers: Mapping[str, str]
                     if origin(current_url) != origin(redirected_url):
-                        # Do not leak source credentials across an origin
-                        # redirect.  The target is validated independently,
-                        # but a public attacker-controlled host could still
-                        # receive configured Authorization/Cookie headers.
-                        headers: Mapping[str, str] = {
+                        # Do not leak source credentials or request bodies
+                        # across an origin redirect.  301/302/303 become GET;
+                        # 307/308 POST JSON is refused rather than forwarded.
+                        headers = {
                             key: value
                             for key, value in current_settings.headers.items()
-                            if key.lower() not in {"authorization", "cookie", "proxy-authorization"}
+                            if key.lower()
+                            not in {
+                                "authorization",
+                                "cookie",
+                                "proxy-authorization",
+                                "content-type",
+                                "content-length",
+                            }
                         }
+                        content = None
+                        json_body = None
+                        if status in {301, 302, 303}:
+                            method = "GET"
+                        elif method == "POST":
+                            raise SourceFetchError(
+                                "refusing to forward a request body across origins",
+                                code="SOURCE_REDIRECT_CROSS_ORIGIN",
+                                retryable=False,
+                                details={"status_code": status},
+                            )
                     else:
                         headers = current_settings.headers
                     current_settings = replace(
                         current_settings,
                         headers=headers,
+                        method=method,
+                        content=content,
+                        json_body=json_body,
                         # Query parameters were applied to the original URL;
                         # a Location header is authoritative for the next hop.
                         params=None,

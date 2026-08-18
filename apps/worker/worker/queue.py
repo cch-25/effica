@@ -525,6 +525,11 @@ class MemoryQueueRepository:
         now: datetime | None = None,
         backoff_seconds: float = 0.0,
     ) -> JobStatus:
+        """Mark a leased job failed.
+
+        ``retryable=False`` always becomes ``FAILED`` even when attempts remain.
+        Apply conflicts (stale aggregate, missing share row) must use that path.
+        """
         moment = _aware_utc(now or self.clock())
         async with self._lock:
             job = self._jobs.get(job_id)
@@ -1076,6 +1081,11 @@ class MariaDBQueueRepository:
         now: datetime | None = None,
         backoff_seconds: float = 0.0,
     ) -> JobStatus:
+        """Mark a leased job failed.
+
+        ``retryable=False`` always becomes ``FAILED`` even when attempts remain.
+        Apply conflicts (stale aggregate, missing share row) must use that path.
+        """
         moment = _aware_utc(now or self.clock())
         table = self.table_name
         async with _session_scope(self.session_factory) as session:
@@ -1133,11 +1143,14 @@ class MariaDBQueueRepository:
                                     UPDATE crawl_runs
                                     SET status = 'FAILED', finished_at = :now,
                                         error_json = :last_error_json
-                                    WHERE id = :id
-                                       OR (
-                                           :crawl_run_id IS NOT NULL
-                                           AND id = :crawl_run_id
-                                       )
+                                    WHERE status IN ('PENDING', 'RUNNING')
+                                      AND (
+                                        id = :id
+                                        OR (
+                                            :crawl_run_id IS NOT NULL
+                                            AND id = :crawl_run_id
+                                        )
+                                      )
                                     """.strip()
                                 ),
                                 {

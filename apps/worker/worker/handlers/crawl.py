@@ -95,8 +95,6 @@ async def handle(payload: Mapping[str, Any], context: HandlerContext | None = No
     url = canonical_url(str(source["url"]))
     source["url"] = url
     source_id = source.get("source_id")
-    mode_value = source.get("mode", "fixture")
-    mode = "fixture" if mode_value in (None, "") else str(mode_value).lower()
     # Validate adapter retention settings before a live request starts.  This
     # avoids fetching data that cannot be durably represented by the worker.
     _retention_days(source)
@@ -136,9 +134,13 @@ async def handle(payload: Mapping[str, Any], context: HandlerContext | None = No
         )
 
     fetcher = _source_fetcher(context, source_id)
+    mode = _resolved_crawl_mode(source, fetcher_present=fetcher is not None)
+    source["mode"] = mode
     # No injected service means the old deterministic fetch plan remains the
-    # result.  In particular, a direct URL in the default fixture mode never
-    # causes a public-network request.
+    # result.  In particular, a direct URL without a fetcher never causes a
+    # public-network request.  A present fetcher with no explicit fixture
+    # mode is live, including identifier-only jobs whose source lookup omits
+    # ``mode``.
     if fetcher is None or mode == "fixture":
         return HandlerResult(
             value={
@@ -217,6 +219,20 @@ def _crawler_guard(source_type: str, source: Mapping[str, Any]) -> CrawlerPolicy
     if source_type != "CRAWLER":
         return None
     return CrawlerPolicyGuard.from_source(source)
+
+
+def _resolved_crawl_mode(source: Mapping[str, Any], *, fetcher_present: bool) -> str:
+    """Return fixture only when explicitly requested or no fetcher exists.
+
+    Identifier-only producers look up a source row that has no ``mode``.
+    Treating that omission as fixture would succeed an empty crawl even
+    when a live ``source_fetcher`` is injected.
+    """
+
+    raw = source.get("mode", _MISSING)
+    if raw is not _MISSING and raw not in (None, ""):
+        return str(raw).lower()
+    return "live" if fetcher_present else "fixture"
 
 
 def _fixture_from(source: Mapping[str, Any]) -> Any:
@@ -501,7 +517,7 @@ def _ingestion_result(
         "source_id": source_id,
         "url": url,
         "fetch_key": stable_digest({"source_id": source_id, "url": url}),
-        "mode": str(source.get("mode", "fixture")).lower(),
+        "mode": str(source.get("mode") or "fixture").lower(),
         "articles": articles,
         "stats": stats,
         "fetched_at": fetched_at,

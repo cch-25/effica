@@ -26,10 +26,12 @@ async def handle(
         )
         if isinstance(loaded, Mapping):
             loaded = list(loaded.values())
-        articles = loaded or [
-            {"article_id": str(article_id), "title": str(payload.get("topic", "Untitled issue"))}
-            for article_id in ids
-        ]
+        if not isinstance(loaded, (list, tuple)) or not loaded:
+            raise NonRetryableHandlerError(
+                "cluster payload requires a non-empty article list",
+                code="INVALID_CLUSTER_PAYLOAD",
+            )
+        articles = loaded
     if not isinstance(articles, (list, tuple)) or not articles:
         raise NonRetryableHandlerError(
             "cluster payload requires a non-empty article list",

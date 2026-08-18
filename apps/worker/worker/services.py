@@ -26,13 +26,26 @@ from .handlers.base import HandlerContext, HandlerResult
 from .queue import Job
 
 try:
+    from apps.api.app.jobs.payloads import JobPayloadError, validate_job_payload
     from apps.api.app.jobs.types import generate_job_id, utc_now
 except ImportError:  # pragma: no cover - supports PYTHONPATH=apps/worker.
+    from api.app.jobs.payloads import JobPayloadError, validate_job_payload  # type: ignore
     from api.app.jobs.types import generate_job_id, utc_now  # type: ignore
 
 
 class ResultApplicationError(RuntimeError):
-    """Raised when a handler result cannot be durably applied."""
+    """Raised when a handler result cannot be durably applied.
+
+    Explicit apply conflicts (stale revision, missing share row) are not
+    retryable.  Unexpected infrastructure failures may set ``retryable=True``.
+    """
+
+    retryable = False
+
+    def __init__(self, message: str, *, retryable: bool | None = None) -> None:
+        super().__init__(message)
+        if retryable is not None:
+            self.retryable = bool(retryable)
 
 
 class ResultApplier(Protocol):
@@ -458,6 +471,74 @@ class MariaDBResultApplier:
     async def _execute(self, session: Any, statement: str, params: Mapping[str, Any]) -> Any:
         return await _maybe_await(session.execute(_sql(statement.strip()), dict(params)))
 
+    async def _enqueue_job(
+        self,
+        session: Any,
+        job_type: str,
+        payload: Mapping[str, Any],
+        *,
+        dedupe_key: str,
+        now: datetime,
+        priority: int = 0,
+        max_attempts: int = 3,
+    ) -> str:
+        """Insert one validated downstream job in the result transaction.
+
+        A result application and the jobs it unlocks must commit together.  In
+        particular, opening a second session here would allow a downstream
+        job to run against a parent projection that later rolls back.  The
+        unique ``(job_type, dedupe_key)`` constraint makes this safe when a
+        lease expires and the parent result is replayed.
+        """
+
+        if not dedupe_key:
+            raise ResultApplicationError("downstream job dedupe key must not be empty")
+        try:
+            validated = validate_job_payload(job_type, payload)
+        except JobPayloadError as exc:
+            raise ResultApplicationError(
+                f"invalid downstream {job_type} payload: {exc}"
+            ) from exc
+        job_id = _stable_id(f"job:{job_type}:{dedupe_key}")
+        await self._execute(
+            session,
+            """
+            INSERT INTO jobs
+              (id, job_type, dedupe_key, status, priority, available_at,
+               lease_owner, lease_expires_at, attempts, max_attempts,
+               payload_json, last_error_json, created_at, updated_at)
+            VALUES
+              (:id, :job_type, :dedupe_key, 'PENDING', :priority, :available_at,
+               NULL, NULL, 0, :max_attempts, :payload_json, NULL,
+               :created_at, :updated_at)
+            ON DUPLICATE KEY UPDATE id = id
+            """,
+            {
+                "id": job_id,
+                "job_type": str(job_type),
+                "dedupe_key": dedupe_key,
+                "priority": int(priority),
+                "available_at": now,
+                "max_attempts": int(max_attempts),
+                "payload_json": _json(validated),
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        return job_id
+
+    @staticmethod
+    def _article_set_dedupe(article_ids: list[str], threshold: Any = None) -> str:
+        canonical_ids = sorted({str(article_id) for article_id in article_ids if str(article_id)})
+        digest = hashlib.sha256(
+            _json({"article_ids": canonical_ids, "threshold": threshold}).encode("utf-8")
+        ).hexdigest()
+        return f"article-set:{digest}"
+
+    @staticmethod
+    def _request_id(job: Job, result: Mapping[str, Any]) -> Any:
+        return result.get("request_id") or job.payload.get("request_id")
+
     async def _store_blob(
         self,
         session: Any,
@@ -523,6 +604,8 @@ class MariaDBResultApplier:
         articles = result.get("articles") or job.payload.get("articles") or []
         if not isinstance(articles, (list, tuple)):
             return
+        persisted_article_ids: list[str] = []
+        analyzable_version_ids: list[str] = []
         for article in articles:
             if not isinstance(article, Mapping):
                 continue
@@ -563,6 +646,7 @@ class MariaDBResultApplier:
             article_rows = _rows(existing_article)
             if article_rows:
                 article_id = str(_row(article_rows[0], "id", article_id))
+            persisted_article_ids.append(article_id)
             content = article.get("content") or article.get("text")
             if (
                 content is None
@@ -632,6 +716,46 @@ class MariaDBResultApplier:
                 session,
                 "UPDATE articles SET current_version_id = :version_id, updated_at = :now WHERE id = :article_id",
                 {"version_id": version_id, "article_id": article_id, "now": now},
+            )
+
+            # An identifier-only analysis job is valid, but it can only be
+            # useful when a normalized article body was persisted.  Raw-only
+            # adapter payloads remain available for retention/export without
+            # creating a guaranteed-to-fail analysis job.
+            if normalized_ref is not None and str(content or "").strip():
+                analyzable_version_ids.append(version_id)
+
+        request_id = self._request_id(job, result)
+        for version_id in sorted(set(analyzable_version_ids)):
+            analyze_payload: dict[str, Any] = {"article_version_id": version_id}
+            if request_id is not None:
+                analyze_payload["request_id"] = request_id
+            await self._enqueue_job(
+                session,
+                "analyze",
+                analyze_payload,
+                dedupe_key=f"article-version:{version_id}",
+                now=now,
+            )
+
+        # Clustering consumes article identifiers and resolves their current
+        # bodies through the worker lookup service.  One job covers a crawl
+        # batch, preserving cross-article similarity instead of clustering
+        # each article in isolation.
+        cluster_ids = sorted(set(persisted_article_ids))
+        if cluster_ids:
+            cluster_payload: dict[str, Any] = {"article_ids": cluster_ids}
+            threshold = job.payload.get("threshold", result.get("threshold"))
+            if threshold is not None:
+                cluster_payload["threshold"] = threshold
+            if request_id is not None:
+                cluster_payload["request_id"] = request_id
+            await self._enqueue_job(
+                session,
+                "cluster",
+                cluster_payload,
+                dedupe_key=self._article_set_dedupe(cluster_ids, threshold),
+                now=now,
             )
 
     async def _apply_cluster(self, session: Any, job: Job, result: Mapping[str, Any], now: datetime) -> None:
@@ -882,6 +1006,67 @@ class MariaDBResultApplier:
                 },
             )
 
+        request_id = self._request_id(job, result)
+        score_payload: dict[str, Any] = {"article_version_id": version_id}
+        for key in ("weight_revision_id", "weight_id", "fact_check"):
+            value = result.get(key, job.payload.get(key))
+            if value is not None:
+                score_payload[key] = value
+        if request_id is not None:
+            score_payload["request_id"] = request_id
+        weight_id = score_payload.get("weight_revision_id") or score_payload.get("weight_id")
+        score_dedupe = f"article-version:{version_id}"
+        if weight_id is not None:
+            score_dedupe = f"{score_dedupe}:weight:{weight_id}"
+        await self._enqueue_job(
+            session,
+            "calculate_score",
+            score_payload,
+            dedupe_key=score_dedupe,
+            now=now,
+        )
+
+        # Analysis results from the built-in handler identify the article
+        # version, while integrations may include the article directly.  Use
+        # the direct value when present and fall back to the durable FK lookup
+        # so the cluster payload always satisfies its transport contract.
+        article_ids: list[str] = []
+        direct_ids = result.get("article_ids") or job.payload.get("article_ids")
+        if isinstance(direct_ids, (list, tuple, set)):
+            article_ids.extend(str(item) for item in direct_ids if str(item))
+        for candidate in (
+            result.get("article_id"),
+            job.payload.get("article_id"),
+        ):
+            if candidate:
+                article_ids.append(str(candidate))
+        if not article_ids:
+            article_result = await self._execute(
+                session,
+                "SELECT article_id FROM article_versions WHERE id = :version_id LIMIT 1",
+                {"version_id": version_id},
+            )
+            article_rows = _rows(article_result)
+            if article_rows:
+                article_id = _row(article_rows[0], "article_id")
+                if article_id:
+                    article_ids.append(str(article_id))
+        cluster_ids = sorted(set(article_ids))
+        if cluster_ids:
+            cluster_payload: dict[str, Any] = {"article_ids": cluster_ids}
+            threshold = job.payload.get("threshold", result.get("threshold"))
+            if threshold is not None:
+                cluster_payload["threshold"] = threshold
+            if request_id is not None:
+                cluster_payload["request_id"] = request_id
+            await self._enqueue_job(
+                session,
+                "cluster",
+                cluster_payload,
+                dedupe_key=self._article_set_dedupe(cluster_ids, threshold),
+                now=now,
+            )
+
     async def _apply_aggregate(self, session: Any, job: Job, result: Mapping[str, Any], now: datetime) -> None:
         article_id = str(result.get("article_id") or job.payload.get("article_id") or "")
         if not article_id:
@@ -1029,11 +1214,13 @@ class MariaDBResultApplier:
             blob_id = await self._store_blob(session, png, mime_type=str(result.get("mime_type", "image/png")), expires_at=job.payload.get("expires_at"))
         if not blob_id:
             raise ResultApplicationError("share result requires blob_id or png_base64")
-        await self._execute(
+        updated = await self._execute(
             session,
             "UPDATE share_cards SET status = 'ready', blob_id = :blob_id WHERE id = :id AND status IN ('queued', 'rendering', 'ready')",
             {"id": card_id, "blob_id": str(blob_id)},
         )
+        if _rowcount(updated) != 1:
+            raise ResultApplicationError("share card could not be updated")
 
     async def _apply_export(self, session: Any, job: Job, result: Mapping[str, Any], now: datetime) -> None:
         user_id = str(result.get("user_id") or job.payload.get("user_id") or "")

@@ -227,3 +227,103 @@ def test_mariadb_applier_allocates_revisioned_snapshots_and_canonical_alias_ids(
         assert session.assessment_alias_ids[0] == session.assessment_alias_ids[1]
 
     asyncio.run(scenario())
+
+
+def test_share_card_apply_requires_updated_row() -> None:
+    from datetime import UTC, datetime
+
+    class Result:
+        def __init__(self, rowcount: int) -> None:
+            self.rowcount = rowcount
+
+    class Session:
+        def __init__(self, rowcount: int) -> None:
+            self.rowcount = rowcount
+
+        async def execute(self, statement, params):
+            return Result(self.rowcount)
+
+    async def scenario() -> None:
+        applier = MariaDBResultApplier(lambda: None)
+        job = Job(
+            id="01SHARE",
+            job_type="render_share_card",
+            payload={"share_card_id": "card-1"},
+        )
+        result = {"share_card_id": "card-1", "blob_id": "blob-1"}
+        now = datetime.now(UTC)
+        await applier._apply_share_card(Session(1), job, result, now)
+        try:
+            await applier._apply_share_card(Session(0), job, result, now)
+        except ResultApplicationError:
+            return
+        raise AssertionError("share card apply succeeded without updating a row")
+
+    asyncio.run(scenario())
+
+
+def test_analysis_result_enqueues_validated_score_and_cluster_jobs_once() -> None:
+    class Transaction:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    class Session:
+        def __init__(self) -> None:
+            self.jobs: dict[tuple[str, str], dict[str, Any]] = {}
+            self.statements: list[tuple[str, dict[str, Any]]] = []
+            self.audit: dict[str, Any] | None = None
+
+        def begin(self):
+            return Transaction()
+
+        async def close(self):
+            return None
+
+        async def execute(self, statement, params=None):
+            query = str(statement)
+            values = dict(params or {})
+            self.statements.append((query, values))
+            lowered = query.lower()
+            if "select after_json" in lowered:
+                return [] if self.audit is None else [{"after_json": self.audit}]
+            if "select id from model_aliases" in lowered:
+                return [{"id": "alias-1"}]
+            if "select article_id from article_versions" in lowered:
+                return [{"article_id": "article-1"}]
+            if "insert into jobs" in lowered:
+                key = (str(values["job_type"]), str(values["dedupe_key"]))
+                self.jobs.setdefault(key, {**values, "status": "PENDING"})
+            if "insert into audit_logs" in lowered and "job_result_applied" in lowered:
+                self.audit = values["after_json"]
+            return []
+
+    async def scenario() -> None:
+        session = Session()
+        applier = MariaDBResultApplier(lambda: session)
+        job = Job(
+            id="01ANALYZE",
+            job_type="analyze",
+            payload={"article_version_id": "version-1", "request_id": "request-1"},
+        )
+        result = {
+            "article_version_id": "version-1",
+            "assessments": [{"model_alias": "shared", "x": 1}],
+        }
+        await applier.apply(job, result)
+        await applier.apply(job, result)
+
+        downstream = {
+            key: value for key, value in session.jobs.items() if key[0] in {"calculate_score", "cluster"}
+        }
+        assert {key[0] for key in downstream} == {"calculate_score", "cluster"}
+        assert all(value["status"] == "PENDING" for value in downstream.values())
+        assert all(value["payload_json"] for value in downstream.values())
+        assert len(session.jobs) == 2
+        job_inserts = [query for query, _ in session.statements if "INSERT INTO jobs" in query]
+        assert job_inserts
+        assert all("ON DUPLICATE KEY UPDATE" in query for query in job_inserts)
+
+    asyncio.run(scenario())

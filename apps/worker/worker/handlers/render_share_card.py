@@ -53,9 +53,19 @@ def _assert_public(value: Any, path: str = "payload") -> None:
 def _render_png(public: Mapping[str, Any]) -> bytes:
     snapshot = public["snapshot"]
     coordinate = snapshot.get("coordinate", snapshot)
-    x = max(-100.0, min(100.0, float(coordinate.get("x", 0))))
-    y = max(-100.0, min(100.0, float(coordinate.get("y", 0))))
-    z = max(-100.0, min(100.0, float(coordinate.get("z", 0))))
+    if not isinstance(coordinate, Mapping):
+        coordinate = snapshot
+    x = max(-100.0, min(100.0, float(coordinate.get("x", snapshot.get("x", 0)))))
+    raw_sensationalism = (
+        coordinate["sensationalism"]
+        if "sensationalism" in coordinate
+        else snapshot.get("sensationalism")
+    )
+    sensationalism = (
+        None
+        if raw_sensationalism is None
+        else max(0.0, min(100.0, float(raw_sensationalism)))
+    )
     image = Image.new("RGB", (1200, 630), "#F4F0E8")
     draw = ImageDraw.Draw(image)
     font = ImageFont.load_default(size=32)
@@ -69,12 +79,25 @@ def _render_png(public: Mapping[str, Any]) -> bytes:
     draw.line((left + size / 2, top, left + size / 2, top + size), fill="#B7C5C0", width=2)
     draw.line((left, top + size / 2, left + size, top + size / 2), fill="#B7C5C0", width=2)
     px = left + (x + 100) / 200 * size
-    py = top + (100 - y) / 200 * size
-    draw.ellipse((px - 12, py - 12, px + 12, py + 12), fill="#D8664A", outline="#7A2D1B", width=3)
-    draw.text((480, 240), f"Economic X  {x:+.0f}", fill="#17352E", font=small)
-    draw.text((480, 295), f"Social Y       {y:+.0f}", fill="#17352E", font=small)
-    draw.text((480, 350), f"National Z    {z:+.0f}", fill="#17352E", font=small)
-    draw.text((480, 425), f"Tier  {snapshot.get('tier', 'Explorer')}", fill="#48655D", font=small)
+    if sensationalism is not None:
+        py = top + (100 - sensationalism) / 100 * size
+        draw.ellipse(
+            (px - 12, py - 12, px + 12, py + 12),
+            fill="#D8664A",
+            outline="#7A2D1B",
+            width=3,
+        )
+    draw.text((480, 240), f"편향성           {x:+.0f}", fill="#17352E", font=small)
+    sensationalism_label = (
+        "측정 안 됨" if sensationalism is None else f"{sensationalism:.0f}"
+    )
+    draw.text(
+        (480, 295),
+        f"과장성           {sensationalism_label}",
+        fill="#17352E",
+        font=small,
+    )
+    draw.text((480, 350), f"Tier  {snapshot.get('tier', 'Explorer')}", fill="#48655D", font=small)
     credit_total = snapshot.get("credit_total", snapshot.get("activity", 0))
     draw.text((480, 470), f"Activity credits  {int(credit_total)}", fill="#48655D", font=small)
     draw.text((90, 555), "Response-based coordinates are observations, not identity or truth labels.", fill="#60736D", font=small)
