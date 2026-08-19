@@ -1,9 +1,12 @@
 .next/
 .next-real/
+.next-playwright-*/
 node_modules/
 playwright-report/
 test-results/
 tests/
+tmp/
+.env*
 *.tsbuildinfo
 playwright.config.ts
 playwright.real.config.ts
