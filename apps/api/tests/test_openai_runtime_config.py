@@ -34,3 +34,38 @@ def test_live_runtime_rejects_missing_key_and_non_openai_configuration() -> None
         )
     with pytest.raises(ValidationError):
         Settings(_env_file=None, openai_api_key="test-key", llm_model="solar-pro")
+
+
+def test_production_requires_canonical_google_oauth_configuration() -> None:
+    base = {
+        "_env_file": None,
+        "app_env": "production",
+        "app_backend": "mariadb",
+        "database_url": "mysql+asyncmy://effica:secret@127.0.0.1:3306/effica",
+        "session_secret": "production-session-secret-that-is-long-enough",
+        "public_base_url": "https://effica.vercel.app",
+        "web_base_url": "https://effica.vercel.app",
+        "oauth_redirect_allowlist": "https://effica.vercel.app/api/v1/auth/google/callback",
+    }
+    with pytest.raises(RuntimeError, match="Google OAuth"):
+        Settings(**base).assert_safe_runtime()
+
+    configured = Settings(
+        **base,
+        google_client_id="client.apps.googleusercontent.com",
+        google_client_secret="client-secret",
+    )
+    configured.assert_safe_runtime()
+
+    with pytest.raises(RuntimeError, match="canonical Google callback"):
+        Settings(
+            **{
+                **base,
+                "oauth_redirect_allowlist": (
+                    "https://effica.vercel.app/api/v1/auth/google/callback,"
+                    "https://effica.vercel.app/api/v1/auth/mock/callback"
+                ),
+            },
+            google_client_id="client.apps.googleusercontent.com",
+            google_client_secret="client-secret",
+        ).assert_safe_runtime()
