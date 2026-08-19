@@ -31,7 +31,7 @@ def test_all_builtin_handlers_are_registered():
 def test_builtin_handlers_return_deterministic_values():
     async def scenario():
         registry = build_default_registry()
-        analyze = registry.require("analyze")
+        analyze = registry.require_async("analyze")
         first = await analyze({"text": "official evidence and data"})
         second = await analyze({"text": "official evidence and data"})
         assert first.value == second.value
@@ -39,11 +39,11 @@ def test_builtin_handlers_return_deterministic_values():
         assert first.value["ensemble"]["y"] == 0
         assert first.value["ensemble"]["z"] == 0
 
-        crawl = registry.require("crawl")
+        crawl = registry.require_async("crawl")
         result = await crawl({"url": "HTTPS://Example.COM/article?b=2&a=1#fragment"})
         assert result.value["url"] == "https://example.com/article?a=1&b=2"
 
-        simulate = registry.require("simulate_weights")
+        simulate = registry.require_async("simulate_weights")
         simulation = await simulate(
             {
                 "base_weights": {"model": 1.0},
@@ -72,7 +72,7 @@ def test_analysis_uses_one_dynamically_configured_openai_model():
         async def factory():
             return provider
 
-        analyze = build_default_registry().require("analyze")
+        analyze = build_default_registry().require_async("analyze")
         result = await analyze(
             {"text": "official evidence and data", "min_success_models": 3},
             HandlerContext(services={"analysis_provider_factory": factory}),
@@ -127,7 +127,7 @@ def test_render_share_card_marks_unmeasured_sensationalism_without_a_point(monke
 
 def test_aggregate_handler_preserves_vote_revision_contract() -> None:
     async def scenario():
-        aggregate = build_default_registry().require("aggregate_votes")
+        aggregate = build_default_registry().require_async("aggregate_votes")
         result = await aggregate(
             {"article_id": "article-1", "vote_revision": 7, "votes": []}
         )
@@ -140,7 +140,7 @@ def test_aggregate_handler_preserves_vote_revision_contract() -> None:
 
 def test_recommend_weights_uses_domain_base_and_ignores_snapshot_metadata() -> None:
     async def scenario() -> None:
-        recommend = build_default_registry().require("recommend_weights")
+        recommend = build_default_registry().require_async("recommend_weights")
         context = HandlerContext(
             services={
                 "weights_lookup": {
@@ -184,7 +184,7 @@ def test_recommend_weights_uses_domain_base_and_ignores_snapshot_metadata() -> N
 
 def test_simulate_weights_compares_base_revision_to_proposed() -> None:
     async def scenario() -> None:
-        simulate = build_default_registry().require("simulate_weights")
+        simulate = build_default_registry().require_async("simulate_weights")
         same = await simulate(
             {
                 "base_weights": {"model": 0.5, "crowd": 0.5},
@@ -216,7 +216,7 @@ def test_simulate_weights_compares_base_revision_to_proposed() -> None:
 
 def test_cluster_empty_lookup_is_non_retryable() -> None:
     async def scenario() -> None:
-        cluster = build_default_registry().require("cluster")
+        cluster = build_default_registry().require_async("cluster")
         with pytest.raises(NonRetryableHandlerError) as raised:
             await cluster(
                 {
@@ -236,7 +236,7 @@ def test_cluster_empty_lookup_is_non_retryable() -> None:
 
 def test_aggregate_votes_uses_max_lookup_revision_when_payload_omits_version() -> None:
     async def scenario() -> None:
-        aggregate = build_default_registry().require("aggregate_votes")
+        aggregate = build_default_registry().require_async("aggregate_votes")
         votes = [
             {
                 "vote_id": "v1",
@@ -282,7 +282,7 @@ def test_aggregate_votes_uses_max_lookup_revision_when_payload_omits_version() -
 
 def test_crawl_identifier_only_is_live_when_fetcher_exists_and_lookup_omits_mode() -> None:
     async def scenario() -> None:
-        crawl = build_default_registry().require("crawl")
+        crawl = build_default_registry().require_async("crawl")
         fetched: list[str] = []
 
         async def source_lookup(identifier):

@@ -13,7 +13,7 @@ import inspect
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 
 @dataclass
@@ -89,6 +89,16 @@ class NonRetryableHandlerError(HandlerError):
 
 
 HandlerCallable = Callable[[Mapping[str, Any], HandlerContext], HandlerResult | Mapping[str, Any] | Any | Awaitable[Any]]
+
+
+class AsyncHandlerCallable(Protocol):
+    """The concrete contract implemented by every built-in handler."""
+
+    def __call__(
+        self,
+        payload: Mapping[str, Any],
+        context: HandlerContext | None = None,
+    ) -> Awaitable[HandlerResult]: ...
 
 
 async def lookup_service(

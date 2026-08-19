@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Mapping
+from typing import cast
 
-from .base import HandlerCallable, HandlerError
+from .base import AsyncHandlerCallable, HandlerCallable, HandlerError
 
 
 class HandlerRegistry:
@@ -41,6 +43,19 @@ class HandlerRegistry:
                 retryable=False,
             )
         return handler
+
+    def require_async(self, job_type: str) -> AsyncHandlerCallable:
+        """Return a built-in async handler with its precise awaitable type."""
+
+        handler = self.require(job_type)
+        if not inspect.iscoroutinefunction(handler):
+            raise HandlerError(
+                f"handler is not async: {job_type}",
+                code="HANDLER_NOT_ASYNC",
+                details={"job_type": str(job_type)},
+                retryable=False,
+            )
+        return cast(AsyncHandlerCallable, handler)
 
     def names(self) -> tuple[str, ...]:
         return tuple(sorted(self._handlers))
