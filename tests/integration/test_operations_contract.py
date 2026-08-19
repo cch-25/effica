@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS = ROOT / ".agents" / "scripts"
 
 
 def test_deploy_manifest_is_runtime_only_and_complete() -> None:
@@ -34,7 +35,7 @@ def test_deploy_manifest_is_runtime_only_and_complete() -> None:
 
 
 def test_deploy_preflight_precedes_remote_mutations_and_release_is_atomic() -> None:
-    source = (ROOT / "deploy.sh").read_text(encoding="utf-8")
+    source = (SCRIPTS / "deploy.sh").read_text(encoding="utf-8")
 
     preflight = source.index("preflight\n")
     remote_stage_mutation = source.index('"${SSH[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "rm -rf')
@@ -54,7 +55,7 @@ def test_deploy_preflight_precedes_remote_mutations_and_release_is_atomic() -> N
 
 
 def test_deploy_dirty_override_is_an_exact_approved_patch() -> None:
-    source = (ROOT / "deploy.sh").read_text(encoding="utf-8")
+    source = (SCRIPTS / "deploy.sh").read_text(encoding="utf-8")
 
     assert "DEPLOY_ALLOW_DIRTY" not in source
     assert "DEPLOY_APPROVED_DIFF" in source
@@ -64,7 +65,7 @@ def test_deploy_dirty_override_is_an_exact_approved_patch() -> None:
 
 
 def test_deploy_stops_live_services_dumps_before_migration_and_restores_on_failure() -> None:
-    source = (ROOT / "deploy.sh").read_text(encoding="utf-8")
+    source = (SCRIPTS / "deploy.sh").read_text(encoding="utf-8")
 
     stop = source.index("\nstop_live_services\n")
     backup = source.index("\ncreate_database_backup\n", stop)
@@ -79,29 +80,20 @@ def test_deploy_stops_live_services_dumps_before_migration_and_restores_on_failu
 
 
 def test_preflight_and_verify_include_headless_mock_a11y_and_real_flows() -> None:
-    deploy = (ROOT / "deploy.sh").read_text(encoding="utf-8")
-    run = (ROOT / "run.sh").read_text(encoding="utf-8")
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    deploy = (SCRIPTS / "deploy.sh").read_text(encoding="utf-8")
+    run = (SCRIPTS / "run.sh").read_text(encoding="utf-8")
 
     for source in (deploy, run):
         assert "npm run test:e2e" in source
         assert "npm run test:a11y" in source
         assert "npm run test:e2e:real" in source
-    assert "npm run test:e2e --prefix apps/web" in workflow
-    assert "npm run test:a11y --prefix apps/web" in workflow
-    assert "npm run test:e2e:real --prefix apps/web" in workflow
 
 
-def test_ci_exercises_mariadb_concurrency_workers_real_e2e_and_audits() -> None:
-    source = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+def test_operations_have_only_agent_script_entrypoints_and_no_github_workflows() -> None:
+    assert (SCRIPTS / "deploy.sh").is_file()
+    assert (SCRIPTS / "run.sh").is_file()
+    assert not (ROOT / "deploy.sh").exists()
+    assert not (ROOT / "run.sh").exists()
 
-    assert "image: mariadb:11.8" in source
-    assert "uv run alembic -c db/alembic.ini upgrade head" in source
-    assert "CI_MARIADB_URL" in source
-    assert "CI_WORKER_PROCESSES: \"2\"" in source
-    assert "two independent worker processes" in source
-    assert "pytest tests/integration/test_mariadb_runtime.py -q" in source
-    assert "ProcessPoolExecutor propagates any worker failure" in source
-    assert "npm run test:e2e:real --prefix apps/web" in source
-    assert "pip-audit" in source
-    assert "npm audit --prefix apps/web" in source
+    workflows = ROOT / ".github" / "workflows"
+    assert not workflows.exists() or not any(workflows.glob("*.y*ml"))

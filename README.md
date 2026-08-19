@@ -1,4 +1,4 @@
-# Perspective News Platform
+# EFFICA
 
 FastAPI, Next.js, MariaDB, and the MariaDB-backed worker compose the application.
 
@@ -14,6 +14,14 @@ FastAPI, Next.js, MariaDB, and the MariaDB-backed worker compose the application
 - `DB_TUNNEL_PORT` may be set if the default local forwarding port `13306` is occupied.
 
 Copy `.env.example` to `.env` and fill every required value.
+
+Google is the only user-facing sign-in provider. Local production-like runs
+must configure `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`; mock OAuth exists
+only behind `APP_ENV=test` and is never returned by `/api/v1/auth/providers`.
+The only supported runtime entrypoint is
+`./.agents/scripts/run.sh`. Use `./.agents/scripts/run.sh start` for the
+MariaDB-backed local stack and `./.agents/scripts/run.sh verify` for the
+complete quality gate. There is intentionally no root-level `run.sh`.
 
 `LLM_PROVIDER_MODE=stub` keeps an offline deterministic single-model flow for
 tests. Auto mode is the default: it enables live analysis when `OPENAI_API_KEY`
@@ -32,6 +40,14 @@ EC2 nginx exposes only `/api/*` and `/health/*` over TLS. Next.js runs only on
 Vercel. The browser talks to Vercel over HTTPS; Vercel's same-origin `/api/v1/*`
 rewrite talks to the EC2 nginx API origin, so browser CORS configuration is not
 required.
+
+The canonical production origin is `https://effica.vercel.app`. The only
+supported deployment entrypoint is `./.agents/scripts/deploy.sh`; it executes
+the locked preflight, database backup, atomic EC2 release, Vercel deployment,
+and post-deploy health checks. There is intentionally no root-level
+`deploy.sh` and no GitHub Actions deployment or CI workflow. Production
+startup fails closed unless MariaDB, HTTPS origins, the exact Google callback
+URL, and Google OAuth credentials are configured.
 
 `npm run dev` remains available for local development, while the package
 intentionally has no `next start` script. Do not ship Next.js from EC2.
