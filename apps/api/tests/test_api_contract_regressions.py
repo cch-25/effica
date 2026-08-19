@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from apps.api.app.api.v1.dependencies import get_state
 from apps.api.app.api.v1.schemas import JobAccepted, QuestionnaireSubmission, UserView
+from apps.api.app.core.config import Settings, get_settings
 from apps.api.app.db.base import Base
 from apps.api.app.db.enums import (
     ArticleStatus,
@@ -33,9 +34,17 @@ from apps.api.app.state import PlatformState
 def test_oauth_nonce_return_path_and_provider_contract() -> None:
     state = PlatformState()
     app.dependency_overrides[get_state] = lambda: state
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        _env_file=None,
+        app_env="test",
+        app_backend="memory",
+        oauth_redirect_allowlist="http://localhost:3000/auth/callback",
+        google_client_id="test-google-client",
+        google_client_secret="test-google-secret",
+    )
     try:
         with TestClient(app) as client:
-            assert client.get("/api/v1/auth/providers").json() == ["mock"]
+            assert client.get("/api/v1/auth/providers").json() == ["google"]
             start = client.get(
                 "/api/v1/auth/mock/start",
                 params={
@@ -52,7 +61,7 @@ def test_oauth_nonce_return_path_and_provider_contract() -> None:
             with TestClient(app) as fresh_client:
                 missing_nonce = fresh_client.get(
                     "/api/v1/auth/mock/callback",
-                    params={"state": state_cookie},
+                    params={"state": state_cookie, "code": "missing-nonce"},
                     headers={"X-OAuth-State": state_cookie, "Cookie": f"oauth_state={state_cookie}"},
                     follow_redirects=False,
                 )
@@ -72,7 +81,7 @@ def test_oauth_nonce_return_path_and_provider_contract() -> None:
             nonce_cookie = start.cookies["oauth_nonce"]
             callback = client.get(
                 "/api/v1/auth/mock/callback",
-                params={"state": state_cookie},
+                params={"state": state_cookie, "code": "mock-valid-code"},
                 headers={"X-OAuth-State": state_cookie},
                 cookies={"oauth_state": state_cookie, "oauth_nonce": nonce_cookie},
                 follow_redirects=False,

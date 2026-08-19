@@ -582,7 +582,7 @@ export interface paths {
         };
         /**
          * Auth Providers
-         * @description Return only providers that can complete a server-side OAuth flow.
+         * @description Expose the application's single production identity provider.
          */
         get: operations["list_auth_providers"];
         put?: never;
@@ -6806,7 +6806,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": ("kakao" | "naver" | "google" | "mock")[];
+                    "application/json": "google"[];
                 };
             };
             /** @description Stable domain validation error */
@@ -6906,14 +6906,15 @@ export interface operations {
         parameters: {
             query: {
                 state: string;
-                code?: string;
+                code?: string | null;
+                error?: string | null;
                 redirect_uri?: string | null;
             };
             header?: {
                 "X-OAuth-State"?: string | null;
             };
             path: {
-                provider: "kakao" | "naver" | "google" | "mock";
+                provider: "google" | "mock";
             };
             cookie?: {
                 oauth_state?: string | null;
@@ -7032,7 +7033,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                provider: "kakao" | "naver" | "google" | "mock";
+                provider: "google" | "mock";
             };
             cookie?: never;
         };

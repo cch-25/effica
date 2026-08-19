@@ -113,12 +113,16 @@ async def _admin_repo[T](awaitable: Awaitable[T]) -> T:
 
 def _oauth_provider(provider: str, settings: Settings):
     if provider == "mock":
+        if settings.app_env != "test":
+            raise ValueError("the mock OAuth provider is test-only")
         return MockOAuthProvider()
+    if provider != "google":
+        raise ValueError("Google is the only supported OAuth provider")
     return provider_from_config(
         OAuthProviderConfig(
             provider=provider,
-            client_id=getattr(settings, f"{provider}_client_id") or "",
-            client_secret=getattr(settings, f"{provider}_client_secret") or "",
+            client_id=settings.google_client_id or "",
+            client_secret=settings.google_client_secret or "",
             timeout_seconds=5.0,
             max_retries=2,
             retry_backoff_seconds=0.2,
@@ -199,7 +203,7 @@ def _idempotent(
 
 @router.get("/auth/{provider}/start", operation_id="auth_provider_start")
 async def auth_start(
-    provider: Literal["kakao", "naver", "google", "mock"],
+    provider: Literal["google", "mock"],
     redirect_uri: str,
     return_to: str | None = Query(default=None, alias="returnTo"),
     settings: Settings = Depends(get_settings),
@@ -210,12 +214,9 @@ async def auth_start(
         raise ApiError(400, "REDIRECT_URI_INVALID", "The redirect URI is not allowlisted.")
     validated_return_to = _safe_return_to(return_to)
     state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
-    if (provider == "mock" and settings.app_env == "production") or (
-        provider != "mock"
-        and not (
-            getattr(settings, f"{provider}_client_id")
-            and getattr(settings, f"{provider}_client_secret")
-        )
+    if (provider == "mock" and settings.app_env != "test") or (
+        provider == "google"
+        and not (settings.google_client_id and settings.google_client_secret)
     ):
         raise ApiError(400, "AUTH_PROVIDER_DISABLED", "The requested OAuth provider is disabled.")
     try:
@@ -268,28 +269,21 @@ async def auth_start(
 
 @router.get(
     "/auth/providers",
-    response_model=list[Literal["kakao", "naver", "google", "mock"]],
+    response_model=list[Literal["google"]],
     operation_id="list_auth_providers",
 )
 def auth_providers(settings: Settings = Depends(get_settings)) -> list[str]:
-    """Return only providers that can complete a server-side OAuth flow."""
+    """Expose the application's single production identity provider."""
 
-    providers: list[str] = []
-    if settings.app_env != "production":
-        providers.append("mock")
-    for provider in ("kakao", "naver", "google"):
-        if getattr(settings, f"{provider}_client_id") and getattr(
-            settings, f"{provider}_client_secret"
-        ):
-            providers.append(provider)
-    return providers
+    return ["google"] if settings.google_client_id and settings.google_client_secret else []
 
 
 @router.get("/auth/{provider}/callback", operation_id="auth_provider_callback")
 async def auth_callback(
-    provider: Literal["kakao", "naver", "google", "mock"],
+    provider: Literal["google", "mock"],
     state_param: str = Query(alias="state"),
-    code: str = "mock-local",
+    code: str | None = None,
+    error: str | None = None,
     redirect_uri: str | None = None,
     oauth_state_header: str | None = Header(default=None, alias="X-OAuth-State"),
     oauth_state_cookie: str | None = Cookie(default=None, alias="oauth_state"),
@@ -315,14 +309,20 @@ async def auth_callback(
         or not secrets.compare_digest(challenge["nonce"], oauth_nonce_cookie)
     ):
         raise ApiError(400, "OAUTH_STATE_INVALID", "OAuth state or nonce verification failed.")
+    if error or not code:
+        reason = "cancelled" if error == "access_denied" else "failed"
+        response = RedirectResponse(
+            f"{settings.web_base_url.rstrip('/')}/login?oauthError={reason}",
+            status_code=302,
+        )
+        response.delete_cookie("oauth_state")
+        response.delete_cookie("oauth_nonce")
+        return response
     if redirect_uri and redirect_uri not in settings.redirect_allowlist:
         raise ApiError(400, "REDIRECT_URI_INVALID", "The redirect URI is not allowlisted.")
-    if (provider == "mock" and settings.app_env == "production") or (
-        provider != "mock"
-        and not (
-            getattr(settings, f"{provider}_client_id")
-            and getattr(settings, f"{provider}_client_secret")
-        )
+    if (provider == "mock" and settings.app_env != "test") or (
+        provider == "google"
+        and not (settings.google_client_id and settings.google_client_secret)
     ):
         raise ApiError(400, "AUTH_PROVIDER_DISABLED", "The requested OAuth provider is disabled.")
     # The challenge is authoritative.  Picking an arbitrary allowlist item
@@ -335,11 +335,9 @@ async def auth_callback(
         identity = await _oauth_provider(provider, settings).exchange_code(
             code,
             callback_uri,
-            # The callback cookie is mandatory for every provider.  The mock
-            # adapter (and OIDC adapters that expose an ID-token nonce) can
-            # additionally validate the provider claim; Kakao/Naver currently
-            # use the documented state+browser-nonce binding instead.
-            expected_nonce=challenge["nonce"] if provider in {"mock", "google"} else None,
+            # Both the Google adapter and the test-only mock bind the provider
+            # response to the one-use browser nonce.
+            expected_nonce=challenge["nonce"],
         )
     except OAuthError as exc:
         raise ApiError(

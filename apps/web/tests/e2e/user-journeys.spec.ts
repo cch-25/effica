@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
-test("mock login, separate consent, questionnaire, demographics, home", async ({ page }) => {
-  await page.goto("/login"); await page.getByRole("button", { name: /로컬 mock/ }).click();
+test("Google login facade, separate consent, questionnaire, demographics, home", async ({ page }) => {
+  await page.goto("/login"); await page.getByRole("button", { name: /Google로 계속하기/ }).click();
   await expect(page).toHaveURL(/\/onboarding\/consent/);
   const consentBoxes = page.getByRole("checkbox");
   await expect(consentBoxes.first()).toBeVisible();

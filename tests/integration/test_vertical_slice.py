@@ -40,6 +40,7 @@ def test_external_network_free_full_vertical_slice() -> None:
             "/api/v1/auth/mock/callback",
             params={
                 "state": oauth_state,
+                "code": "mock-vertical-slice",
                 "nonce": "fixture-nonce",
                 "redirect_uri": "http://localhost:3000/auth/callback",
             },

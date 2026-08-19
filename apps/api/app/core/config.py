@@ -29,11 +29,7 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
     web_base_url: str = "http://localhost:3000"
     oauth_redirect_allowlist: str = (
-        "http://localhost:3000/api/v1/auth/kakao/callback,"
-        "http://localhost:3000/api/v1/auth/naver/callback,"
-        "http://localhost:3000/api/v1/auth/google/callback,"
-        "http://localhost:3000/api/v1/auth/mock/callback,"
-        "http://localhost:3000/auth/callback"
+        "http://localhost:3000/api/v1/auth/google/callback"
     )
     llm_provider_mode: str = "auto"
     openai_api_key: str | None = None
@@ -42,10 +38,6 @@ class Settings(BaseSettings):
     llm_model_alias: str = "openai-default"
     llm_reasoning_effort: str = "xhigh"
     log_level: str = "INFO"
-    kakao_client_id: str | None = None
-    kakao_client_secret: str | None = None
-    naver_client_id: str | None = None
-    naver_client_secret: str | None = None
     google_client_id: str | None = None
     google_client_secret: str | None = None
     cohort_minimum: int = Field(default=5, ge=3)
@@ -111,6 +103,21 @@ class Settings(BaseSettings):
                 raise RuntimeError("repository-root .env must have mode 600")
         if self.app_env == "production" and self.app_backend != "mariadb":
             raise RuntimeError("production requires APP_BACKEND=mariadb")
+        if self.app_env == "production":
+            if not self.google_client_id or not self.google_client_secret:
+                raise RuntimeError("production requires Google OAuth client credentials")
+            if not self.web_base_url.startswith("https://"):
+                raise RuntimeError("production WEB_BASE_URL must use HTTPS")
+            if not self.public_base_url.startswith("https://"):
+                raise RuntimeError("production PUBLIC_BASE_URL must use HTTPS")
+            expected_callback = (
+                self.web_base_url.rstrip("/") + "/api/v1/auth/google/callback"
+            )
+            if self.redirect_allowlist != {expected_callback}:
+                raise RuntimeError(
+                    "production OAUTH_REDIRECT_ALLOWLIST must contain only the canonical "
+                    "Google callback URL"
+                )
         if self.app_backend == "mariadb":
             if "platform:platform@" in self.database_url:
                 raise RuntimeError("MariaDB DATABASE_URL must not use the local placeholder")

@@ -46,7 +46,7 @@ const apiIssues = issues.map((issue) => ({
 }));
 
 export const handlers = [
-  http.get(`${prefix}/auth/providers`, () => HttpResponse.json(["mock"])),
+  http.get(`${prefix}/auth/providers`, () => HttpResponse.json(["google"])),
   http.get(`${prefix}/auth/:provider/start`, ({ request }) => {
     const returnTo = new URL(request.url).searchParams.get("returnTo") || "/";
     const location = returnTo.startsWith("/") && !returnTo.startsWith("//") && returnTo !== "/"

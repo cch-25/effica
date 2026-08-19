@@ -15,7 +15,7 @@ from apps.api.app.core.errors import COMMON_ERROR_RESPONSES, install_error_handl
 from apps.api.app.core.logging import configure_logging
 from apps.api.app.state import new_id
 
-logger = configure_logging(logger_name="perspective.api")
+logger = configure_logging(logger_name="effica.api")
 EXPECTED_DB_REVISION = "0008_efficacy_questionnaire"
 
 
@@ -45,8 +45,8 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="Perspective News Platform API",
-    version="1.0.0",
+    title="EFFICA API",
+    version="1.0.1",
     summary="Balanced issue comparison, engagement, scoring and operations API",
     description=(
         "The executable MAS_B contract. Coordinates are observations with uncertainty, not political "
