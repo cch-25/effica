@@ -1,8 +1,6 @@
 .agents/*
 !.agents/scripts/
 .agents/scripts/*
-!.agents/scripts/deploy.sh
-!.agents/scripts/run.sh
 tmp/
 .env
 .venv/
