@@ -1,6 +1,4 @@
-.agents/*
-!.agents/scripts/
-.agents/scripts/*
+.agents/
 tmp/
 .env
 .venv/
