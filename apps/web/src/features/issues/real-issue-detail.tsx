@@ -1,11 +1,10 @@
 "use client";
 
-import { PageHeader } from "@/components/layout/page-header";
 import { StatePanel } from "@/components/ui/state-panel";
-import { ArticleCard } from "@/features/feed/article-card";
 import { useIssueArticlesQuery, useIssueQuery } from "@/lib/api/queries";
+import { IssueComparison } from "./comparison/issue-comparison";
 
-export function RealIssueDetail({ issueId }: { issueId: string }) {
+export function RealIssueDetail({ issueId, initialArticles }: { issueId: string; initialArticles?: string }) {
   const issueQuery = useIssueQuery(issueId);
   const articlesQuery = useIssueArticlesQuery(issueId);
   if (issueQuery.isPending || articlesQuery.isPending) return <StatePanel state="loading" />;
@@ -13,11 +12,7 @@ export function RealIssueDetail({ issueId }: { issueId: string }) {
 
   const issue = issueQuery.data;
   const articles = articlesQuery.data.items;
-  return (
-    <>
-      <PageHeader eyebrow={`Issue / ${issue.topic}`} title={issue.title} description={issue.summary} />
-      {articles.length === 0 && <StatePanel state="processing" />}
-      {articles.length > 0 && <div className="grid grid--2">{articles.map((article) => <ArticleCard key={article.id} article={article} />)}</div>}
-    </>
-  );
+  if (articles.length === 0) return <StatePanel state="processing" />;
+  const comparisonKey = `${issue.id}:${initialArticles ?? ""}:${articles.map((row) => row.id).join(",")}`;
+  return <IssueComparison key={comparisonKey} issue={issue} articles={articles} initialArticles={initialArticles} />;
 }
