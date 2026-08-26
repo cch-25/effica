@@ -19,3 +19,5 @@ apps/web/node_modules/
 .DS_Store
 .playwright-cli/
 .mypy_cache/
+AGENTS.md
+output/
