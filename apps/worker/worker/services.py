@@ -453,6 +453,7 @@ class MariaDBResultApplier:
             "merge_issue": self._apply_merge_issue,
             "split_issue": self._apply_split_issue,
             "analyze": self._apply_analyze,
+            "build_issue_comparison": self._apply_issue_comparison,
             "aggregate_votes": self._apply_aggregate,
             "calculate_score": self._apply_score,
             "recommend_weights": self._apply_recommendation,
@@ -467,6 +468,70 @@ class MariaDBResultApplier:
             # they do not silently lose their output.
             return
         await handler(session, job, result, now)
+
+    async def _apply_issue_comparison(
+        self, session: Any, job: Job, result: Mapping[str, Any], now: datetime
+    ) -> None:
+        issue_id = str(result.get("issue_id") or job.payload.get("issue_id") or "")
+        issue_version = int(result.get("issue_version") or job.payload.get("issue_version") or 0)
+        prompt_version = str(
+            result.get("prompt_version") or job.payload.get("prompt_version") or ""
+        )
+        if not issue_id or issue_version < 1 or not prompt_version:
+            raise ResultApplicationError("comparison result is missing version identity")
+        await self._execute(
+            session,
+            """
+            UPDATE issue_comparison_snapshots
+            SET status = 'SUPERSEDED'
+            WHERE issue_id = :issue_id AND status = 'SUCCEEDED'
+              AND (issue_version <> :issue_version OR prompt_version <> :prompt_version)
+            """,
+            {
+                "issue_id": issue_id,
+                "issue_version": issue_version,
+                "prompt_version": prompt_version,
+            },
+        )
+        await self._execute(
+            session,
+            """
+            INSERT INTO issue_comparison_snapshots
+              (id, issue_id, issue_version, prompt_version, model_alias_id,
+               common_facts_json, framing_dimensions_json, article_frames_json,
+               confidence, status, reviewed_at, reviewed_by, created_at)
+            VALUES
+              (:id, :issue_id, :issue_version, :prompt_version, :model_alias_id,
+               :common_facts, :dimensions, :article_frames,
+               :confidence, 'SUCCEEDED', NULL, NULL, :created_at)
+            ON DUPLICATE KEY UPDATE
+              model_alias_id = VALUES(model_alias_id),
+              common_facts_json = VALUES(common_facts_json),
+              framing_dimensions_json = VALUES(framing_dimensions_json),
+              article_frames_json = VALUES(article_frames_json),
+              confidence = VALUES(confidence), status = 'SUCCEEDED',
+              reviewed_at = NULL, reviewed_by = NULL, created_at = VALUES(created_at)
+            """,
+            {
+                "id": _stable_id(
+                    f"comparison:{issue_id}:{issue_version}:{prompt_version}"
+                ),
+                "issue_id": issue_id,
+                "issue_version": issue_version,
+                "prompt_version": prompt_version,
+                "model_alias_id": result.get("model_alias_id"),
+                "common_facts": _json({"common_facts": result.get("common_facts", [])}),
+                "dimensions": _json({"dimensions": result.get("dimensions", [])}),
+                "article_frames": _json(
+                    {
+                        "article_frames": result.get("article_frames", {}),
+                        "article_version_ids": result.get("article_version_ids", {}),
+                    }
+                ),
+                "confidence": float(result.get("confidence", 0)),
+                "created_at": now,
+            },
+        )
 
     async def _execute(self, session: Any, statement: str, params: Mapping[str, Any]) -> Any:
         return await _maybe_await(session.execute(_sql(statement.strip()), dict(params)))
@@ -781,8 +846,10 @@ class MariaDBResultApplier:
                 {"id": issue_id, "title": title, "summary": candidate.get("summary"), "opened_at": now, "last_activity_at": now},
             )
             articles = candidate.get("article_ids") or candidate.get("articles") or []
+            candidate_article_ids: list[str] = []
             for item in articles if isinstance(articles, (list, tuple)) else ():
                 article_id = str(item.get("article_id") if isinstance(item, Mapping) else item)
+                candidate_article_ids.append(article_id)
                 confidence = float(item.get("confidence", 0.0) if isinstance(item, Mapping) else candidate.get("confidence", 0.0))
                 await self._execute(
                     session,
@@ -792,6 +859,13 @@ class MariaDBResultApplier:
                     ON DUPLICATE KEY UPDATE confidence = VALUES(confidence)
                     """,
                     {"issue_id": issue_id, "article_id": article_id, "confidence": max(0.0, min(1.0, confidence)), "created_at": now},
+                )
+            if candidate_article_ids:
+                await self._enqueue_issue_comparisons_for_article(
+                    session,
+                    article_id=candidate_article_ids[0],
+                    request_id=self._request_id(job, result),
+                    now=now,
                 )
 
     async def _apply_merge_issue(self, session: Any, job: Job, result: Mapping[str, Any], now: datetime) -> None:
@@ -876,6 +950,19 @@ class MariaDBResultApplier:
             "UPDATE issues SET version = version + 1, last_activity_at = :now WHERE id = :target_id",
             {"target_id": target, "now": now},
         )
+        target_member = await self._execute(
+            session,
+            "SELECT article_id FROM issue_memberships WHERE issue_id = :issue_id ORDER BY article_id LIMIT 1",
+            {"issue_id": target},
+        )
+        target_rows = _rows(target_member)
+        if target_rows:
+            await self._enqueue_issue_comparisons_for_article(
+                session,
+                article_id=str(_row(target_rows[0], "article_id")),
+                request_id=self._request_id(job, result),
+                now=now,
+            )
 
     async def _apply_split_issue(self, session: Any, job: Job, result: Mapping[str, Any], now: datetime) -> None:
         issue_id = str(result.get("issue_id") or job.payload.get("issue_id"))
@@ -922,11 +1009,30 @@ class MariaDBResultApplier:
                     "DELETE FROM issue_memberships WHERE issue_id = :source_id AND article_id = :article_id",
                     {"source_id": issue_id, "article_id": str(article_id)},
                 )
+                await self._enqueue_issue_comparisons_for_article(
+                    session,
+                    article_id=str(article_id),
+                    request_id=self._request_id(job, result),
+                    now=now,
+                )
         await self._execute(
             session,
             "UPDATE issues SET version = version + 1, last_activity_at = :now WHERE id = :source_id",
             {"source_id": issue_id, "now": now},
         )
+        source_member = await self._execute(
+            session,
+            "SELECT article_id FROM issue_memberships WHERE issue_id = :issue_id ORDER BY article_id LIMIT 1",
+            {"issue_id": issue_id},
+        )
+        source_rows = _rows(source_member)
+        if source_rows:
+            await self._enqueue_issue_comparisons_for_article(
+                session,
+                article_id=str(_row(source_rows[0], "article_id")),
+                request_id=self._request_id(job, result),
+                now=now,
+            )
 
     async def _apply_analyze(self, session: Any, job: Job, result: Mapping[str, Any], now: datetime) -> None:
         version_id = str(result.get("article_version_id") or job.payload.get("article_version_id") or "")
@@ -1064,6 +1170,76 @@ class MariaDBResultApplier:
                 "cluster",
                 cluster_payload,
                 dedupe_key=self._article_set_dedupe(cluster_ids, threshold),
+                now=now,
+            )
+            for article_id in cluster_ids:
+                await self._enqueue_issue_comparisons_for_article(
+                    session,
+                    article_id=article_id,
+                    request_id=request_id,
+                    now=now,
+                )
+
+    async def _enqueue_issue_comparisons_for_article(
+        self,
+        session: Any,
+        *,
+        article_id: str,
+        request_id: str | None,
+        now: datetime,
+    ) -> None:
+        issue_result = await self._execute(
+            session,
+            """
+            SELECT i.id, i.version
+            FROM issues i
+            JOIN issue_memberships im ON im.issue_id = i.id
+            WHERE im.article_id = :article_id
+              AND i.status NOT IN ('merged', 'closed', 'archived')
+            """,
+            {"article_id": article_id},
+        )
+        for issue_row in _rows(issue_result):
+            issue_id = str(_row(issue_row, "id", "") or "")
+            issue_version = int(_row(issue_row, "version", 0) or 0)
+            if not issue_id or issue_version < 1:
+                continue
+            article_result = await self._execute(
+                session,
+                """
+                SELECT a.id AS article_id, a.current_version_id AS article_version_id
+                FROM issue_memberships im
+                JOIN articles a ON a.id = im.article_id
+                WHERE im.issue_id = :issue_id AND a.current_version_id IS NOT NULL
+                ORDER BY a.id
+                """,
+                {"issue_id": issue_id},
+            )
+            article_rows = _rows(article_result)
+            if not 2 <= len(article_rows) <= 4:
+                continue
+            article_ids = [str(_row(row, "article_id")) for row in article_rows]
+            version_ids = [str(_row(row, "article_version_id")) for row in article_rows]
+            if any(not value for value in article_ids + version_ids):
+                continue
+            prompt_version = "issue-comparison-v1"
+            payload: dict[str, Any] = {
+                "issue_id": issue_id,
+                "issue_version": issue_version,
+                "article_ids": article_ids,
+                "article_version_ids": version_ids,
+                "prompt_version": prompt_version,
+            }
+            if request_id is not None:
+                payload["request_id"] = request_id
+            await self._enqueue_job(
+                session,
+                "build_issue_comparison",
+                payload,
+                dedupe_key=(
+                    f"{issue_id}:{issue_version}:{':'.join(sorted(version_ids))}:"
+                    f"{prompt_version}"
+                ),
                 now=now,
             )
 

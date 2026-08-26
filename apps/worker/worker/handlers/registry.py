@@ -73,6 +73,7 @@ def build_default_registry() -> HandlerRegistry:
     from . import (
         aggregate_votes,
         analyze,
+        build_issue_comparison,
         calculate_score,
         cluster,
         crawl,
@@ -88,6 +89,7 @@ def build_default_registry() -> HandlerRegistry:
         crawl,
         cluster,
         analyze,
+        build_issue_comparison,
         aggregate_votes,
         calculate_score,
         recommend_weights,

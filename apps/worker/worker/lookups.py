@@ -11,6 +11,8 @@ from typing import Any
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from sqlalchemy import bindparam, text
 
+from apps.api.app.domains.content.trust import evidence_is_synthetic
+
 
 def _json_value(value: Any, default: Any) -> Any:
     if value is None:
@@ -118,6 +120,38 @@ class MariaDBWorkerLookups:
             row["body"] = bytes(body).decode("utf-8", errors="replace") if isinstance(body, (bytes, bytearray)) else str(body or "")
         return rows
 
+    async def issue_comparison_inputs(self, identifier: Any) -> list[dict[str, Any]]:
+        version_ids = (
+            [str(value) for value in identifier]
+            if isinstance(identifier, Sequence) and not isinstance(identifier, (str, bytes))
+            else [str(identifier)]
+        )
+        if not 2 <= len(version_ids) <= 4 or len(set(version_ids)) != len(version_ids):
+            return []
+        rows = await self._all(
+            """
+            SELECT av.id AS article_version_id, a.id AS article_id, a.title,
+                   a.canonical_url AS source_url, s.name AS source_name,
+                   b.payload AS normalized_payload
+            FROM article_versions av
+            JOIN articles a ON a.id = av.article_id
+            JOIN sources s ON s.id = a.source_id
+            LEFT JOIN stored_blobs b ON b.id = av.normalized_text_ref
+            WHERE av.id IN :version_ids AND a.current_version_id = av.id
+            """,
+            {"version_ids": version_ids},
+            expanding="version_ids",
+        )
+        for row in rows:
+            payload = row.pop("normalized_payload", None)
+            row["content"] = (
+                bytes(payload).decode("utf-8", errors="replace")
+                if isinstance(payload, (bytes, bytearray))
+                else str(payload or "")
+            )
+        by_version = {str(row["article_version_id"]): row for row in rows}
+        return [by_version[value] for value in version_ids if value in by_version]
+
     async def votes_lookup(self, identifier: Any) -> list[dict[str, Any]]:
         rows = await self._all(
             """
@@ -224,13 +258,25 @@ class MariaDBWorkerLookups:
             return None
         assessments = await self._all(
             """
-            SELECT x, y, z, sensationalism, confidence
-            FROM model_assessments
-            WHERE article_version_id = :version_id AND status = 'SUCCEEDED'
-            ORDER BY id
+            SELECT ma.id, ma.x, ma.y, ma.z, ma.sensationalism, ma.confidence,
+                   ma.evidence_json, aliases.actual_model_id
+            FROM model_assessments ma
+            JOIN model_aliases aliases ON aliases.id = ma.model_alias_id
+            WHERE ma.article_version_id = :version_id
+              AND ma.status = 'SUCCEEDED'
+              AND aliases.status = 'ACTIVE'
+              AND aliases.provider = 'openai'
+              AND aliases.actual_model_id LIKE 'gpt-%'
+              AND aliases.alias NOT IN ('dummy-crawl-v1', 'deterministic-stub')
+            ORDER BY ma.id
             """,
             {"version_id": version["article_version_id"]},
         )
+        assessments = [
+            row
+            for row in assessments
+            if not evidence_is_synthetic(_json_value(row.get("evidence_json"), {}))
+        ]
         votes = await self.votes_lookup(version["article_id"])
 
         def axes(rows: list[dict[str, Any]]) -> tuple[float, float, float]:
@@ -258,7 +304,14 @@ class MariaDBWorkerLookups:
                 "model_spread": spread,
                 "sensationalism": sensationalism,
                 "evidence_quality": min(1.0, len(assessments) / 3.0),
-            }
+            },
+            "provenance": {
+                "analysis_provider": "openai",
+                "assessment_ids": [str(row["id"]) for row in assessments],
+                "actual_model_ids": sorted(
+                    {str(row["actual_model_id"]) for row in assessments}
+                ),
+            },
         }
 
     async def analysis_model_lookup(self, identifier: Any = "active") -> dict[str, Any] | None:
@@ -332,6 +385,7 @@ class MariaDBWorkerLookups:
             "source_lookup": self.source_lookup,
             "article_version_lookup": self.article_version_lookup,
             "articles_lookup": self.articles_lookup,
+            "issue_comparison_inputs": self.issue_comparison_inputs,
             "votes_lookup": self.votes_lookup,
             "vote_snapshot_lookup": self.vote_snapshot_lookup,
             "weights_lookup": self.weights_lookup,

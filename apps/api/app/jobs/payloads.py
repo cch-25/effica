@@ -130,6 +130,15 @@ def _validate_articles(payload: Mapping[str, Any]) -> None:
         raise JobPayloadError("article_ids must be a non-empty list")
 
 
+def _validate_issue_comparison(payload: Mapping[str, Any]) -> None:
+    _positive_int(payload.get("issue_version"), "issue_version")
+    article_version_ids = payload.get("article_version_ids")
+    if not isinstance(article_version_ids, (list, tuple)) or len(article_version_ids) < 2:
+        raise JobPayloadError("article_version_ids must contain at least two items")
+    if len({str(item) for item in article_version_ids}) != len(article_version_ids):
+        raise JobPayloadError("article_version_ids must be unique")
+
+
 def _validate_votes(payload: Mapping[str, Any]) -> None:
     votes = payload.get("votes")
     if votes is not None and not isinstance(votes, (list, tuple)):
@@ -204,6 +213,11 @@ JOB_PAYLOAD_CONTRACTS: dict[str, JobPayloadContract] = {
     ),
     "analyze": JobPayloadContract(
         "analyze", required_any=(("text", "article_version_id"),), validator=_validate_analyze
+    ),
+    "build_issue_comparison": JobPayloadContract(
+        "build_issue_comparison",
+        required_all=("issue_id", "issue_version", "article_version_ids", "prompt_version"),
+        validator=_validate_issue_comparison,
     ),
     "aggregate_votes": JobPayloadContract(
         "aggregate_votes", required_any=(("votes", "article_id"),), validator=_validate_votes

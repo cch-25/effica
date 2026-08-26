@@ -16,6 +16,7 @@ async def handle(
     payload: Mapping[str, Any], context: HandlerContext | None = None
 ) -> HandlerResult:
     components = payload.get("components")
+    provenance: Mapping[str, Any] = {}
     if components is None:
         identifier = payload.get("article_version_id") or payload.get("article_id")
         loaded = await lookup_service(
@@ -25,6 +26,9 @@ async def handle(
             payload=payload,
         )
         if isinstance(loaded, Mapping) and isinstance(loaded.get("components"), Mapping):
+            loaded_provenance = loaded.get("provenance")
+            if isinstance(loaded_provenance, Mapping):
+                provenance = loaded_provenance
             loaded = loaded["components"]
         components = loaded
     if not isinstance(components, Mapping):
@@ -54,6 +58,7 @@ async def handle(
             str(exc), code="INVALID_SCORE_PAYLOAD"
         ) from exc
     value = score.as_dict()
+    value["components"] = {**value["components"], **provenance}
     value["canonical_sha256"] = __import__("hashlib").sha256(
         canonical_score_json(score)
     ).hexdigest()

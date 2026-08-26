@@ -562,7 +562,12 @@ def _default_services(session_factory: Callable[[], Any]) -> dict[str, Any]:
     services["source_fetcher"] = SourceFetchService()
     if not settings.live_llm_enabled:
         return services
-    from apps.api.app.domains.analysis import HttpLLMProvider, ProviderConfig
+    from apps.api.app.domains.analysis import (
+        HttpLLMProvider,
+        ProviderConfig,
+        ProviderError,
+        ProviderSchemaError,
+    )
 
     async def analysis_provider_factory() -> HttpLLMProvider:
         configured = await lookups.analysis_model_lookup()
@@ -576,6 +581,7 @@ def _default_services(session_factory: Callable[[], Any]) -> dict[str, Any]:
                     (configured or {}).get("reasoning_effort")
                     or settings.llm_reasoning_effort
                 ),
+                timeout_seconds=settings.llm_timeout_seconds,
                 model_alias_id=(configured or {}).get("model_alias_id"),
                 endpoint=settings.openai_endpoint,
                 api_key=settings.openai_api_key,
@@ -583,6 +589,40 @@ def _default_services(session_factory: Callable[[], Any]) -> dict[str, Any]:
         )
 
     services["analysis_provider_factory"] = analysis_provider_factory
+
+    async def issue_comparison_analysis(value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, Mapping):
+            return None
+        version_ids = value.get("article_version_ids")
+        if not isinstance(version_ids, (list, tuple)):
+            return None
+        articles = await lookups.issue_comparison_inputs(version_ids)
+        if len(articles) != len(version_ids):
+            return None
+        provider = await analysis_provider_factory()
+        try:
+            try:
+                result = provider.analyze_issue_comparison(
+                    articles,
+                    str(value.get("prompt_version") or "issue-comparison-v1"),
+                )
+            except ProviderError as exc:
+                raise HandlerError(
+                    "issue comparison provider request failed",
+                    code=exc.code,
+                    details={"model_alias": provider.config.alias},
+                    retryable=not isinstance(exc, ProviderSchemaError),
+                ) from exc
+            result["model_alias_id"] = provider.config.model_alias_id
+            result["article_version_ids"] = {
+                str(article["article_id"]): str(article["article_version_id"])
+                for article in articles
+            }
+            return result
+        finally:
+            provider.close()
+
+    services["issue_comparison_analysis"] = issue_comparison_analysis
     return services
 
 

@@ -16,6 +16,7 @@ def test_all_builtin_handlers_are_registered():
         "crawl",
         "cluster",
         "analyze",
+        "build_issue_comparison",
         "aggregate_votes",
         "calculate_score",
         "recommend_weights",
@@ -53,6 +54,43 @@ def test_builtin_handlers_return_deterministic_values():
         )
         assert simulation.value["windows"] == [7, 30]
         assert simulation.value["guardrail_result"]["passed"] is True
+
+    asyncio.run(scenario())
+
+
+def test_issue_comparison_requires_multi_article_evidence_and_structured_frames():
+    async def scenario():
+        handler = build_default_registry().require_async("build_issue_comparison")
+        payload = {
+            "issue_id": "issue-1",
+            "issue_version": 2,
+            "article_version_ids": ["version-1", "version-2"],
+            "article_ids": ["article-1", "article-2"],
+            "prompt_version": "issue-comparison-v1",
+            "comparison": {
+                "model_alias_id": "model-1",
+                "common_facts": [
+                    {"id": "fact-1", "text": "shared", "article_ids": ["article-1", "article-2"]}
+                ],
+                "dimensions": [{"key": "responsibility", "label": "책임 귀속"}],
+                "article_frames": {
+                    "article-1": {"headline_frame": "frame one"},
+                    "article-2": {"headline_frame": "frame two"},
+                },
+                "confidence": 0.8,
+            },
+        }
+        result = await handler(payload)
+        assert result.value["status"] == "SUCCEEDED"
+        assert result.value["article_frames"]["article-2"]["headline_frame"] == "frame two"
+        assert result.value["article_version_ids"] == {
+            "article-1": "version-1",
+            "article-2": "version-2",
+        }
+
+        payload["comparison"]["common_facts"][0]["article_ids"] = ["article-1"]
+        with pytest.raises(NonRetryableHandlerError, match="at least two"):
+            await handler(payload)
 
     asyncio.run(scenario())
 
@@ -134,6 +172,39 @@ def test_aggregate_handler_preserves_vote_revision_contract() -> None:
         assert result.value["version"] == 7
         assert result.value["vote_revision"] == 7
         assert result.value["source_revision"] == 7
+
+    asyncio.run(scenario())
+
+
+def test_calculate_score_preserves_openai_assessment_provenance() -> None:
+    async def scenario() -> None:
+        calculate = build_default_registry().require_async("calculate_score")
+        result = await calculate(
+            {"article_version_id": "version-1", "weights": {"model": 1.0}},
+            HandlerContext(
+                services={
+                    "score_components_lookup": {
+                        "version-1": {
+                            "components": {
+                                "model": [12, 0, 0],
+                                "relative": [12, 0, 0],
+                                "crowd": [0, 0, 0],
+                                "source": [0, 0, 0],
+                            },
+                            "provenance": {
+                                "analysis_provider": "openai",
+                                "assessment_ids": ["assessment-1"],
+                                "actual_model_ids": ["gpt-5-mini"],
+                            },
+                        }
+                    }
+                }
+            ),
+        )
+
+        assert result.value["components"]["analysis_provider"] == "openai"
+        assert result.value["components"]["assessment_ids"] == ["assessment-1"]
+        assert result.value["components"]["actual_model_ids"] == ["gpt-5-mini"]
 
     asyncio.run(scenario())
 

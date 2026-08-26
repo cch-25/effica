@@ -54,6 +54,7 @@ class JobType(str, Enum):
     CRAWL = "crawl"
     CLUSTER = "cluster"
     ANALYZE = "analyze"
+    BUILD_ISSUE_COMPARISON = "build_issue_comparison"
     AGGREGATE_VOTES = "aggregate_votes"
     CALCULATE_SCORE = "calculate_score"
     RECOMMEND_WEIGHTS = "recommend_weights"
