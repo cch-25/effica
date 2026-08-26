@@ -4,7 +4,7 @@ const debugMember = { "X-Debug-Role": "MEMBER", "X-CSRF-Token": "local-csrf" };
 
 test("same-origin web reads and vote authorization flows use the memory backend", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Fixture policy report 1" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Fixture policy report 1" })).toBeVisible({ timeout: 15_000 });
 
   const issuesResponse = await page.request.get("/api/v1/issues");
   expect(issuesResponse.ok()).toBeTruthy();

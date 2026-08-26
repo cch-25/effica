@@ -175,6 +175,24 @@ export interface paths {
         patch: operations["admin_patch_issue"];
         trace?: never;
     };
+    "/api/v1/admin/issues/{issue_id}/comparison": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Admin Get Issue Comparison */
+        get: operations["admin_get_issue_comparison"];
+        put?: never;
+        /** Admin Review Issue Comparison */
+        post: operations["admin_review_issue_comparison"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/issues/{issue_id}/merge": {
         parameters: {
             query?: never;
@@ -729,6 +747,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/issues/{issue_id}/comparison": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Issue Comparison */
+        get: operations["get_issue_comparison"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me": {
         parameters: {
             query?: never;
@@ -1095,6 +1130,30 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AnalysisStatus
+         * @enum {string}
+         */
+        AnalysisStatus: "READY" | "PROCESSING" | "PARTIAL" | "UNTRUSTED";
+        /** ArticleComparisonView */
+        ArticleComparisonView: {
+            article: components["schemas"]["ArticleView"];
+            assessment: components["schemas"]["PublicAssessment"];
+            frame: components["schemas"]["ArticleFrameView"];
+            score: components["schemas"]["ScoreView"];
+            vote_aggregate: components["schemas"]["VoteAggregateView"];
+        };
+        /** ArticleFrameView */
+        ArticleFrameView: {
+            /** Emphasis */
+            emphasis?: string[];
+            /** Evidence Refs */
+            evidence_refs?: string[];
+            /** Headline Frame */
+            headline_frame?: string | null;
+            /** Omissions Note */
+            omissions_note?: string | null;
+        };
         /** ArticlePage */
         ArticlePage: {
             /** Items */
@@ -1104,6 +1163,10 @@ export interface components {
         };
         /** ArticleView */
         ArticleView: {
+            /** Analysis Provider */
+            analysis_provider?: "openai" | null;
+            /** @default PROCESSING */
+            analysis_status: components["schemas"]["AnalysisStatus"];
             /** Author */
             author?: string | null;
             /** Canonical Url */
@@ -1132,6 +1195,10 @@ export interface components {
         };
         /** ArticleWithCoordinate */
         ArticleWithCoordinate: {
+            /** Analysis Provider */
+            analysis_provider?: "openai" | null;
+            /** @default PROCESSING */
+            analysis_status: components["schemas"]["AnalysisStatus"];
             /** Author */
             author?: string | null;
             /** Canonical Url */
@@ -1158,6 +1225,13 @@ export interface components {
             summary: string;
             /** Title */
             title: string;
+        };
+        /** AssessmentPage */
+        AssessmentPage: {
+            /** Article Version Id */
+            article_version_id: string | null;
+            /** Assessments */
+            assessments: components["schemas"]["PublicAssessment"][];
         };
         /** AutopilotSettingsPut */
         AutopilotSettingsPut: {
@@ -1194,6 +1268,17 @@ export interface components {
             updated_by?: string | null;
             /** Version */
             version: number;
+        };
+        /** CommonFactView */
+        CommonFactView: {
+            /** Article Ids */
+            article_ids: string[];
+            /** Evidence Refs */
+            evidence_refs?: string[];
+            /** Id */
+            id: string;
+            /** Text */
+            text: string;
         };
         /** ConsentSubmission */
         ConsentSubmission: {
@@ -1290,15 +1375,29 @@ export interface components {
         };
         /** FeedItem */
         FeedItem: {
+            /**
+             * Analysis Provider
+             * @constant
+             */
+            analysis_provider: "openai";
+            /**
+             * Analysis Status
+             * @constant
+             */
+            analysis_status: "READY";
             /** Article Id */
             article_id: string;
             coordinate: components["schemas"]["Coordinate"];
             /** Issue Id */
             issue_id: string;
+            /** Published At */
+            published_at: string | null;
             /** Rank */
             rank: number;
             /** Reason Code */
             reason_code: string;
+            /** Score Version Id */
+            score_version_id: string;
             /** Source */
             source: string;
             /** Title */
@@ -1313,6 +1412,18 @@ export interface components {
             /** Personalized */
             personalized: boolean;
         };
+        /** FramingDimensionView */
+        FramingDimensionView: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+        };
+        /**
+         * FreshnessStatus
+         * @enum {string}
+         */
+        FreshnessStatus: "CURRENT" | "UPDATE_NEEDED";
         /** HealthResponse */
         HealthResponse: {
             /** Checks */
@@ -1330,13 +1441,126 @@ export interface components {
              */
             timestamp?: string;
         };
-        /** IssueDetailView */
-        IssueDetailView: {
-            /** Article Ids */
-            article_ids: string[];
-            distribution: components["schemas"]["IssueDistribution"];
+        /** IssueComparisonIssueView */
+        IssueComparisonIssueView: {
+            /** Article Count */
+            article_count: number;
+            /** Data As Of */
+            data_as_of: string | null;
             /** Id */
             id: string;
+            /** Source Count */
+            source_count: number;
+            /** Summary */
+            summary: string;
+            /** Title */
+            title: string;
+            /** Version */
+            version: number;
+        };
+        /** IssueComparisonReviewPreview */
+        IssueComparisonReviewPreview: {
+            /** Actual Model Id */
+            actual_model_id: string;
+            /** Article Frames */
+            article_frames: {
+                [key: string]: components["schemas"]["ArticleFrameView"];
+            };
+            /** Article Version Ids */
+            article_version_ids: {
+                [key: string]: string;
+            };
+            /** Common Facts */
+            common_facts: components["schemas"]["CommonFactView"][];
+            /** Confidence */
+            confidence: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Dimensions */
+            dimensions: components["schemas"]["FramingDimensionView"][];
+            /** Issue Id */
+            issue_id: string;
+            /** Issue Version */
+            issue_version: number;
+            /** Model Alias */
+            model_alias: string;
+            /** Prompt Version */
+            prompt_version: string;
+            /** Reviewed At */
+            reviewed_at?: string | null;
+            /** Reviewed By */
+            reviewed_by?: string | null;
+            /** Snapshot Id */
+            snapshot_id: string;
+            /** Status */
+            status: string;
+        };
+        /** IssueComparisonReviewView */
+        IssueComparisonReviewView: {
+            /** Issue Id */
+            issue_id: string;
+            /** Issue Version */
+            issue_version: number;
+            /**
+             * Reviewed At
+             * Format: date-time
+             */
+            reviewed_at: string;
+            /** Reviewed By */
+            reviewed_by: string;
+            /** Snapshot Id */
+            snapshot_id: string;
+        };
+        /** IssueComparisonView */
+        IssueComparisonView: {
+            /** Actual Model Id */
+            actual_model_id: string;
+            /** Articles */
+            articles: components["schemas"]["ArticleComparisonView"][];
+            /** Common Facts */
+            common_facts: components["schemas"]["CommonFactView"][];
+            /** Comparison Version */
+            comparison_version: string;
+            /** Confidence */
+            confidence: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Dimensions */
+            dimensions: components["schemas"]["FramingDimensionView"][];
+            issue: components["schemas"]["IssueComparisonIssueView"];
+            /** Model Alias */
+            model_alias: string;
+            /** Prompt Version */
+            prompt_version: string;
+            /**
+             * Reviewed At
+             * Format: date-time
+             */
+            reviewed_at: string;
+        };
+        /** IssueDetailView */
+        IssueDetailView: {
+            /** @default PROCESSING */
+            analysis_status: components["schemas"]["AnalysisStatus"];
+            /** Article Ids */
+            article_ids: string[];
+            /** Data As Of */
+            data_as_of?: string | null;
+            distribution: components["schemas"]["IssueDistribution"];
+            /** Editorial Priority */
+            editorial_priority?: number | null;
+            /** @default CURRENT */
+            freshness_status: components["schemas"]["FreshnessStatus"];
+            /** Id */
+            id: string;
+            /** @default TOPIC */
+            kind: components["schemas"]["IssueKind"];
             /**
              * Last Activity At
              * Format: date-time
@@ -1347,6 +1571,11 @@ export interface components {
              * Format: date-time
              */
             opened_at: string;
+            /**
+             * Source Count
+             * @default 0
+             */
+            source_count: number;
             /** Status */
             status: string;
             /** Summary */
@@ -1365,6 +1594,11 @@ export interface components {
             /** Minimum X */
             minimum_x?: number | null;
         };
+        /**
+         * IssueKind
+         * @enum {string}
+         */
+        IssueKind: "EVENT" | "TOPIC";
         /** IssuePage */
         IssuePage: {
             /** Items */
@@ -1374,10 +1608,20 @@ export interface components {
         };
         /** IssueView */
         IssueView: {
+            /** @default PROCESSING */
+            analysis_status: components["schemas"]["AnalysisStatus"];
             /** Article Ids */
             article_ids: string[];
+            /** Data As Of */
+            data_as_of?: string | null;
+            /** Editorial Priority */
+            editorial_priority?: number | null;
+            /** @default CURRENT */
+            freshness_status: components["schemas"]["FreshnessStatus"];
             /** Id */
             id: string;
+            /** @default TOPIC */
+            kind: components["schemas"]["IssueKind"];
             /**
              * Last Activity At
              * Format: date-time
@@ -1388,6 +1632,11 @@ export interface components {
              * Format: date-time
              */
             opened_at: string;
+            /**
+             * Source Count
+             * @default 0
+             */
+            source_count: number;
             /** Status */
             status: string;
             /** Summary */
@@ -1497,6 +1746,59 @@ export interface components {
             /** Z */
             z: number;
         };
+        /** ProgressView */
+        ProgressView: {
+            behavioral_profile?: components["schemas"]["Coordinate"] | null;
+            /** Compared Issue Count */
+            compared_issue_count: number;
+            /** Credit Total */
+            credit_total: number;
+            /** Level */
+            level: number;
+            /** Policy Version */
+            policy_version: string;
+            /** Read Article Count */
+            read_article_count: number;
+            self_reported_profile?: components["schemas"]["Coordinate"] | null;
+            /** Source Diversity Count */
+            source_diversity_count: number;
+            /** Tier */
+            tier: string;
+        };
+        /** PublicAssessment */
+        PublicAssessment: {
+            /** Actual Model Id */
+            actual_model_id: string;
+            /** Confidence */
+            confidence: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Evidence */
+            evidence: {
+                [key: string]: unknown;
+            }[];
+            /** Id */
+            id: string;
+            /** Model Alias */
+            model_alias: string;
+            /** Prompt Version */
+            prompt_version: string;
+            /**
+             * Provider
+             * @constant
+             */
+            provider: "openai";
+            /** Summary */
+            summary: string;
+            /**
+             * Synthetic
+             * @constant
+             */
+            synthetic: false;
+        };
         /** QuestionnaireSubmission */
         QuestionnaireSubmission: {
             /** Answers */
@@ -1599,6 +1901,18 @@ export interface components {
         };
         /** ScoreView */
         ScoreView: {
+            /**
+             * Analysis Provider
+             * @default openai
+             * @constant
+             */
+            analysis_provider: "openai";
+            /**
+             * Analysis Status
+             * @default READY
+             * @constant
+             */
+            analysis_status: "READY";
             /** Article Version Id */
             article_version_id: string;
             /** Components */
@@ -1788,6 +2102,34 @@ export interface components {
             items: components["schemas"]["VisualizationPoint"][];
             /** Next Cursor */
             next_cursor?: string | null;
+        };
+        /** VoteAggregateView */
+        VoteAggregateView: {
+            /** Generated At */
+            generated_at?: string | null;
+            qualified: components["schemas"]["VoteAxisAggregateView"];
+            /** Qualified Count */
+            qualified_count: number;
+            /** Small Segments Suppressed */
+            small_segments_suppressed: boolean;
+            /** Snapshot Version */
+            snapshot_version?: number | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "pending";
+        };
+        /** VoteAxisAggregateView */
+        VoteAxisAggregateView: {
+            /** Sensationalism */
+            sensationalism?: number | null;
+            /** X */
+            x?: number | null;
+            /** Y */
+            y?: number | null;
+            /** Z */
+            z?: number | null;
         };
         /** VoteInput */
         VoteInput: {
@@ -3079,6 +3421,248 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Stable domain validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Role, consent, or CSRF requirement failed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Version, idempotency, or state conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Expired or permanently unavailable resource */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Request schema validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description If-Match precondition is required */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limited; Retry-After is present */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Contract-safe internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    admin_get_issue_comparison: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Debug-Role"?: components["schemas"]["Role"] | null;
+                "X-Debug-User"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueComparisonReviewPreview"];
+                };
+            };
+            /** @description Stable domain validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Role, consent, or CSRF requirement failed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Version, idempotency, or state conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Expired or permanently unavailable resource */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Request schema validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description If-Match precondition is required */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limited; Retry-After is present */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Contract-safe internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    admin_review_issue_comparison: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-CSRF-Token"?: string | null;
+                "X-Debug-Role"?: components["schemas"]["Role"] | null;
+                "X-Debug-User"?: string | null;
+                "Idempotency-Key"?: string | null;
+                "If-Match"?: string | null;
+            };
+            path: {
+                issue_id: string;
+            };
+            cookie?: {
+                csrf?: string | null;
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReasonRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueComparisonReviewView"];
                 };
             };
             /** @description Stable domain validation error */
@@ -5751,9 +6335,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["AssessmentPage"];
                 };
             };
             /** @description Stable domain validation error */
@@ -6576,9 +7158,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["VoteAggregateView"];
                 };
             };
             /** @description Stable domain validation error */
@@ -7833,6 +8413,121 @@ export interface operations {
             };
         };
     };
+    get_issue_comparison: {
+        parameters: {
+            query: {
+                article_ids: string[];
+            };
+            header?: never;
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueComparisonView"];
+                };
+            };
+            /** @description Stable domain validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Role, consent, or CSRF requirement failed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Version, idempotency, or state conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Expired or permanently unavailable resource */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Request schema validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description If-Match precondition is required */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limited; Retry-After is present */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Contract-safe internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     get_me: {
         parameters: {
             query?: never;
@@ -8805,9 +9500,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ProgressView"];
                 };
             };
             /** @description Stable domain validation error */

@@ -1,5 +1,6 @@
 import type { components } from "./generated/schema";
-import type { Article, Issue, VisualizationPoint } from "./types";
+import { decodeHtmlEntities } from "./formatters";
+import type { Article, Issue, IssueComparison, VisualizationPoint } from "./types";
 
 export type FeedItemDto = components["schemas"]["FeedItem"];
 export type FeedPageDto = components["schemas"]["FeedPage"];
@@ -33,7 +34,7 @@ function mapReasonCode(reason: string): Article["reasonCode"] {
 
 function articleBase(
   dto: ArticleDto,
-  coordinate: components["schemas"]["Coordinate"],
+  coordinate: components["schemas"]["Coordinate"] | null,
   reasonCode: Article["reasonCode"],
   scoreVersion: string,
 ): Article {
@@ -41,18 +42,20 @@ function articleBase(
     id: dto.id,
     issueId: dto.issue_id ?? "unclustered",
     sourceId: dto.source_id,
-    source: dto.source,
-    title: dto.title,
-    dek: dto.summary,
+    source: decodeHtmlEntities(dto.source),
+    title: decodeHtmlEntities(dto.title),
+    dek: decodeHtmlEntities(dto.summary),
     publishedAt: dto.published_at ?? "",
     originalUrl: dto.canonical_url,
     reasonCode,
-    x: coordinate.x,
-    y: coordinate.y,
-    z: coordinate.z,
-    sensationalism: coordinate.sensationalism ?? null,
-    confidence: coordinate.confidence,
+    x: coordinate?.x ?? 0,
+    y: coordinate?.y ?? 0,
+    z: coordinate?.z ?? 0,
+    sensationalism: coordinate?.sensationalism ?? null,
+    confidence: coordinate?.confidence ?? 0,
     scoreVersion,
+    analysisStatus: dto.analysis_status ?? (coordinate ? "READY" : "PROCESSING"),
+    analysisProvider: dto.analysis_provider ?? null,
     stale: dto.status.toLowerCase() === "stale",
     claims: [],
   };
@@ -63,10 +66,10 @@ export function mapFeedItem(dto: FeedItemDto): Article {
     id: dto.article_id,
     issueId: dto.issue_id,
     sourceId: "",
-    source: dto.source,
-    title: dto.title,
+    source: decodeHtmlEntities(dto.source),
+    title: decodeHtmlEntities(dto.title),
     dek: "",
-    publishedAt: "",
+    publishedAt: dto.published_at ?? "",
     originalUrl: "",
     reasonCode: mapReasonCode(dto.reason_code),
     x: dto.coordinate.x,
@@ -74,7 +77,9 @@ export function mapFeedItem(dto: FeedItemDto): Article {
     z: dto.coordinate.z,
     sensationalism: dto.coordinate.sensationalism ?? null,
     confidence: dto.coordinate.confidence,
-    scoreVersion: "current",
+    scoreVersion: dto.score_version_id,
+    analysisStatus: dto.analysis_status,
+    analysisProvider: dto.analysis_provider,
     claims: [],
   };
 }
@@ -83,8 +88,8 @@ export function mapFeedPage(dto: FeedPageDto): CursorPage<Article> {
   return { items: dto.items.map(mapFeedItem), next_cursor: dto.next_cursor ?? null };
 }
 
-export function mapArticle(dto: ArticleDto, score: ScoreDto): Article {
-  return articleBase(dto, score, "RECENT_HIGH_CONFIDENCE", score.score_version_id ?? score.id);
+export function mapArticle(dto: ArticleDto, score: ScoreDto | null): Article {
+  return articleBase(dto, score, "RECENT_HIGH_CONFIDENCE", score?.score_version_id ?? score?.id ?? "분석 준비 중");
 }
 
 export function mapArticleWithCoordinate(dto: ArticleWithCoordinateDto): Article {
@@ -99,10 +104,16 @@ export function mapIssue(dto: IssueDto | IssueDetailDto): Issue {
   const status = dto.status.toLowerCase();
   return {
     id: dto.id,
-    title: dto.title,
-    summary: dto.summary,
+    title: decodeHtmlEntities(dto.title),
+    summary: decodeHtmlEntities(dto.summary),
     topic: "일반",
     status: ["active", "open"].includes(status) && dto.article_ids.length >= 2 ? "balanced" : "preparing",
+    kind: dto.kind ?? "TOPIC",
+    sourceCount: dto.source_count ?? 0,
+    analysisStatus: dto.analysis_status ?? "PROCESSING",
+    dataAsOf: dto.data_as_of ?? null,
+    freshnessStatus: dto.freshness_status ?? "CURRENT",
+    editorialPriority: dto.editorial_priority ?? null,
     updatedAt: dto.last_activity_at,
     articleIds: dto.article_ids,
   };
@@ -115,7 +126,7 @@ export function mapIssuePage(dto: IssuePageDto): CursorPage<Issue> {
 export function mapVisualizationPoint(dto: VisualizationPointDto): VisualizationPoint {
   return {
     id: dto.entity_id,
-    label: dto.label,
+    label: decodeHtmlEntities(dto.label),
     type: dto.entity_type,
     x: dto.x,
     y: dto.y,
@@ -129,4 +140,45 @@ export function mapVisualizationPoint(dto: VisualizationPointDto): Visualization
 
 export function mapVisualizationPointPage(dto: VisualizationPointPageDto): CursorPage<VisualizationPoint> {
   return { items: dto.items.map(mapVisualizationPoint), next_cursor: dto.next_cursor ?? null };
+}
+
+export function mapIssueComparison(dto: IssueComparison): IssueComparison {
+  return {
+    ...dto,
+    issue: {
+      ...dto.issue,
+      title: decodeHtmlEntities(dto.issue.title),
+      summary: decodeHtmlEntities(dto.issue.summary),
+    },
+    common_facts: dto.common_facts.map((fact) => ({
+      ...fact,
+      text: decodeHtmlEntities(fact.text),
+      evidence_refs: fact.evidence_refs.map(decodeHtmlEntities),
+    })),
+    dimensions: dto.dimensions.map((dimension) => ({
+      ...dimension,
+      label: decodeHtmlEntities(dimension.label),
+    })),
+    articles: dto.articles.map((entry) => ({
+      ...entry,
+      article: {
+        ...entry.article,
+        source: decodeHtmlEntities(entry.article.source),
+        title: decodeHtmlEntities(entry.article.title),
+        summary: decodeHtmlEntities(entry.article.summary),
+        author: entry.article.author === null ? null : decodeHtmlEntities(entry.article.author),
+      },
+      assessment: {
+        ...entry.assessment,
+        summary: decodeHtmlEntities(entry.assessment.summary),
+      },
+      frame: {
+        ...entry.frame,
+        headline_frame: entry.frame.headline_frame === null ? null : decodeHtmlEntities(entry.frame.headline_frame),
+        emphasis: entry.frame.emphasis.map(decodeHtmlEntities),
+        omissions_note: entry.frame.omissions_note === null ? null : decodeHtmlEntities(entry.frame.omissions_note),
+        evidence_refs: entry.frame.evidence_refs.map(decodeHtmlEntities),
+      },
+    })),
+  };
 }

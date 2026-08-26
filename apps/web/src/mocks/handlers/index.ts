@@ -31,6 +31,8 @@ const apiArticles = articles.map((article): ArticleDto => ({
   published_at: article.publishedAt,
   canonical_url: article.originalUrl,
   current_version_id: article.scoreVersion,
+  analysis_status: article.analysisStatus,
+  analysis_provider: article.analysisProvider,
   status: article.stale ? "stale" : "active",
 }));
 
@@ -41,6 +43,12 @@ const apiIssues = issues.map((issue) => ({
   status: issue.status === "balanced" ? "active" : "candidate",
   version: 1,
   article_ids: issue.articleIds,
+  kind: issue.kind,
+  source_count: issue.sourceCount,
+  analysis_status: issue.analysisStatus,
+  data_as_of: issue.dataAsOf,
+  freshness_status: issue.freshnessStatus,
+  editorial_priority: issue.editorialPriority,
   opened_at: issue.updatedAt,
   last_activity_at: issue.updatedAt,
 }));
@@ -67,6 +75,11 @@ export const handlers = [
     level: 1,
     tier: "Explorer",
     policy_version: "tier-v1",
+    read_article_count: 1,
+    compared_issue_count: 1,
+    source_diversity_count: 1,
+    self_reported_profile: null,
+    behavioral_profile: null,
   })),
   http.get(`${prefix}/me/credits`, () => HttpResponse.json({
     items: [{
@@ -128,6 +141,10 @@ export const handlers = [
         title: article.title,
         source: article.source,
         coordinate: { x: article.x, y: article.y, z: article.z, sensationalism: article.sensationalism, confidence: article.confidence },
+        published_at: article.publishedAt,
+        analysis_provider: "openai",
+        analysis_status: "READY",
+        score_version_id: article.scoreVersion,
         reason_code: article.reasonCode === "ADJACENT_VIEW" ? "ADJACENT_PERSPECTIVE" : article.reasonCode === "RECENT_HIGH_CONFIDENCE" ? "QUALITY" : "FALLBACK_BALANCED",
         rank: index + 1,
       })),
@@ -146,8 +163,42 @@ export const handlers = [
   }),
   http.get(`${prefix}/articles/:articleId/score`, ({ params }) => {
     const article = articles.find((item) => item.id === params.articleId);
-    const body: ScoreDto | undefined = article ? { id: article.scoreVersion, article_version_id: article.scoreVersion, x: article.x, y: article.y, z: article.z, sensationalism: article.sensationalism, confidence: article.confidence, components: {}, status: "ACTIVE", created_at: article.publishedAt } : undefined;
+    const body: ScoreDto | undefined = article ? { id: article.scoreVersion, article_version_id: article.scoreVersion, x: article.x, y: article.y, z: article.z, sensationalism: article.sensationalism, confidence: article.confidence, components: {}, status: "ACTIVE", analysis_provider: "openai", analysis_status: "READY", created_at: article.publishedAt } : undefined;
     return body ? HttpResponse.json(mockResponse("ScoreView", body)) : HttpResponse.json(errorEnvelope("NOT_FOUND", "점수를 찾을 수 없습니다."), { status: 404 });
+  }),
+  http.get(`${prefix}/articles/:articleId/assessments`, ({ params }) => {
+    const article = articles.find((item) => item.id === params.articleId);
+    if (!article) return HttpResponse.json(errorEnvelope("NOT_FOUND", "분석을 찾을 수 없습니다."), { status: 404 });
+    return HttpResponse.json(mockResponse("AssessmentPage", {
+      article_version_id: article.scoreVersion,
+      assessments: [{
+        id: `assessment-${article.id}`,
+        model_alias: "openai-bias-v1",
+        actual_model_id: "gpt-5.6-luna",
+        prompt_version: "bias-sensationalism-v1",
+        summary: article.claims[0] ?? "공개 가능한 분석 요약이 없습니다.",
+        evidence: article.claims.map((quote) => ({ quote })),
+        confidence: article.confidence,
+        provider: "openai",
+        created_at: article.publishedAt,
+        synthetic: false,
+      }],
+    }));
+  }),
+  http.get(`${prefix}/articles/:articleId/score-history`, ({ params }) => {
+    const article = articles.find((item) => item.id === params.articleId);
+    if (!article) return HttpResponse.json(errorEnvelope("NOT_FOUND", "점수 이력을 찾을 수 없습니다."), { status: 404 });
+    return HttpResponse.json(mockResponse("Page", {
+      items: [{
+        id: article.scoreVersion,
+        score_version_id: article.scoreVersion,
+        x: article.x,
+        sensationalism: article.sensationalism,
+        confidence: article.confidence,
+        created_at: article.publishedAt,
+      }],
+      next_cursor: null,
+    }));
   }),
   http.get(`${prefix}/issues/:issueId/articles`, ({ params }) => {
     const items = articles.filter((article) => article.issueId === params.issueId).map((article) => ({
@@ -171,7 +222,19 @@ export const handlers = [
     credit_delta: 12,
     reason_code: "ELIGIBLE",
   } satisfies ReadResult))),
-  http.get(`${prefix}/articles/:articleId/vote`, () => HttpResponse.json(errorEnvelope("NOT_FOUND", "활성 투표를 찾을 수 없습니다."), { status: 404 })),
+  http.get(`${prefix}/articles/:articleId/vote`, ({ params }) => (
+    params.articleId === "article-05"
+      ? HttpResponse.json(errorEnvelope("AUTH_REQUIRED", "로그인이 필요합니다."), { status: 401 })
+      : HttpResponse.json(errorEnvelope("NOT_FOUND", "활성 투표를 찾을 수 없습니다."), { status: 404 })
+  )),
+  http.get(`${prefix}/articles/:articleId/votes/aggregate`, () => HttpResponse.json({
+    qualified: { x: null, y: null, z: null, sensationalism: null },
+    qualified_count: 0,
+    small_segments_suppressed: true,
+    snapshot_version: null,
+    generated_at: null,
+    status: "ready",
+  })),
   http.put(`${prefix}/articles/:articleId/vote`, async ({ request }) => {
     const body = await request.json() as Pick<VoteView, "x" | "y" | "z" | "sensationalism">;
     return HttpResponse.json(mockResponse("VoteView", {

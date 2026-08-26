@@ -2,10 +2,12 @@
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "./client";
+import { ApiError } from "./client";
 import {
   mapArticle,
   mapArticlePage,
   mapFeedPage,
+  mapIssueComparison,
   mapIssue,
   mapIssuePage,
   mapVisualizationPointPage,
@@ -17,6 +19,7 @@ import {
   type ScoreDto,
   type VisualizationPointPageDto,
 } from "./mappers";
+import type { IssueComparison, Vote, VoteAggregate } from "./types";
 
 function flattenPages<T>(pages: Array<{ items: T[]; next_cursor: string | null }> | undefined) {
   if (!pages) return undefined;
@@ -26,23 +29,12 @@ function flattenPages<T>(pages: Array<{ items: T[]; next_cursor: string | null }
   };
 }
 
-async function loadAllVisualizationPages(
+async function loadVisualizationSample(
   type: "article" | "user" | "source",
 ): Promise<VisualizationPointPageDto["items"]> {
-  const items: VisualizationPointPageDto["items"] = [];
-  const seenCursors = new Set<string>();
-  let cursor: string | null = null;
-  do {
-    const params = new URLSearchParams({ type });
-    if (cursor) params.set("cursor", cursor);
-    const page = await apiRequest<VisualizationPointPageDto>(`/visualization/points?${params}`);
-    items.push(...page.items);
-    if (!page.next_cursor) break;
-    if (seenCursors.has(page.next_cursor)) throw new Error("Visualization cursor cycle detected");
-    seenCursors.add(page.next_cursor);
-    cursor = page.next_cursor;
-  } while (cursor);
-  return items;
+  const params = new URLSearchParams({ type });
+  const page = await apiRequest<VisualizationPointPageDto>(`/visualization/points?${params}`);
+  return page.items;
 }
 
 export function useFeedQuery() {
@@ -72,6 +64,14 @@ export function useIssuesQuery() {
   return { ...query, data: flattenPages(query.data?.pages) };
 }
 
+export function useViewerQuery() {
+  return useQuery({
+    queryKey: ["me"],
+    queryFn: () => apiRequest<{ id: string }>("/me", { authFailureMode: "return-error" }),
+    retry: false,
+  });
+}
+
 export function useIssueQuery(issueId: string) {
   return useQuery({
     queryKey: ["issue", issueId],
@@ -86,15 +86,31 @@ export function useIssueArticlesQuery(issueId: string) {
   });
 }
 
+export function useIssueComparisonQuery(issueId: string, articleIds: string[]) {
+  const normalizedIds = [...articleIds].sort();
+  return useQuery({
+    queryKey: ["issue", issueId, "comparison", normalizedIds],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      for (const articleId of normalizedIds) params.append("article_ids", articleId);
+      return mapIssueComparison(await apiRequest<IssueComparison>(
+        `/issues/${encodeURIComponent(issueId)}/comparison?${params}`,
+      ));
+    },
+    enabled: normalizedIds.length >= 2 && normalizedIds.length <= 4,
+  });
+}
+
 export function useArticleQuery(articleId: string) {
   return useQuery({
     queryKey: ["article", articleId],
     queryFn: async () => {
       const id = encodeURIComponent(articleId);
-      const [article, score] = await Promise.all([
-        apiRequest<ArticleDto>(`/articles/${id}`),
-        apiRequest<ScoreDto>(`/articles/${id}/score`),
-      ]);
+      const article = await apiRequest<ArticleDto>(`/articles/${id}`);
+      const score = await apiRequest<ScoreDto>(`/articles/${id}/score`).catch((error: unknown) => {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      });
       return mapArticle(article, score);
     },
   });
@@ -119,7 +135,7 @@ export function useVisualizationPointsQuery() {
     queryKey: ["visualization", "points"],
     queryFn: async () => {
       const types = ["article", "user", "source"] as const;
-      const pages = await Promise.all(types.map(loadAllVisualizationPages));
+      const pages = await Promise.all(types.map(loadVisualizationSample));
       return mapVisualizationPointPage({
         items: pages.flat(),
         next_cursor: null,
@@ -131,7 +147,53 @@ export function useVisualizationPointsQuery() {
 export function useVoteMutation(articleId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: { x: number; y: number; z: number; sensationalism: number }) => apiRequest(`/articles/${articleId}/vote`, { method: "PUT", body: JSON.stringify(payload) }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["article", articleId, "votes"] }),
+    mutationFn: (payload: { x: number; y: number; z: number; sensationalism: number }) => apiRequest<Vote>(`/articles/${articleId}/vote`, { method: "PUT", body: JSON.stringify(payload) }),
+    onSuccess: (vote) => {
+      queryClient.setQueryData(["article", articleId, "my-vote"], vote);
+      void queryClient.invalidateQueries({ queryKey: ["article", articleId, "vote-aggregate"] });
+      void queryClient.invalidateQueries({ queryKey: ["issue"] });
+      void queryClient.invalidateQueries({ queryKey: ["me", "progress"] });
+      void queryClient.invalidateQueries({ queryKey: ["visualization", "points"] });
+    },
+  });
+}
+
+export function useMyVoteQuery(articleId: string) {
+  return useQuery({
+    queryKey: ["article", articleId, "my-vote"],
+    queryFn: async (): Promise<Vote | null> => {
+      try {
+        return await apiRequest<Vote>(`/articles/${encodeURIComponent(articleId)}/vote`, {
+          authFailureMode: "return-error",
+        });
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    retry: false,
+  });
+}
+
+export function useVoteAggregateQuery(articleId: string) {
+  return useQuery({
+    queryKey: ["article", articleId, "vote-aggregate"],
+    queryFn: () => apiRequest<VoteAggregate>(
+      `/articles/${encodeURIComponent(articleId)}/votes/aggregate`,
+    ),
+  });
+}
+
+export function useDeleteVoteMutation(articleId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiRequest<void>(`/articles/${encodeURIComponent(articleId)}/vote`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: ["article", articleId, "my-vote"] });
+      void queryClient.invalidateQueries({ queryKey: ["article", articleId, "vote-aggregate"] });
+      void queryClient.invalidateQueries({ queryKey: ["issue"] });
+      void queryClient.invalidateQueries({ queryKey: ["me", "progress"] });
+      void queryClient.invalidateQueries({ queryKey: ["visualization", "points"] });
+    },
   });
 }

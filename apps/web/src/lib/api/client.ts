@@ -21,21 +21,25 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+export type AuthFailureMode = "redirect" | "return-error";
+export type ApiRequestInit = RequestInit & { authFailureMode?: AuthFailureMode };
+
+export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promise<T> {
   if (typeof window !== "undefined" && isMockMode()) {
     const { startMockWorker } = await import("@/mocks/browser");
     await startMockWorker();
   }
-  const headers = new Headers(init?.headers);
+  const { authFailureMode = "redirect", ...requestInit } = init ?? {};
+  const headers = new Headers(requestInit.headers);
   headers.set("Content-Type", "application/json");
-  const method = (init?.method ?? "GET").toUpperCase();
+  const method = (requestInit.method ?? "GET").toUpperCase();
   const csrf = browserCookie("csrf");
   if (!SAFE_METHODS.has(method) && csrf && !headers.has("X-CSRF-Token")) {
     headers.set("X-CSRF-Token", csrf);
   }
 
   const response = await fetch(`${API_PREFIX}${path}`, {
-    ...init,
+    ...requestInit,
     credentials: "include",
     headers,
   });
@@ -46,7 +50,7 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
     };
     const candidate = await response.json().catch(() => fallback) as Partial<ApiErrorBody>;
     const body = candidate.error?.message ? candidate as ApiErrorBody : fallback;
-    if (typeof window !== "undefined") {
+    if (typeof window !== "undefined" && authFailureMode === "redirect") {
       const returnTo = `${window.location.pathname}${window.location.search}`;
       if (response.status === 401) window.dispatchEvent(new CustomEvent("api-auth-redirect", { detail: `/login?returnTo=${encodeURIComponent(returnTo)}` }));
       if (response.status === 403 && body.error.code === "CONSENT_REQUIRED") window.dispatchEvent(new CustomEvent("api-auth-redirect", { detail: `/onboarding/consent?returnTo=${encodeURIComponent(returnTo)}` }));

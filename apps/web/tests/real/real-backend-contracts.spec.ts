@@ -1,6 +1,25 @@
 import { expect, test } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 
 const memberHeaders = { "X-Debug-Role": "MEMBER", "X-CSRF-Token": "local-csrf" };
+
+test("public issue comparison is accessible and does not overflow on mobile", async ({ page }) => {
+  const issues = await page.request.get("/api/v1/issues");
+  expect(issues.status()).toBe(200);
+  const issueId = ((await issues.json()) as { items: Array<{ id: string }> }).items[0].id;
+
+  await page.goto(`/issues/${issueId}`);
+  await expect(page.getByRole("heading", { name: "보도들이 함께 확인한 사건의 바탕" })).toBeVisible();
+  const desktop = await new AxeBuilder({ page }).analyze();
+  expect(desktop.violations.filter(({ impact }) => impact === "critical" || impact === "serious")).toEqual([]);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await expect(page.getByRole("region", { name: "선택한 기사 비교" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  const mobile = await new AxeBuilder({ page }).analyze();
+  expect(mobile.violations.filter(({ impact }) => impact === "critical" || impact === "serious")).toEqual([]);
+});
 
 test("real OAuth challenge callback creates a session and restores returnTo", async ({ page }) => {
   const callbackUri = "http://127.0.0.1:3100/api/v1/auth/mock/callback";

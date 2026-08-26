@@ -1,5 +1,48 @@
 import type { AxisScores } from "./types";
 
+const HTML_ENTITIES: Readonly<Record<string, string>> = {
+  amp: "&",
+  apos: "'",
+  gt: ">",
+  hellip: "…",
+  laquo: "«",
+  ldquo: "“",
+  lsquo: "‘",
+  lt: "<",
+  mdash: "—",
+  middot: "·",
+  nbsp: "\u00a0",
+  ndash: "–",
+  quot: '"',
+  raquo: "»",
+  rdquo: "”",
+  rsquo: "’",
+};
+
+function decodeHtmlEntitiesOnce(value: string): string {
+  return value.replace(/&(#x[\da-f]+|#\d+|[a-z][\da-z]+);/gi, (match, entity: string) => {
+    if (entity[0] !== "#") return HTML_ENTITIES[entity.toLowerCase()] ?? match;
+    const hexadecimal = entity[1]?.toLowerCase() === "x";
+    const codePoint = Number.parseInt(entity.slice(hexadecimal ? 2 : 1), hexadecimal ? 16 : 10);
+    if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return match;
+    try {
+      return String.fromCodePoint(codePoint);
+    } catch {
+      return match;
+    }
+  });
+}
+
+export function decodeHtmlEntities(value: string): string {
+  let decoded = value;
+  for (let pass = 0; pass < 3; pass += 1) {
+    const next = decodeHtmlEntitiesOnce(decoded);
+    if (next === decoded) break;
+    decoded = next;
+  }
+  return decoded;
+}
+
 export const AXIS_META = {
   x: { short: "편향성", negative: "좌편향", positive: "우편향" },
 } as const;
@@ -39,6 +82,28 @@ export function formatConfidence(value: number): string {
   const bounded = Math.min(1, Math.max(0, value));
   const label = bounded >= 0.8 ? "높음" : bounded >= 0.6 ? "보통" : "낮음";
   return `${label} · ${Math.round(bounded * 100)}%`;
+}
+
+export function formatPublishedDate(value: string): string {
+  if (!value) return "게시일 미확인";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "게시일 미확인";
+  return new Intl.DateTimeFormat("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "Asia/Seoul",
+  }).format(date);
+}
+
+export function formatDataAsOf(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "데이터 기준일 확인 중";
+  return `데이터 기준 ${new Intl.DateTimeFormat("ko-KR", {
+    month: "long",
+    day: "numeric",
+    timeZone: "Asia/Seoul",
+  }).format(date)}`;
 }
 
 export function validateScores(scores: AxisScores): boolean {

@@ -13,25 +13,23 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("visualization pagination", () => {
-  it("loads every cursor page for article, user, and source points", async () => {
+describe("visualization sampling", () => {
+  it("loads one bounded page for article, user, and source points", async () => {
     mocks.apiRequest.mockImplementation(async (path: string) => {
       const url = new URL(path, "https://example.test");
       const type = url.searchParams.get("type") as "article" | "user" | "source";
-      const cursor = url.searchParams.get("cursor");
-      const suffix = cursor ? "-2" : "-1";
       return {
         items: [{
           entity_type: type,
-          entity_id: `${type}${suffix}`,
-          label: `${type}${suffix}`,
+          entity_id: `${type}-sample`,
+          label: `${type}-sample`,
           x: 0,
           y: 0,
           z: 0,
           sensationalism: 0,
           confidence: 1,
         }],
-        next_cursor: cursor ? null : `${type}-next`,
+        next_cursor: `${type}-next`,
       };
     });
 
@@ -46,15 +44,13 @@ describe("visualization pagination", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
     expect(result.current.data?.items.map((item) => item.id)).toEqual([
-      "article-1",
-      "article-2",
-      "user-1",
-      "user-2",
-      "source-1",
-      "source-2",
+      "article-sample",
+      "user-sample",
+      "source-sample",
     ]);
-    expect(mocks.apiRequest).toHaveBeenCalledWith(
-      "/visualization/points?type=article&cursor=article-next",
+    expect(mocks.apiRequest).toHaveBeenCalledTimes(3);
+    expect(mocks.apiRequest).not.toHaveBeenCalledWith(
+      expect.stringContaining("cursor="),
     );
   });
 });

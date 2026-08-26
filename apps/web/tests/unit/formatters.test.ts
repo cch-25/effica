@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampScore, formatAxis, formatBiasScore, formatConfidence, formatSensationalismScore, getBiasLabel, validateScores } from "@/lib/api/formatters";
+import { clampScore, decodeHtmlEntities, formatAxis, formatBiasScore, formatConfidence, formatSensationalismScore, getBiasLabel, validateScores } from "@/lib/api/formatters";
 
 describe("coordinate formatters", () => {
   it("clamps coordinates to the documented range", () => { expect(clampScore(121)).toBe(100); expect(clampScore(-121)).toBe(-100); });
@@ -21,4 +21,8 @@ describe("coordinate formatters", () => {
     expect(formatSensationalismScore(120)).toBe("100/100");
   });
   it("validates bias, sensationalism, and zeroed compatibility axes", () => { expect(validateScores({ x: 0, y: 0, z: 0, sensationalism: 50, confidence: .5 })).toBe(true); expect(validateScores({ x: 0, y: -100, z: 100, sensationalism: 50, confidence: .5 })).toBe(false); expect(validateScores({ x: 101, y: 0, z: 0, sensationalism: 0, confidence: .5 })).toBe(false); });
+  it("decodes repeated named and numeric HTML entities in display text", () => {
+    expect(decodeHtmlEntities("&amp;#039;인용&amp;#039; &amp;middot; 안내 &#x2026;")).toBe("'인용' · 안내 …");
+    expect(decodeHtmlEntities("알 수 없는 &not-a-real-entity;")).toBe("알 수 없는 &not-a-real-entity;");
+  });
 });
