@@ -430,7 +430,13 @@ async def _insert_articles(connection: Any, articles: list[dict[str, Any]]) -> N
                 "bias": bias,
                 "sensationalism": sensationalism,
                 "confidence": confidence,
-                "evidence": json.dumps(assessment["evidence"], ensure_ascii=False),
+                "evidence": json.dumps(
+                    {
+                        "rationale_summary": assessment["rationale_summary"],
+                        "evidence": assessment["evidence"],
+                    },
+                    ensure_ascii=False,
+                ),
                 "token_usage": int(assessment["token_usage"]),
                 "latency_ms": int(assessment["latency_ms"]),
                 "created_at": fetched_at,

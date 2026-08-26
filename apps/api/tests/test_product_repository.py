@@ -171,7 +171,7 @@ async def test_db_product_engagement_vertical_slice() -> None:
                     z=0,
                     sensationalism=25,
                     confidence=0.75,
-                    evidence_json={"summary": "검증된 OpenAI 분석", "synthetic": False},
+                    evidence_json=[],
                     raw_response_ref=None,
                     token_usage=100,
                     latency_ms=50,
@@ -189,8 +189,9 @@ async def test_db_product_engagement_vertical_slice() -> None:
                     confidence=0.75,
                     components_json={
                         "model": 1.0,
-                        "analysis_provider": "openai",
-                        "assessment_ids": [assessment_id],
+                        "분석방식": "LLM",
+                        "모델평가ID": assessment_id,
+                        "근거요약": "검증된 OpenAI 분석",
                     },
                     status=ScoreStatus.ACTIVE,
                     created_at=now,
@@ -198,6 +199,11 @@ async def test_db_product_engagement_vertical_slice() -> None:
             ]
         )
         await session.commit()
+
+        assessment_page = await repository.assessment_view(article_id)
+        assert assessment_page is not None
+        assert assessment_page["assessments"][0]["summary"] == "검증된 OpenAI 분석"
+        assert assessment_page["assessments"][0]["evidence"] == []
 
         feed, personalized = await repository.feed_items(
             user_id=user_id, personalized_requested=True

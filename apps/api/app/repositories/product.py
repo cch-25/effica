@@ -54,7 +54,9 @@ from apps.api.app.db.ulid import new_ulid
 from apps.api.app.db.utc import utc_now
 from apps.api.app.domains.content.trust import (
     is_trusted_openai_assessment,
+    public_assessment_evidence,
     public_assessment_summary,
+    public_score_assessment_summary,
     score_matches_trusted_assessments,
 )
 from apps.api.app.domains.engagement.read import evaluate_read_eligibility
@@ -698,12 +700,7 @@ class ProductRepositoryMixin:
             score = scores_by_version[version_id]
             assessment, alias = assessments_by_version[version_id][0]
             evidence_json = assessment.evidence_json
-            if isinstance(evidence_json, dict):
-                evidence = evidence_json.get("evidence", [])
-            elif isinstance(evidence_json, list):
-                evidence = evidence_json
-            else:
-                evidence = []
+            evidence = public_assessment_evidence(evidence_json)
             aggregate = aggregates.get(article_id)
             aggregate_payload = aggregate.aggregate_json if aggregate is not None else {}
             qualified = aggregate_payload.get("qualified", {})
@@ -804,9 +801,9 @@ class ProductRepositoryMixin:
             return None
         article = context[0]
         analysis = await self._analysis_context()
-        rows = analysis.get(article.current_version_id or "", {}).get(
-            "trusted_assessments", []
-        )
+        analysis_row = analysis.get(article.current_version_id or "", {})
+        rows = analysis_row.get("trusted_assessments", [])
+        score = analysis_row.get("score")
         return {
             "article_version_id": article.current_version_id,
             "assessments": [
@@ -815,9 +812,12 @@ class ProductRepositoryMixin:
                     "model_alias": alias.alias,
                     "actual_model_id": alias.actual_model_id,
                     "prompt_version": assessment.prompt_version,
-                    "summary": public_assessment_summary(assessment.evidence_json),
+                    "summary": public_assessment_summary(
+                        assessment.evidence_json,
+                        fallback=public_score_assessment_summary(score, assessment.id),
+                    ),
                     "confidence": float(assessment.confidence),
-                    "evidence": assessment.evidence_json,
+                    "evidence": public_assessment_evidence(assessment.evidence_json),
                     "provider": "openai",
                     "created_at": assessment.created_at,
                     "synthetic": False,

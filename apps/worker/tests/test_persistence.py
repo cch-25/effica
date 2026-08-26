@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 from apps.api.app.jobs.payloads import JobPayloadError, validate_job_payload
@@ -179,6 +180,7 @@ def test_mariadb_applier_allocates_revisioned_snapshots_and_canonical_alias_ids(
             self.alias_ids: dict[str, str] = {}
             self.snapshots: list[dict[str, Any]] = []
             self.assessment_alias_ids: list[str] = []
+            self.assessment_evidence: list[str] = []
 
         def begin(self):
             return Transaction()
@@ -202,6 +204,7 @@ def test_mariadb_applier_allocates_revisioned_snapshots_and_canonical_alias_ids(
                 return [] if alias_id is None else [{"id": alias_id}]
             if "insert into model_assessments" in query:
                 self.assessment_alias_ids.append(params["alias_id"])
+                self.assessment_evidence.append(params["evidence_json"])
             return []
 
     async def scenario() -> None:
@@ -220,11 +223,25 @@ def test_mariadb_applier_allocates_revisioned_snapshots_and_canonical_alias_ids(
         else:  # pragma: no cover - assertion makes snapshot overwrite regressions clear.
             raise AssertionError("stale aggregate revision was accepted")
 
-        analysis = {"article_version_id": "version-1", "assessments": [{"model_alias": "shared", "x": 1}]}
+        analysis = {
+            "article_version_id": "version-1",
+            "assessments": [
+                {
+                    "model_alias": "shared",
+                    "x": 1,
+                    "evidence": [],
+                    "rationale_summary": "Restrained and factual reporting.",
+                }
+            ],
+        }
         await applier.apply(Job(id="01ANALYSIS1", job_type="analyze"), analysis)
         await applier.apply(Job(id="01ANALYSIS2", job_type="analyze"), analysis)
         assert len(session.assessment_alias_ids) == 2
         assert session.assessment_alias_ids[0] == session.assessment_alias_ids[1]
+        assert json.loads(session.assessment_evidence[0]) == {
+            "evidence": [],
+            "rationale_summary": "Restrained and factual reporting.",
+        }
 
     asyncio.run(scenario())
 

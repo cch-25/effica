@@ -14,6 +14,8 @@ from apps.api.app.db.models import Issue, Job, ModelAlias, Source, SourceAdapter
 from apps.api.app.db.ulid import new_ulid
 from apps.api.app.domains.content.trust import (
     is_trusted_openai_assessment,
+    public_assessment_evidence,
+    public_assessment_summary,
     score_matches_trusted_assessments,
 )
 from apps.api.app.main import EXPECTED_DB_REVISION
@@ -136,6 +138,16 @@ def test_public_trust_filter_rejects_dummy_synthetic_and_unlinked_scores() -> No
         ),
         [(assessment, alias)],
     )
+    assert score_matches_trusted_assessments(
+        SimpleNamespace(
+            components_json={
+                "분석방식": "LLM",
+                "모델평가ID": "assessment-1",
+                "근거요약": "기존 시드의 공개 요약",
+            }
+        ),
+        [(assessment, alias)],
+    )
     assert not score_matches_trusted_assessments(
         SimpleNamespace(
             components_json={
@@ -145,6 +157,24 @@ def test_public_trust_filter_rejects_dummy_synthetic_and_unlinked_scores() -> No
         ),
         [(assessment, alias)],
     )
+
+
+def test_public_assessment_content_preserves_summary_and_has_an_honest_empty_fallback() -> None:
+    stored = {
+        "rationale_summary": "수치와 절차 중심의 중립적인 행정 안내입니다.",
+        "evidence": [],
+        "synthetic": False,
+    }
+
+    assert public_assessment_summary(stored) == "수치와 절차 중심의 중립적인 행정 안내입니다."
+    assert public_assessment_summary(
+        {"summary": "이전 요약", "rationale_summary": "검증된 최신 요약", "evidence": []}
+    ) == "검증된 최신 요약"
+    assert public_assessment_evidence(stored) == []
+    assert public_assessment_evidence([{"quote": "기존 저장 형식"}]) == [
+        {"quote": "기존 저장 형식"}
+    ]
+    assert public_assessment_summary([]) == "공개 가능한 근거 인용이 제공되지 않았습니다."
 
 
 @pytest.mark.asyncio

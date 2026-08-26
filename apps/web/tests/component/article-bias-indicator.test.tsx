@@ -64,4 +64,37 @@ describe("기사 LLM 편향 표시", () => {
     expect(screen.queryByText("사회문화")).not.toBeInTheDocument();
     expect(screen.queryByText("국가·대외")).not.toBeInTheDocument();
   });
+
+  it("빈 근거 기록에 기존의 모순된 공개 근거 문구를 표시하지 않는다", () => {
+    mocks.useArticleQuery.mockReturnValue({ isPending: false, isError: false, data: article });
+    mocks.useArticleAnalysisQuery.mockReturnValue({
+      isPending: false,
+      isError: false,
+      data: {
+        assessments: {
+          article_version_id: "v1",
+          assessments: [{
+            id: "assessment-1",
+            model_alias: "openai-bias-v1",
+            actual_model_id: "gpt-5.6-luna",
+            prompt_version: "bias-sensationalism-v1",
+            summary: "제한 공개 근거를 확인할 수 있습니다.",
+            evidence: [],
+            confidence: 0.99,
+            provider: "openai",
+            created_at: "2026-08-16T00:00:00Z",
+            synthetic: false,
+          }],
+        },
+        history: { items: [] },
+      },
+    });
+    mocks.useViewerQuery.mockReturnValue({ data: undefined });
+
+    render(<RealArticleDetail articleId={article.id} />);
+
+    expect(screen.getByText("공개 근거 없음")).toBeVisible();
+    expect(screen.getByText("공개 가능한 근거 인용이 제공되지 않았습니다.")).toBeVisible();
+    expect(screen.queryByText("제한 공개 근거를 확인할 수 있습니다.")).not.toBeInTheDocument();
+  });
 });
