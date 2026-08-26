@@ -15,7 +15,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   return (
     <section className="card form-card">
       <Link className="form-brand" href="/">EFFICA</Link>
-      <p className="eyebrow">Welcome between views</p><h1>한쪽이 아닌,<br />사이를 읽는 시작.</h1>
+      <p className="eyebrow">Welcome between views</p><h1>한쪽이 아닌, 사이를 읽는 시작.</h1>
       <p className="form-card__intro">로그인 후 별도 동의와 설문을 완료하면 관점을 넓히는 맞춤 피드를 볼 수 있습니다.</p>
       {oauthError ? <p role="alert" className="form-error">{oauthError}</p> : null}
       <LoginOptions returnTo={returnTo} />

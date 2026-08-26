@@ -173,7 +173,7 @@ body::after {
   right: 5%;
   color: var(--crouwel-red);
   content: "+\00a0 +\00a0 ×";
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: clamp(1.3rem, 2.5vw, 2.7rem);
   font-weight: 800;
   letter-spacing: -0.18em;
@@ -740,7 +740,7 @@ body::after {
 /* Product title face. Keep the named family first so a licensed Effica webfont
  * can be dropped in without touching component styles. */
 :root {
-  --font-title: "Effica", "Arial Narrow", "Helvetica Neue", "Apple SD Gothic Neo", Arial, sans-serif;
+  --font-title: "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
 
 h1,
@@ -896,7 +896,7 @@ h6,
 
 .perspective-solid__readout dt {
   color: var(--gray-400);
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.6rem;
   letter-spacing: 0.05em;
 }
@@ -917,7 +917,7 @@ h6,
   padding-top: 13px;
   border-top: 4px solid var(--crouwel-yellow);
   color: var(--gray-400);
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.58rem;
 }
 
@@ -936,7 +936,7 @@ h6,
   padding: 6px 0;
   border-top: 1px solid var(--black);
   border-bottom: 1px solid var(--black);
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.62rem;
 }
 

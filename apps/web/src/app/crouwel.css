@@ -40,7 +40,7 @@ body {
 
 .sidebar__register,
 .system-rail {
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.09em;
@@ -87,7 +87,7 @@ body {
 
 .brand small,
 .profile-chip small {
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.57rem;
   letter-spacing: 0.02em;
 }
@@ -135,7 +135,7 @@ body {
 
 .nav-link__index {
   align-self: center;
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.58rem;
   letter-spacing: 0.06em;
 }
@@ -212,7 +212,7 @@ h3 {
 }
 
 .eyebrow {
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.6rem;
   letter-spacing: 0.16em;
   line-height: 1.2;
@@ -261,7 +261,7 @@ h3 {
 
 .page-header__register small {
   padding-top: 2px;
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.5rem;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -315,7 +315,7 @@ h3 {
 }
 
 .section-head a {
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.64rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -360,7 +360,7 @@ h3 {
 .badge {
   padding: 0.2rem 0.38rem;
   border-radius: 0;
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.55rem;
   font-weight: 700;
   letter-spacing: 0.035em;
@@ -428,7 +428,7 @@ h3 {
 .metric small,
 .metric__delta,
 .metric > span {
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.58rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -565,7 +565,7 @@ h3 {
 .news-card__meta,
 .news-card__footer,
 .issue-card__foot {
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.58rem;
 }
 
@@ -631,7 +631,7 @@ h3 {
 .field > label,
 .field > legend,
 .field > div:first-child {
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.64rem;
   letter-spacing: 0.025em;
   text-transform: uppercase;
@@ -715,7 +715,7 @@ h3 {
   min-height: 34px;
   border-right: 1px solid var(--line-strong);
   border-radius: 0;
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.6rem;
 }
 
@@ -774,7 +774,7 @@ h3 {
   border-color: var(--gray-700);
   background: var(--black);
   color: var(--white);
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 0.58rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1020,7 +1020,7 @@ h3 {
     align-content: center;
     border-right: 1px solid var(--line);
     border-radius: 0;
-    font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   }
 
   .bottom-nav a[aria-current="page"] {

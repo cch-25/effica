@@ -20,6 +20,6 @@ test("vote controls and fallback are keyboard accessible", async ({ page }) => {
   const perspectiveChoice = page.getByRole("button", { name: "약간 우편향 +33" });
   await perspectiveChoice.focus(); await page.keyboard.press("Enter"); await expect(perspectiveChoice).toHaveAttribute("aria-pressed", "true");
   await page.goto("/visualization?webgl-off=1");
-  await expect(page.getByRole("region", { name: "두 기준으로 읽는 현재 관점" })).toBeVisible();
-  await expect(page.getByRole("img", { name: /현재 관점의 편향성과 과장성/ })).toBeVisible();
+  await expect(page.getByRole("region", { name: "나의 기준으로 읽는 기사 지형" })).toBeVisible();
+  await expect(page.getByRole("img", { name: /나의 관점과 기사 분포의 편향성과 과장성/ })).toBeVisible();
 });

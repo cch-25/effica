@@ -44,7 +44,7 @@ export function ShareCardStatus({ initialCard }: { initialCard: ShareCardView })
   };
   const tone = card.status === "ready" ? "positive" : card.status === "failed" || card.status === "revoked" ? "danger" : "warning";
   return <>
-    <section className="card card--padded">
+    <section className="card card--padded share-status-card">
       <div className="issue-card__top"><Badge tone={tone}>{statusLabels[card.status]}</Badge><span>{card.id}</span></div>
       {card.status === "queued" || card.status === "rendering" ? <StatePanel state="processing" /> : card.status === "failed" ? <StatePanel state="error" /> : card.status === "revoked" ? <StatePanel state="unauthorized" /> : <><Snapshot snapshot={card.snapshot} /><div className="page-header__actions">{card.public_token && <><ButtonLinkDownload token={card.public_token} /><Button variant="secondary" onClick={share}><Share2 size={16} /> 공유</Button></>}<Button variant="danger" disabled={busy} onClick={revoke}><Trash2 size={16} /> 즉시 폐기</Button></div></>}
       {error && <p role="alert" style={{ color: "var(--danger)" }}>{error}</p>}
