@@ -18,7 +18,7 @@ AI 분석과 독자의 판단을 함께 보여주는 **정치 뉴스 큐레이�
 
 </div>
 
-![EFFICA 서비스 미리보기](docs/assets/effica-preview.png)
+![EFFICA 서비스 미리보기](assets/effica-preview.png)
 
 <div align="center">
 
@@ -125,6 +125,7 @@ chmod 600 .env
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google OAuth 자격 증명 |
 | `LLM_PROVIDER_MODE` | `auto`, `stub`, `live` 중 선택 |
 | `OPENAI_API_KEY` | live 분석에 사용하는 OpenAI API 키 |
+| `LLM_TIMEOUT_SECONDS` | OpenAI 분석 요청 제한 시간(초). 기본값 `120`, 최대 `300` |
 | `DB_TUNNEL_PORT` | 기본값 `13306`; 포트 충돌 시 변경 |
 
 ### 2. 통합 개발 서버 실행
@@ -176,6 +177,8 @@ effica/
 ## 배포
 
 프로덕션의 정식 주소는 [https://effica.vercel.app](https://effica.vercel.app)입니다.
+GitHub Actions와 Git 연동 자동 배포는 사용하지 않습니다. 실행·검증은 `.agents/scripts/run.sh`,
+배포는 `.agents/scripts/deploy.sh`만 공식 진입점으로 사용합니다.
 
 ```bash
 ./.agents/scripts/deploy.sh
