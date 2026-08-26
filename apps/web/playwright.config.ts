@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const webPort = process.env.PLAYWRIGHT_PORT ?? "3000";
+const webPort = process.env.PLAYWRIGHT_PORT ?? "3200";
 const webBaseUrl = `http://127.0.0.1:${webPort}`;
 
 export default defineConfig({
@@ -21,6 +21,6 @@ export default defineConfig({
   webServer: {
     command: `NEXT_DIST_DIR=.next-playwright-${webPort} NEXT_PUBLIC_API_MODE=mock npm run dev -- --hostname 127.0.0.1 --port ${webPort}`,
     url: webBaseUrl,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
   },
 });
