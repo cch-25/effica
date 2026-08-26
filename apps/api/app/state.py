@@ -65,6 +65,7 @@ class PlatformState:
     sources: dict[str, dict[str, Any]] = field(default_factory=dict)
     articles: dict[str, dict[str, Any]] = field(default_factory=dict)
     issues: dict[str, dict[str, Any]] = field(default_factory=dict)
+    comparison_snapshots: dict[str, dict[str, Any]] = field(default_factory=dict)
     assessments: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     scores: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     votes: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
@@ -203,6 +204,8 @@ class PlatformState:
                 "summary": "A synthetic report used for deterministic local integration tests.",
                 "published_at": utcnow() - timedelta(hours=index),
                 "current_version_id": version_id,
+                "analysis_status": "READY",
+                "analysis_provider": "openai",
                 "status": "ACTIVE",
             }
             self.articles[article_id] = row
@@ -212,7 +215,10 @@ class PlatformState:
                 alias = "openai-default"
                 models.append(
                     {
+                        "id": new_id(),
                         "model_alias": alias,
+                        "actual_model_id": "gpt-5.6-luna",
+                        "prompt_version": "fixture-openai-v1",
                         "x": x + offset,
                         "y": 15 - index,
                         "z": -10 + index,
@@ -220,6 +226,10 @@ class PlatformState:
                         "confidence": 0.84,
                         "rationale_summary": "Fixture-only limited evidence summary.",
                         "evidence": [{"article_version_id": version_id, "start": 0, "end": 24}],
+                        "provider": "openai",
+                        "created_at": utcnow(),
+                        "synthetic": False,
+                        "status": "SUCCEEDED",
                     }
                 )
             self.assessments[article_id] = models
@@ -240,6 +250,8 @@ class PlatformState:
                         "shrunk_source_prior": {"x": x // 2, "weight": 0.1},
                     },
                     "status": "ACTIVE",
+                    "analysis_provider": "openai",
+                    "analysis_status": "READY",
                     "created_at": utcnow(),
                 }
             ]
@@ -248,10 +260,57 @@ class PlatformState:
             "title": "Fixture policy issue",
             "summary": "Multiple synthetic perspectives on one policy issue.",
             "status": "OPEN",
+            "kind": "EVENT",
+            "source_count": 3,
+            "analysis_status": "READY",
+            "data_as_of": utcnow(),
+            "freshness_status": "CURRENT",
+            "editorial_priority": 1,
             "version": 1,
             "article_ids": [row["id"] for row in article_rows],
             "opened_at": utcnow(),
             "last_activity_at": utcnow(),
+        }
+        snapshot_id = new_id()
+        self.comparison_snapshots[issue_id] = {
+            "id": snapshot_id,
+            "issue_id": issue_id,
+            "issue_version": 1,
+            "prompt_version": "issue-comparison-v1",
+            "model_alias": "openai-default",
+            "actual_model_id": "gpt-5.6-luna",
+            "common_facts": [
+                {
+                    "id": "fact-1",
+                    "text": "세 기사는 동일한 정책 발표와 그 적용 범위를 다룹니다.",
+                    "article_ids": [row["id"] for row in article_rows],
+                    "evidence_refs": ["fixture-shared-announcement"],
+                }
+            ],
+            "dimensions": [
+                {"key": "responsibility", "label": "책임 귀속"},
+                {"key": "policy_effect", "label": "정책 효과"},
+            ],
+            "article_frames": {
+                row["id"]: {
+                    "headline_frame": [
+                        "정책 수혜 범위를 중심으로 설명합니다.",
+                        "행정 집행 조건을 중심으로 설명합니다.",
+                        "장기적인 정책 파급 효과를 중심으로 설명합니다.",
+                    ][index],
+                    "emphasis": [["수혜 대상"], ["집행 책임"], ["장기 효과"]][index],
+                    "omissions_note": None,
+                    "evidence_refs": [f"fixture-frame-{index + 1}"],
+                }
+                for index, row in enumerate(article_rows)
+            },
+            "article_version_ids": {
+                row["id"]: row["current_version_id"] for row in article_rows
+            },
+            "confidence": 0.82,
+            "status": "SUCCEEDED",
+            "reviewed_at": utcnow(),
+            "created_at": utcnow(),
         }
         model_id = new_id()
         self.models[model_id] = {

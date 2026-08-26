@@ -55,7 +55,6 @@ def test_oauth_nonce_return_path_and_provider_contract() -> None:
             )
             assert start.status_code == 302
             state_cookie = start.cookies["oauth_state"]
-            nonce_cookie = start.cookies["oauth_nonce"]
 
             # A fresh client has no nonce cookie and must not complete login.
             with TestClient(app) as fresh_client:
@@ -78,16 +77,53 @@ def test_oauth_nonce_return_path_and_provider_contract() -> None:
                 follow_redirects=False,
             )
             state_cookie = start.cookies["oauth_state"]
-            nonce_cookie = start.cookies["oauth_nonce"]
             callback = client.get(
                 "/api/v1/auth/mock/callback",
                 params={"state": state_cookie, "code": "mock-valid-code"},
                 headers={"X-OAuth-State": state_cookie},
-                cookies={"oauth_state": state_cookie, "oauth_nonce": nonce_cookie},
                 follow_redirects=False,
             )
             assert callback.status_code == 302
             assert callback.headers["location"] == "http://localhost:3000/articles/article-1?tab=history"
+
+            failed_start = client.get(
+                "/api/v1/auth/mock/start",
+                params={
+                    "redirect_uri": "http://localhost:3000/auth/callback",
+                    "returnTo": "/articles/article-1",
+                },
+                follow_redirects=False,
+            )
+            failed_state = failed_start.cookies["oauth_state"]
+            failed = client.get(
+                "/api/v1/auth/mock/callback",
+                params={"state": failed_state, "code": "wrong-code"},
+                follow_redirects=False,
+            )
+            assert failed.status_code == 302
+            assert failed.headers["location"] == (
+                "http://localhost:3000/login?oauthError=failed&returnTo=%2Farticles%2Farticle-1"
+            )
+
+            state.users[state.default_users["MEMBER"]]["onboarding_complete"] = False
+            onboarding_start = client.get(
+                "/api/v1/auth/mock/start",
+                params={
+                    "redirect_uri": "http://localhost:3000/auth/callback",
+                    "returnTo": "/articles/article-1?tab=history",
+                },
+                follow_redirects=False,
+            )
+            onboarding_state = onboarding_start.cookies["oauth_state"]
+            onboarding = client.get(
+                "/api/v1/auth/mock/callback",
+                params={"state": onboarding_state, "code": "mock-valid-code"},
+                follow_redirects=False,
+            )
+            assert onboarding.headers["location"] == (
+                "http://localhost:3000/onboarding/consent?"
+                "returnTo=%2Farticles%2Farticle-1%3Ftab%3Dhistory"
+            )
             assert (
                 client.get(
                     "/api/v1/auth/mock/start",

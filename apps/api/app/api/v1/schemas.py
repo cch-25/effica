@@ -31,6 +31,23 @@ class JobStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+class AnalysisStatus(StrEnum):
+    READY = "READY"
+    PROCESSING = "PROCESSING"
+    PARTIAL = "PARTIAL"
+    UNTRUSTED = "UNTRUSTED"
+
+
+class IssueKind(StrEnum):
+    EVENT = "EVENT"
+    TOPIC = "TOPIC"
+
+
+class FreshnessStatus(StrEnum):
+    CURRENT = "CURRENT"
+    UPDATE_NEEDED = "UPDATE_NEEDED"
+
+
 class Coordinate(ContractModel):
     x: int = Field(ge=-100, le=100)
     y: int = Field(ge=-100, le=100)
@@ -142,6 +159,10 @@ class FeedItem(ContractModel):
     title: str
     source: str
     coordinate: Coordinate
+    published_at: datetime | None
+    analysis_provider: Literal["openai"]
+    analysis_status: Literal[AnalysisStatus.READY]
+    score_version_id: str
     reason_code: str
     rank: int
 
@@ -163,6 +184,8 @@ class ArticleView(ContractModel):
     summary: str = ""
     published_at: datetime | None = None
     current_version_id: str | None = None
+    analysis_status: AnalysisStatus = AnalysisStatus.PROCESSING
+    analysis_provider: Literal["openai"] | None = None
     status: str
 
 
@@ -184,6 +207,8 @@ class ScoreView(Coordinate):
     components: dict[str, Any]
     components_json: dict[str, Any] | None = None
     status: str
+    analysis_provider: Literal["openai"] = "openai"
+    analysis_status: Literal[AnalysisStatus.READY] = AnalysisStatus.READY
     created_at: datetime
 
 
@@ -192,6 +217,12 @@ class IssueView(ContractModel):
     title: str
     summary: str
     status: str
+    kind: IssueKind = IssueKind.TOPIC
+    source_count: int = Field(default=0, ge=0)
+    analysis_status: AnalysisStatus = AnalysisStatus.PROCESSING
+    data_as_of: datetime | None = None
+    freshness_status: FreshnessStatus = FreshnessStatus.CURRENT
+    editorial_priority: int | None = Field(default=None, gt=0)
     version: int
     article_ids: list[str]
     opened_at: datetime
@@ -211,6 +242,117 @@ class IssueDetailView(IssueView):
 class IssuePage(ContractModel):
     items: list[IssueView]
     next_cursor: str | None = None
+
+
+class PublicAssessment(ContractModel):
+    id: str
+    model_alias: str
+    actual_model_id: str
+    prompt_version: str
+    summary: str
+    evidence: list[dict[str, Any]]
+    confidence: float = Field(ge=0, le=1)
+    provider: Literal["openai"]
+    created_at: datetime
+    synthetic: Literal[False]
+
+
+class AssessmentPage(ContractModel):
+    article_version_id: str | None
+    assessments: list[PublicAssessment]
+
+
+class CommonFactView(ContractModel):
+    id: str
+    text: str
+    article_ids: list[str]
+    evidence_refs: list[str] = Field(default_factory=list)
+
+
+class FramingDimensionView(ContractModel):
+    key: str
+    label: str
+
+
+class ArticleFrameView(ContractModel):
+    headline_frame: str | None = None
+    emphasis: list[str] = Field(default_factory=list)
+    omissions_note: str | None = None
+    evidence_refs: list[str] = Field(default_factory=list)
+
+
+class VoteAxisAggregateView(ContractModel):
+    x: float | None = Field(default=None, ge=-100, le=100)
+    y: float | None = Field(default=None, ge=-100, le=100)
+    z: float | None = Field(default=None, ge=-100, le=100)
+    sensationalism: float | None = Field(default=None, ge=0, le=100)
+
+
+class VoteAggregateView(ContractModel):
+    qualified: VoteAxisAggregateView
+    qualified_count: int = Field(ge=0)
+    small_segments_suppressed: bool
+    snapshot_version: int | None = Field(default=None, ge=1)
+    generated_at: datetime | None = None
+    status: Literal["ready", "pending"]
+
+
+class ArticleComparisonView(ContractModel):
+    article: ArticleView
+    score: ScoreView
+    assessment: PublicAssessment
+    frame: ArticleFrameView
+    vote_aggregate: VoteAggregateView
+
+
+class IssueComparisonIssueView(ContractModel):
+    id: str
+    version: int = Field(gt=0)
+    title: str
+    summary: str
+    data_as_of: datetime | None
+    article_count: int = Field(ge=0)
+    source_count: int = Field(ge=0)
+
+
+class IssueComparisonView(ContractModel):
+    issue: IssueComparisonIssueView
+    common_facts: list[CommonFactView]
+    dimensions: list[FramingDimensionView]
+    articles: list[ArticleComparisonView] = Field(min_length=2, max_length=4)
+    comparison_version: str
+    prompt_version: str
+    model_alias: str
+    actual_model_id: str
+    confidence: float = Field(ge=0, le=1)
+    created_at: datetime
+    reviewed_at: datetime
+
+
+class IssueComparisonReviewPreview(ContractModel):
+    snapshot_id: str
+    issue_id: str
+    issue_version: int = Field(gt=0)
+    status: str
+    prompt_version: str
+    model_alias: str
+    actual_model_id: str
+    common_facts: list[CommonFactView]
+    dimensions: list[FramingDimensionView]
+    article_frames: dict[str, ArticleFrameView]
+    article_version_ids: dict[str, str]
+    confidence: float = Field(ge=0, le=1)
+    created_at: datetime
+    reviewed_at: datetime | None = None
+    reviewed_by: str | None = None
+
+
+class IssueComparisonReviewView(ContractModel):
+    snapshot_id: str
+    issue_id: str
+    issue_version: int = Field(gt=0)
+    reviewed_at: datetime
+    reviewed_by: str
 
 
 class VisualizationPoint(ContractModel):
@@ -268,6 +410,18 @@ class VoteView(VoteInput):
     revision: int
     quality_status: str
     active: bool
+
+
+class ProgressView(ContractModel):
+    credit_total: int
+    level: int = Field(ge=1)
+    tier: str
+    policy_version: str
+    read_article_count: int = Field(ge=0)
+    compared_issue_count: int = Field(ge=0)
+    source_diversity_count: int = Field(ge=0)
+    self_reported_profile: Coordinate | None = None
+    behavioral_profile: Coordinate | None = None
 
 
 class EfficacySubmission(QuestionnaireSubmission):

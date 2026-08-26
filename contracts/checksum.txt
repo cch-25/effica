@@ -1,1 +1,1 @@
-sha256  9e24a91dbecb81ec8f7e81049f28154cf77671f0ccfcbc28baf9fc48e99b247f  openapi.json
+sha256  ef4b30cf6194e3bd18e4b4b2b637ce32842bfa24fac005df1a5e74c61127ffd3  openapi.json

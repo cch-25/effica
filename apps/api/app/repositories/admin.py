@@ -50,6 +50,7 @@ from apps.api.app.db.models import (
     EfficacyAggregateSnapshot,
     EfficacyResponse,
     Issue,
+    IssueComparisonSnapshot,
     IssueMembership,
     Job,
     ModelAlias,
@@ -998,6 +999,197 @@ class AdminRepositoryMixin:
         )
 
     update_issue = patch_issue
+
+    async def get_issue_comparison_for_review(self, issue_id: str) -> dict[str, Any]:
+        issue = await self.session.get(Issue, issue_id)
+        if issue is None:
+            raise AdminNotFoundError("Issue was not found.", details={"issue_id": issue_id})
+        snapshot = await self.session.scalar(
+            select(IssueComparisonSnapshot)
+            .where(
+                IssueComparisonSnapshot.issue_id == issue_id,
+                IssueComparisonSnapshot.issue_version == issue.version,
+            )
+            .order_by(IssueComparisonSnapshot.created_at.desc())
+            .limit(1)
+        )
+        if snapshot is None:
+            raise AdminNotFoundError(
+                "Issue comparison was not found.", details={"issue_id": issue_id}
+            )
+        model = await self.session.get(ModelAlias, snapshot.model_alias_id)
+        if model is None:
+            raise AdminValidationError("Comparison model provenance is missing.")
+        common_facts_payload = snapshot.common_facts_json
+        dimensions_payload = snapshot.framing_dimensions_json
+        frames_payload = snapshot.article_frames_json
+        common_facts = (
+            common_facts_payload.get("common_facts")
+            if isinstance(common_facts_payload, Mapping)
+            else None
+        )
+        dimensions = (
+            dimensions_payload.get("dimensions")
+            if isinstance(dimensions_payload, Mapping)
+            else None
+        )
+        article_frames = (
+            frames_payload.get("article_frames")
+            if isinstance(frames_payload, Mapping)
+            else None
+        )
+        article_version_ids = (
+            frames_payload.get("article_version_ids")
+            if isinstance(frames_payload, Mapping)
+            else None
+        )
+        if not all(
+            (
+                isinstance(common_facts, list),
+                isinstance(dimensions, list),
+                isinstance(article_frames, Mapping),
+                isinstance(article_version_ids, Mapping),
+            )
+        ):
+            raise AdminValidationError("Comparison snapshot payload is malformed.")
+        return {
+            "snapshot_id": snapshot.id,
+            "issue_id": issue_id,
+            "issue_version": snapshot.issue_version,
+            "status": _value(snapshot.status),
+            "prompt_version": snapshot.prompt_version,
+            "model_alias": model.alias,
+            "actual_model_id": model.actual_model_id,
+            "common_facts": common_facts,
+            "dimensions": dimensions,
+            "article_frames": article_frames,
+            "article_version_ids": article_version_ids,
+            "confidence": float(snapshot.confidence),
+            "created_at": snapshot.created_at,
+            "reviewed_at": snapshot.reviewed_at,
+            "reviewed_by": snapshot.reviewed_by,
+        }
+
+    async def review_issue_comparison(
+        self,
+        issue_id: str,
+        *,
+        snapshot_id: str,
+        actor_id: str,
+        idempotency_key: str,
+        reason: str,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        expected_snapshot_id = str(snapshot_id).strip().strip('"')
+        if not expected_snapshot_id:
+            raise AdminPreconditionError("If-Match must identify the comparison snapshot.")
+
+        async def operation() -> tuple[dict[str, Any], Any, Any]:
+            issue = await self.session.scalar(
+                select(Issue).where(Issue.id == issue_id).with_for_update()
+            )
+            if issue is None:
+                raise AdminNotFoundError("Issue was not found.", details={"issue_id": issue_id})
+            snapshot = await self.session.scalar(
+                select(IssueComparisonSnapshot)
+                .where(
+                    IssueComparisonSnapshot.issue_id == issue_id,
+                    IssueComparisonSnapshot.id == expected_snapshot_id,
+                )
+                .with_for_update()
+            )
+            if snapshot is None:
+                raise AdminNotFoundError(
+                    "Comparison snapshot was not found.",
+                    details={"issue_id": issue_id, "snapshot_id": expected_snapshot_id},
+                )
+            if snapshot.issue_version != issue.version or _value(snapshot.status) != "SUCCEEDED":
+                raise AdminConflictError(
+                    "Only the current successful comparison can be reviewed.",
+                    details={
+                        "issue_version": issue.version,
+                        "snapshot_issue_version": snapshot.issue_version,
+                        "snapshot_status": _value(snapshot.status),
+                    },
+                )
+            model = await self.session.get(ModelAlias, snapshot.model_alias_id)
+            if (
+                model is None
+                or model.provider != _OPENAI_PROVIDER
+                or not model.actual_model_id.startswith("gpt-")
+                or _value(model.status) != ModelStatus.ACTIVE.value
+            ):
+                raise AdminValidationError("Comparison model provenance is not trusted.")
+            frame_payload = snapshot.article_frames_json
+            version_map = (
+                frame_payload.get("article_version_ids")
+                if isinstance(frame_payload, Mapping)
+                else None
+            )
+            article_frames = (
+                frame_payload.get("article_frames")
+                if isinstance(frame_payload, Mapping)
+                else None
+            )
+            if (
+                not isinstance(version_map, Mapping)
+                or not isinstance(article_frames, Mapping)
+                or not 2 <= len(version_map) <= 4
+                or set(version_map) != set(article_frames)
+            ):
+                raise AdminValidationError("Comparison article-version provenance is missing.")
+            current_rows = list(
+                (
+                    await self.session.execute(
+                        select(Article.id, Article.current_version_id)
+                        .join(IssueMembership, IssueMembership.article_id == Article.id)
+                        .where(
+                            IssueMembership.issue_id == issue_id,
+                            Article.id.in_(list(version_map)),
+                        )
+                    )
+                ).all()
+            )
+            current_versions = {
+                str(article_id): str(version_id)
+                for article_id, version_id in current_rows
+                if version_id is not None
+            }
+            expected_versions = {
+                str(article_id): str(version_id)
+                for article_id, version_id in version_map.items()
+            }
+            if current_versions != expected_versions:
+                raise AdminConflictError("Comparison inputs changed before review.")
+            before = {
+                "snapshot_id": snapshot.id,
+                "reviewed_at": snapshot.reviewed_at,
+                "reviewed_by": snapshot.reviewed_by,
+            }
+            snapshot.reviewed_at = utc_now()
+            snapshot.reviewed_by = actor_id
+            await self.session.flush()
+            after = {
+                "snapshot_id": snapshot.id,
+                "issue_id": issue_id,
+                "issue_version": snapshot.issue_version,
+                "reviewed_at": snapshot.reviewed_at,
+                "reviewed_by": snapshot.reviewed_by,
+            }
+            return after, before, after
+
+        return await self._run_mutation(
+            scope=f"admin:issue-comparison-review:{issue_id}",
+            idempotency_key=idempotency_key,
+            payload={"snapshot_id": expected_snapshot_id, "reason": reason},
+            actor_id=actor_id,
+            action="ISSUE_COMPARISON_REVIEWED",
+            target_type="issue_comparison_snapshot",
+            target_id=expected_snapshot_id,
+            reason=reason,
+            request_id=request_id,
+            operation=operation,
+        )
 
     # ------------------------------------------------------------------
     # Model aliases
@@ -2376,6 +2568,8 @@ class AdminRepositoryMixin:
     admin_merge_issue = enqueue_merge_issue
     admin_split_issue = enqueue_split_issue
     admin_patch_issue = patch_issue
+    admin_get_issue_comparison = get_issue_comparison_for_review
+    admin_review_issue_comparison = review_issue_comparison
     admin_list_models = list_model_aliases
     list_models = list_model_aliases
     admin_get_model = get_model_alias

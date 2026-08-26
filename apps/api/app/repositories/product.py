@@ -19,9 +19,11 @@ from sqlalchemy.exc import IntegrityError
 
 from apps.api.app.db.enums import (
     CreditStatus,
+    IssueKind,
     ProfileKind,
     QuestionnaireKind,
     ReadSessionStatus,
+    ScoreStatus,
     ShareCardStatus,
     VoteQualityStatus,
 )
@@ -32,6 +34,7 @@ from apps.api.app.db.models import (
     CreditLedger,
     EfficacyResponse,
     Issue,
+    IssueComparisonSnapshot,
     IssueMembership,
     ModelAlias,
     ModelAssessment,
@@ -45,9 +48,15 @@ from apps.api.app.db.models import (
     UserConsent,
     UserProfile,
     Vote,
+    VoteAggregateSnapshot,
 )
 from apps.api.app.db.ulid import new_ulid
 from apps.api.app.db.utc import utc_now
+from apps.api.app.domains.content.trust import (
+    is_trusted_openai_assessment,
+    public_assessment_summary,
+    score_matches_trusted_assessments,
+)
 from apps.api.app.domains.engagement.read import evaluate_read_eligibility
 from apps.api.app.domains.feed.ranking import FeedCandidate, rank_feed
 from apps.api.app.domains.scoring.behavior import (
@@ -83,6 +92,14 @@ class ProductValidationError(ValueError):
     """A product mutation failed domain validation."""
 
 
+class ProductComparisonError(RuntimeError):
+    """A public comparison cannot be assembled from the current durable state."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
 class ProductRepositoryMixin:
     """Methods mixed into ``MariaDBPlatformRepository``."""
 
@@ -109,6 +126,8 @@ class ProductRepositoryMixin:
             "components": row.components_json,
             "components_json": row.components_json,
             "status": _value(row.status),
+            "analysis_provider": "openai",
+            "analysis_status": "READY",
             "created_at": row.created_at,
         }
 
@@ -117,6 +136,8 @@ class ProductRepositoryMixin:
         article: Article,
         source: Source,
         issue_id: str | None,
+        *,
+        analysis_status: str = "PROCESSING",
     ) -> dict[str, Any]:
         return {
             "id": article.id,
@@ -128,6 +149,8 @@ class ProductRepositoryMixin:
             "author": article.author,
             "published_at": article.published_at,
             "current_version_id": article.current_version_id,
+            "analysis_status": analysis_status,
+            "analysis_provider": "openai" if analysis_status == "READY" else None,
             "status": _value(article.status),
         }
 
@@ -150,11 +173,22 @@ class ProductRepositoryMixin:
         ).first()
         return None if row is None else (row[0], row[1], row[2])
 
-    async def _latest_scores(self) -> dict[str, ScoreVersion]:
-        rows = list(
+    async def _analysis_context(self) -> dict[str, dict[str, Any]]:
+        assessment_rows = list(
+            (
+                await self.session.execute(
+                    select(ModelAssessment, ModelAlias)
+                    .join(ModelAlias, ModelAlias.id == ModelAssessment.model_alias_id)
+                    .order_by(ModelAssessment.created_at.desc(), ModelAssessment.id.desc())
+                )
+            ).all()
+        )
+        score_rows = list(
             (
                 await self.session.scalars(
-                    select(ScoreVersion).order_by(
+                    select(ScoreVersion)
+                    .where(ScoreVersion.status == ScoreStatus.ACTIVE)
+                    .order_by(
                         ScoreVersion.article_version_id,
                         ScoreVersion.created_at.desc(),
                         ScoreVersion.id.desc(),
@@ -162,10 +196,39 @@ class ProductRepositoryMixin:
                 )
             ).all()
         )
-        latest: dict[str, ScoreVersion] = {}
-        for row in rows:
-            latest.setdefault(row.article_version_id, row)
-        return latest
+        active_scores: dict[str, ScoreVersion] = {}
+        for score in score_rows:
+            active_scores.setdefault(score.article_version_id, score)
+        all_by_version: dict[str, list[tuple[ModelAssessment, ModelAlias]]] = {}
+        trusted_by_version: dict[str, list[tuple[ModelAssessment, ModelAlias]]] = {}
+        for assessment, alias in assessment_rows:
+            all_by_version.setdefault(assessment.article_version_id, []).append((assessment, alias))
+            if is_trusted_openai_assessment(assessment, alias):
+                trusted_by_version.setdefault(assessment.article_version_id, []).append(
+                    (assessment, alias)
+                )
+        version_ids = set(all_by_version) | set(active_scores)
+        context: dict[str, dict[str, Any]] = {}
+        for version_id in version_ids:
+            trusted = trusted_by_version.get(version_id, [])
+            score = active_scores.get(version_id)
+            if score is not None and not score_matches_trusted_assessments(score, trusted):
+                score = None
+            if trusted and score is not None:
+                status = "READY"
+            elif trusted:
+                status = "PROCESSING"
+            elif all_by_version.get(version_id):
+                status = "UNTRUSTED"
+            else:
+                status = "PROCESSING"
+            context[version_id] = {
+                "status": status,
+                "score": score,
+                "trusted_assessments": trusted,
+                "all_assessments": all_by_version.get(version_id, []),
+            }
+        return context
 
     async def feed_items(
         self, *, user_id: str | None, personalized_requested: bool
@@ -213,11 +276,12 @@ class ProductRepositoryMixin:
             seen_article_ids.add(article.id)
             unique_contexts.append(context)
         contexts = unique_contexts
-        latest = await self._latest_scores()
+        analysis = await self._analysis_context()
         candidates: list[tuple[Article, Source, str | None, ScoreVersion]] = []
         for article, source, issue_id in contexts:
-            score = latest.get(article.current_version_id or "")
-            if score is not None:
+            trusted = analysis.get(article.current_version_id or "", {})
+            score = trusted.get("score")
+            if trusted.get("status") == "READY" and score is not None:
                 candidates.append((article, source, issue_id, score))
         context_by_article = {item[0].id: item for item in candidates}
         profile_sensationalism = 0.0
@@ -267,6 +331,10 @@ class ProductRepositoryMixin:
                         "sensationalism": score.sensationalism,
                         "confidence": float(score.confidence),
                     },
+                    "published_at": article.published_at,
+                    "analysis_provider": "openai",
+                    "analysis_status": "READY",
+                    "score_version_id": score.id,
                     "reason_code": reason,
                     "rank": rank,
                 }
@@ -281,7 +349,7 @@ class ProductRepositoryMixin:
         to_time: Any = None,
         recent_first: bool = True,
     ) -> list[dict[str, Any]]:
-        statement = select(Issue)
+        statement = select(Issue).where(Issue.status.not_in(_TERMINAL_ISSUE_STATUSES))
         if topic:
             pattern = f"%{topic}%"
             statement = statement.where(Issue.title.ilike(pattern) | Issue.summary.ilike(pattern))
@@ -289,38 +357,102 @@ class ProductRepositoryMixin:
             statement = statement.where(Issue.last_activity_at >= from_time)
         if to_time:
             statement = statement.where(Issue.last_activity_at <= to_time)
-        order = Issue.last_activity_at.desc() if recent_first else Issue.last_activity_at.asc()
-        rows = list((await self.session.scalars(statement.order_by(order, Issue.id))).all())
+        rows = list((await self.session.scalars(statement)).all())
         memberships = list(
             (
                 await self.session.execute(
-                    select(IssueMembership.issue_id, IssueMembership.article_id)
+                    select(
+                        IssueMembership.issue_id,
+                        Article,
+                        ArticleVersion.fetched_at,
+                    )
+                    .join(Article, Article.id == IssueMembership.article_id)
+                    .outerjoin(ArticleVersion, ArticleVersion.id == Article.current_version_id)
                 )
             ).all()
         )
-        by_issue: dict[str, list[str]] = {}
-        for issue_id, article_id in memberships:
-            by_issue.setdefault(issue_id, []).append(article_id)
-        return [
-            {
+        analysis = await self._analysis_context()
+        by_issue: dict[str, list[tuple[Article, Any]]] = {}
+        for issue_id, article, fetched_at in memberships:
+            by_issue.setdefault(issue_id, []).append((article, fetched_at))
+        output: list[dict[str, Any]] = []
+        now = utc_now()
+        for row in rows:
+            article_rows = by_issue.get(row.id, [])
+            article_ids = [article.id for article, _fetched_at in article_rows]
+            source_count = len({article.source_id for article, _fetched_at in article_rows})
+            statuses = [
+                analysis.get(article.current_version_id or "", {}).get("status", "PROCESSING")
+                for article, _fetched_at in article_rows
+            ]
+            ready_count = statuses.count("READY")
+            if article_rows and ready_count == len(article_rows):
+                analysis_status = "READY"
+            elif ready_count:
+                analysis_status = "PARTIAL"
+            elif "UNTRUSTED" in statuses:
+                analysis_status = "UNTRUSTED"
+            else:
+                analysis_status = "PROCESSING"
+            if _value(row.issue_kind) == IssueKind.EVENT.value and (
+                len(article_rows) < 3
+                or source_count < 3
+                or row.editorial_reviewed_at is None
+                or not (row.summary or "").strip()
+            ):
+                analysis_status = "PARTIAL" if ready_count else "PROCESSING"
+            timestamps = [
+                value
+                for article, fetched_at in article_rows
+                for value in (article.published_at, fetched_at)
+                if value is not None
+            ]
+            for article, _fetched_at in article_rows:
+                trusted = analysis.get(article.current_version_id or "", {}).get(
+                    "trusted_assessments", []
+                )
+                timestamps.extend(assessment.created_at for assessment, _alias in trusted)
+            data_as_of = max(timestamps) if timestamps else row.editorial_data_as_of
+            freshness = (
+                "UPDATE_NEEDED"
+                if data_as_of is not None and now - data_as_of > timedelta(days=7)
+                else "CURRENT"
+            )
+            output.append({
                 "id": row.id,
                 "title": row.title,
                 "summary": row.summary or "",
                 "status": _value(row.status),
+                "kind": _value(row.issue_kind),
+                "source_count": source_count,
+                "analysis_status": analysis_status,
+                "data_as_of": data_as_of,
+                "freshness_status": freshness,
+                "editorial_priority": row.editorial_priority,
                 "opened_at": row.opened_at,
                 "last_activity_at": row.last_activity_at,
                 "version": row.version,
-                "article_ids": by_issue.get(row.id, []),
-            }
-            for row in rows
-        ]
+                "article_ids": article_ids,
+            })
+        direction = -1 if recent_first else 1
+        output.sort(
+            key=lambda item: (
+                0
+                if item["kind"] == "EVENT" and item["analysis_status"] == "READY"
+                else 1,
+                item["editorial_priority"] or 2_147_483_647,
+                direction * item["last_activity_at"].timestamp(),
+                item["id"],
+            )
+        )
+        return output
 
     async def issue_view(self, issue_id: str) -> dict[str, Any] | None:
         issues = await self.list_issue_rows()
         issue = next((item for item in issues if item["id"] == issue_id), None)
         if issue is None:
             return None
-        latest = await self._latest_scores()
+        analysis = await self._analysis_context()
         axes: list[int] = []
         if issue["article_ids"]:
             articles = list(
@@ -331,9 +463,10 @@ class ProductRepositoryMixin:
                 ).all()
             )
             axes = [
-                latest[row.current_version_id].x
+                analysis[row.current_version_id]["score"].x
                 for row in articles
-                if row.current_version_id in latest
+                if row.current_version_id in analysis
+                and analysis[row.current_version_id]["status"] == "READY"
             ]
         return {
             **issue,
@@ -360,11 +493,12 @@ class ProductRepositoryMixin:
                 )
             ).all()
         )
-        latest = await self._latest_scores()
+        analysis = await self._analysis_context()
         output: list[dict[str, Any]] = []
         for article, source in rows:
-            score = latest.get(article.current_version_id or "")
-            if score is None:
+            trusted = analysis.get(article.current_version_id or "", {})
+            score = trusted.get("score")
+            if trusted.get("status") != "READY" or score is None:
                 continue
             if perspective == "negative_x" and score.x >= -10:
                 continue
@@ -374,7 +508,9 @@ class ProductRepositoryMixin:
                 continue
             output.append(
                 {
-                    **self._article_view(article, source, issue_id),
+                    **self._article_view(
+                        article, source, issue_id, analysis_status="READY"
+                    ),
                     "coordinate": {
                         "x": score.x,
                         "y": score.y,
@@ -386,24 +522,290 @@ class ProductRepositoryMixin:
             )
         return output
 
+    async def issue_comparison_view(
+        self, *, issue_id: str, article_ids: list[str]
+    ) -> dict[str, Any] | None:
+        """Load one reviewed comparison with batched article analysis reads."""
+
+        issue = await self.session.get(Issue, issue_id)
+        if issue is None or _value(issue.status) in _TERMINAL_ISSUE_STATUSES:
+            return None
+        snapshot = await self.session.scalar(
+            select(IssueComparisonSnapshot)
+            .where(
+                IssueComparisonSnapshot.issue_id == issue_id,
+                IssueComparisonSnapshot.issue_version == issue.version,
+                IssueComparisonSnapshot.status == "SUCCEEDED",
+                IssueComparisonSnapshot.reviewed_at.is_not(None),
+            )
+            .order_by(
+                IssueComparisonSnapshot.created_at.desc(),
+                IssueComparisonSnapshot.id.desc(),
+            )
+        )
+        if snapshot is None:
+            raise ProductComparisonError("COMPARISON_NOT_READY")
+
+        all_memberships = list(
+            (
+                await self.session.execute(
+                    select(
+                        IssueMembership.article_id,
+                        Article.source_id,
+                        Article.current_version_id,
+                    )
+                    .join(Article, Article.id == IssueMembership.article_id)
+                    .where(IssueMembership.issue_id == issue_id)
+                )
+            ).all()
+        )
+        member_ids = {article_id for article_id, _source_id, _version_id in all_memberships}
+        member_current_versions = {
+            article_id: version_id
+            for article_id, _source_id, version_id in all_memberships
+            if version_id is not None
+        }
+        if any(article_id not in member_ids for article_id in article_ids):
+            raise ProductComparisonError("COMPARE_ARTICLE_OUTSIDE_ISSUE")
+
+        article_rows = list(
+            (
+                await self.session.execute(
+                    select(Article, Source)
+                    .join(Source, Source.id == Article.source_id)
+                    .where(Article.id.in_(article_ids))
+                )
+            ).all()
+        )
+        by_article = {article.id: (article, source) for article, source in article_rows}
+        version_ids = [
+            article.current_version_id
+            for article, _source in article_rows
+            if article.current_version_id is not None
+        ]
+        assessment_rows = list(
+            (
+                await self.session.execute(
+                    select(ModelAssessment, ModelAlias)
+                    .join(ModelAlias, ModelAlias.id == ModelAssessment.model_alias_id)
+                    .where(ModelAssessment.article_version_id.in_(version_ids))
+                    .order_by(ModelAssessment.created_at.desc(), ModelAssessment.id.desc())
+                )
+            ).all()
+        )
+        assessments_by_version: dict[str, list[tuple[ModelAssessment, ModelAlias]]] = {}
+        for assessment, alias in assessment_rows:
+            if is_trusted_openai_assessment(assessment, alias):
+                assessments_by_version.setdefault(assessment.article_version_id, []).append(
+                    (assessment, alias)
+                )
+        score_rows = list(
+            (
+                await self.session.scalars(
+                    select(ScoreVersion)
+                    .where(
+                        ScoreVersion.article_version_id.in_(version_ids),
+                        ScoreVersion.status == ScoreStatus.ACTIVE,
+                    )
+                    .order_by(ScoreVersion.created_at.desc(), ScoreVersion.id.desc())
+                )
+            ).all()
+        )
+        scores_by_version: dict[str, ScoreVersion] = {}
+        for score in score_rows:
+            trusted = assessments_by_version.get(score.article_version_id, [])
+            if score.article_version_id not in scores_by_version and score_matches_trusted_assessments(
+                score, trusted
+            ):
+                scores_by_version[score.article_version_id] = score
+        if any(
+            not by_article.get(article_id)
+            or by_article[article_id][0].current_version_id not in scores_by_version
+            or not assessments_by_version.get(
+                by_article[article_id][0].current_version_id or ""
+            )
+            for article_id in article_ids
+        ):
+            raise ProductComparisonError("ANALYSIS_NOT_READY")
+
+        aggregate_rows = list(
+            (
+                await self.session.scalars(
+                    select(VoteAggregateSnapshot)
+                    .where(VoteAggregateSnapshot.article_id.in_(article_ids))
+                    .order_by(
+                        VoteAggregateSnapshot.article_id,
+                        VoteAggregateSnapshot.version.desc(),
+                    )
+                )
+            ).all()
+        )
+        aggregates: dict[str, VoteAggregateSnapshot] = {}
+        for aggregate in aggregate_rows:
+            aggregates.setdefault(aggregate.article_id, aggregate)
+        vote_revision_rows = list(
+            (
+                await self.session.execute(
+                    select(Vote.article_id, func.max(Vote.revision))
+                    .where(Vote.article_id.in_(article_ids))
+                    .group_by(Vote.article_id)
+                )
+            ).all()
+        )
+        latest_vote_revisions = {
+            article_id: int(revision or 0) for article_id, revision in vote_revision_rows
+        }
+
+        raw_facts = snapshot.common_facts_json
+        common_facts = (
+            raw_facts.get("common_facts", [])
+            if isinstance(raw_facts, dict)
+            else raw_facts
+        )
+        raw_dimensions = snapshot.framing_dimensions_json
+        dimensions = (
+            raw_dimensions.get("dimensions", [])
+            if isinstance(raw_dimensions, dict)
+            else raw_dimensions
+        )
+        raw_frames = snapshot.article_frames_json
+        if not isinstance(raw_frames, dict):
+            raise ProductComparisonError("COMPARISON_NOT_READY")
+        frames = raw_frames.get("article_frames")
+        snapshot_version_ids = raw_frames.get("article_version_ids")
+        if not isinstance(frames, dict) or not isinstance(snapshot_version_ids, dict):
+            raise ProductComparisonError("COMPARISON_NOT_READY")
+        normalized_snapshot_versions = {
+            str(article_id): str(version_id)
+            for article_id, version_id in snapshot_version_ids.items()
+            if article_id and version_id
+        }
+        if (
+            set(frames) != set(normalized_snapshot_versions)
+            or any(article_id not in frames for article_id in article_ids)
+            or any(
+                member_current_versions.get(article_id) != version_id
+                for article_id, version_id in normalized_snapshot_versions.items()
+            )
+        ):
+            raise ProductComparisonError("COMPARISON_NOT_READY")
+        if not isinstance(common_facts, list) or not isinstance(dimensions, list):
+            raise ProductComparisonError("COMPARISON_NOT_READY")
+        output_articles: list[dict[str, Any]] = []
+        for article_id in article_ids:
+            article, source = by_article[article_id]
+            version_id = article.current_version_id or ""
+            score = scores_by_version[version_id]
+            assessment, alias = assessments_by_version[version_id][0]
+            evidence_json = assessment.evidence_json
+            if isinstance(evidence_json, dict):
+                evidence = evidence_json.get("evidence", [])
+            elif isinstance(evidence_json, list):
+                evidence = evidence_json
+            else:
+                evidence = []
+            aggregate = aggregates.get(article_id)
+            aggregate_payload = aggregate.aggregate_json if aggregate is not None else {}
+            qualified = aggregate_payload.get("qualified", {})
+            source_revision = int(
+                aggregate_payload.get(
+                    "source_revision", aggregate_payload.get("version", 0)
+                )
+                or 0
+            )
+            output_articles.append(
+                {
+                    "article": self._article_view(
+                        article, source, issue_id, analysis_status="READY"
+                    ),
+                    "score": self._score_view(score),
+                    "assessment": {
+                        "id": assessment.id,
+                        "model_alias": alias.alias,
+                        "actual_model_id": alias.actual_model_id,
+                        "prompt_version": assessment.prompt_version,
+                        "summary": public_assessment_summary(evidence_json),
+                        "evidence": list(evidence)[:5],
+                        "confidence": float(assessment.confidence),
+                        "provider": "openai",
+                        "created_at": assessment.created_at,
+                        "synthetic": False,
+                    },
+                    "frame": (frames or {}).get(article_id, {}),
+                    "vote_aggregate": {
+                        "qualified": {
+                            key: qualified.get(key)
+                            for key in ("x", "y", "z", "sensationalism")
+                        },
+                        "qualified_count": int(
+                            aggregate_payload.get("qualified_count", 0) or 0
+                        ),
+                        "small_segments_suppressed": bool(
+                            aggregate_payload.get("small_segments_suppressed", True)
+                        ),
+                        "snapshot_version": None if aggregate is None else aggregate.version,
+                        "generated_at": None if aggregate is None else aggregate.created_at,
+                        "status": (
+                            "pending"
+                            if latest_vote_revisions.get(article_id, 0) > source_revision
+                            else "ready"
+                        ),
+                    },
+                }
+            )
+        model_alias = await self.session.get(ModelAlias, snapshot.model_alias_id)
+        if (
+            model_alias is None
+            or str(model_alias.provider).casefold() != "openai"
+            or not str(model_alias.actual_model_id).startswith("gpt-")
+            or _value(model_alias.status) != "ACTIVE"
+        ):
+            raise ProductComparisonError("COMPARISON_NOT_READY")
+        return {
+            "issue": {
+                "id": issue.id,
+                "version": issue.version,
+                "title": issue.title,
+                "summary": issue.summary or "",
+                "data_as_of": issue.editorial_data_as_of,
+                "article_count": len(all_memberships),
+                "source_count": len(
+                    {
+                        source_id
+                        for _article_id, source_id, _version_id in all_memberships
+                    }
+                ),
+            },
+            "common_facts": list(common_facts or []),
+            "dimensions": list(dimensions or []),
+            "articles": output_articles,
+            "comparison_version": snapshot.id,
+            "prompt_version": snapshot.prompt_version,
+            "model_alias": model_alias.alias,
+            "actual_model_id": model_alias.actual_model_id,
+            "confidence": float(snapshot.confidence),
+            "created_at": snapshot.created_at,
+            "reviewed_at": snapshot.reviewed_at,
+        }
+
     async def article_view(self, article_id: str) -> dict[str, Any] | None:
         context = await self._article_context(article_id)
-        return None if context is None else self._article_view(*context)
+        if context is None:
+            return None
+        analysis = await self._analysis_context()
+        status = analysis.get(context[0].current_version_id or "", {}).get(
+            "status", "PROCESSING"
+        )
+        return self._article_view(*context, analysis_status=status)
 
     async def assessment_view(self, article_id: str) -> dict[str, Any] | None:
         context = await self._article_context(article_id)
         if context is None:
             return None
         article = context[0]
-        rows = list(
-            (
-                await self.session.execute(
-                    select(ModelAssessment, ModelAlias)
-                    .join(ModelAlias, ModelAlias.id == ModelAssessment.model_alias_id)
-                    .where(ModelAssessment.article_version_id == article.current_version_id)
-                    .order_by(ModelAssessment.created_at, ModelAssessment.id)
-                )
-            ).all()
+        analysis = await self._analysis_context()
+        rows = analysis.get(article.current_version_id or "", {}).get(
+            "trusted_assessments", []
         )
         return {
             "article_version_id": article.current_version_id,
@@ -411,15 +813,14 @@ class ProductRepositoryMixin:
                 {
                     "id": assessment.id,
                     "model_alias": alias.alias,
+                    "actual_model_id": alias.actual_model_id,
                     "prompt_version": assessment.prompt_version,
-                    "x": assessment.x,
-                    "y": assessment.y,
-                    "z": assessment.z,
-                    "sensationalism": assessment.sensationalism,
+                    "summary": public_assessment_summary(assessment.evidence_json),
                     "confidence": float(assessment.confidence),
                     "evidence": assessment.evidence_json,
-                    "status": _value(assessment.status),
+                    "provider": "openai",
                     "created_at": assessment.created_at,
+                    "synthetic": False,
                 }
                 for assessment, alias in rows
             ],
@@ -438,26 +839,41 @@ class ProductRepositoryMixin:
         )
         if not version_ids:
             return []
+        analysis = await self._analysis_context()
+        trusted_version_ids = {
+            version_id
+            for version_id in version_ids
+            if analysis.get(version_id, {}).get("status") == "READY"
+        }
+        if not trusted_version_ids:
+            return []
         rows = list(
             (
                 await self.session.scalars(
                     select(ScoreVersion)
-                    .where(ScoreVersion.article_version_id.in_(version_ids))
+                    .where(
+                        ScoreVersion.article_version_id.in_(trusted_version_ids),
+                        ScoreVersion.status == ScoreStatus.ACTIVE,
+                    )
                     .order_by(ScoreVersion.created_at.desc(), ScoreVersion.id.desc())
                 )
             ).all()
         )
-        return [self._score_view(row) for row in rows]
+        return [
+            self._score_view(row)
+            for row in rows
+            if score_matches_trusted_assessments(
+                row, analysis[row.article_version_id]["trusted_assessments"]
+            )
+        ]
 
     async def current_score(self, article_id: str) -> dict[str, Any] | None:
         article = await self.session.get(Article, article_id)
         if article is None or not article.current_version_id:
             return None
-        row = await self.session.scalar(
-            select(ScoreVersion)
-            .where(ScoreVersion.article_version_id == article.current_version_id)
-            .order_by(ScoreVersion.created_at.desc(), ScoreVersion.id.desc())
-        )
+        analysis = await self._analysis_context()
+        trusted = analysis.get(article.current_version_id, {})
+        row = trusted.get("score") if trusted.get("status") == "READY" else None
         return None if row is None else self._score_view(row)
 
     async def source_summary(self, source_id: str) -> dict[str, Any] | None:
@@ -469,9 +885,12 @@ class ProductRepositoryMixin:
                 await self.session.scalars(select(Article).where(Article.source_id == source_id))
             ).all()
         )
-        latest = await self._latest_scores()
+        analysis = await self._analysis_context()
         values = [
-            latest[row.current_version_id].x for row in articles if row.current_version_id in latest
+            analysis[row.current_version_id]["score"].x
+            for row in articles
+            if row.current_version_id in analysis
+            and analysis[row.current_version_id]["status"] == "READY"
         ]
         return {
             "id": source.id,
@@ -632,7 +1051,12 @@ class ProductRepositoryMixin:
                     created_at=now,
                 )
             )
-            await self._append_behavior_event(user_id=user_id, article_id=row.article_id)
+            dwell_weight = min(3.0, max(0.25, result.server_elapsed_ms / 60_000))
+            await self._append_behavior_event(
+                user_id=user_id,
+                article_id=row.article_id,
+                event_weight=dwell_weight,
+            )
         elif delta:
             # The response must describe the durable insert, not merely the
             # eligibility calculation.  A recovered/duplicate ledger row is
@@ -649,29 +1073,58 @@ class ProductRepositoryMixin:
     async def vote_aggregate(self, article_id: str) -> dict[str, Any] | None:
         if await self.session.get(Article, article_id) is None:
             return None
-        active = list(
-            (
-                await self.session.scalars(
-                    select(Vote).where(Vote.article_id == article_id, Vote.active.is_(True))
-                )
-            ).all()
+        latest_revision = int(
+            await self.session.scalar(
+                select(func.max(Vote.revision)).where(Vote.article_id == article_id)
+            )
+            or 0
         )
-        qualified = [
-            row for row in active if _value(row.quality_status) == VoteQualityStatus.QUALIFIED.value
-        ]
+        snapshot = await self.session.scalar(
+            select(VoteAggregateSnapshot)
+            .where(VoteAggregateSnapshot.article_id == article_id)
+            .order_by(VoteAggregateSnapshot.version.desc())
+        )
+        payload = snapshot.aggregate_json if snapshot is not None else {}
+        source_revision = int(payload.get("source_revision", payload.get("version", 0)) or 0)
+        qualified = payload.get("qualified", {})
+        qualified_count = int(payload.get("qualified_count", 0) or 0)
+        small_segments_suppressed = bool(
+            payload.get("small_segments_suppressed", True)
+        )
+        if snapshot is None:
+            qualified_rows = list(
+                (
+                    await self.session.scalars(
+                        select(Vote).where(
+                            Vote.article_id == article_id,
+                            Vote.active.is_(True),
+                            Vote.quality_status == VoteQualityStatus.QUALIFIED,
+                        )
+                    )
+                ).all()
+            )
 
-        def aggregate(rows: list[Vote], key: str) -> float | None:
-            return round(fmean(float(getattr(row, key)) for row in rows), 4) if rows else None
+            def live_mean(key: str) -> float | None:
+                return (
+                    round(fmean(float(getattr(row, key)) for row in qualified_rows), 4)
+                    if qualified_rows
+                    else None
+                )
 
+            qualified = {
+                key: live_mean(key) for key in ("x", "y", "z", "sensationalism")
+            }
+            qualified_count = len(qualified_rows)
+            small_segments_suppressed = qualified_count < 5
         return {
-            "raw": {key: aggregate(active, key) for key in ("x", "y", "z", "sensationalism")},
             "qualified": {
-                key: aggregate(qualified, key) for key in ("x", "y", "z", "sensationalism")
+                key: qualified.get(key) for key in ("x", "y", "z", "sensationalism")
             },
-            "raw_count": len(active),
-            "qualified_count": len(qualified),
-            "segments": {} if len(qualified) < 5 else {"all": {"count": len(qualified)}},
-            "small_segments_suppressed": len(qualified) < 5,
+            "qualified_count": qualified_count,
+            "small_segments_suppressed": small_segments_suppressed,
+            "snapshot_version": None if snapshot is None else snapshot.version,
+            "generated_at": None if snapshot is None else snapshot.created_at,
+            "status": "pending" if latest_revision > source_revision else "ready",
         }
 
     async def get_vote_row(self, *, user_id: str, article_id: str) -> dict[str, Any] | None:
@@ -776,6 +1229,7 @@ class ProductRepositoryMixin:
         user_id: str,
         article_id: str,
         vote_values: dict[str, int] | None = None,
+        event_weight: float = 1.0,
     ) -> None:
         sensitive_consent = await self.session.scalar(
             select(func.count())
@@ -824,6 +1278,7 @@ class ProductRepositoryMixin:
                     article_z=score["z"],
                     article_sensationalism=float(score.get("sensationalism") or 0),
                     kind="vote" if vote_values else "read",
+                    weight=event_weight,
                     vote_x=None if vote_values is None else vote_values["x"],
                     vote_y=None if vote_values is None else vote_values["y"],
                     vote_z=None if vote_values is None else vote_values["z"],
@@ -994,7 +1449,85 @@ class ProductRepositoryMixin:
         )
         level = max(1, total // 100 + 1)
         tier = "Explorer" if level < 3 else "Bridge Builder" if level < 6 else "Navigator"
-        return {"credit_total": total, "level": level, "tier": tier, "policy_version": "tier-v1"}
+        read_article_ids = set(
+            (
+                await self.session.scalars(
+                    select(ReadSession.article_id).where(
+                        ReadSession.user_id == user_id,
+                        ReadSession.status == ReadSessionStatus.ELIGIBLE,
+                    )
+                )
+            ).all()
+        )
+        voted_article_ids = set(
+            (
+                await self.session.scalars(
+                    select(Vote.article_id).where(
+                        Vote.user_id == user_id,
+                        Vote.active.is_(True),
+                    )
+                )
+            ).all()
+        )
+        engaged_article_ids = read_article_ids | voted_article_ids
+        source_diversity_count = 0
+        compared_issue_count = 0
+        if engaged_article_ids:
+            source_diversity_count = int(
+                await self.session.scalar(
+                    select(func.count(func.distinct(Article.source_id))).where(
+                        Article.id.in_(engaged_article_ids)
+                    )
+                )
+                or 0
+            )
+            compared_issues = (
+                select(IssueMembership.issue_id)
+                .where(IssueMembership.article_id.in_(engaged_article_ids))
+                .group_by(IssueMembership.issue_id)
+                .having(func.count(func.distinct(IssueMembership.article_id)) >= 2)
+                .subquery()
+            )
+            compared_issue_count = int(
+                await self.session.scalar(
+                    select(func.count()).select_from(compared_issues)
+                )
+                or 0
+            )
+        profiles = list(
+            (
+                await self.session.scalars(
+                    select(UserProfile)
+                    .where(UserProfile.user_id == user_id, UserProfile.active.is_(True))
+                    .order_by(UserProfile.created_at.desc())
+                )
+            ).all()
+        )
+
+        def profile_view(kind: ProfileKind) -> dict[str, Any] | None:
+            row = next((item for item in profiles if _value(item.kind) == kind.value), None)
+            if row is None:
+                return None
+            behavioral = kind == ProfileKind.BEHAVIORAL
+            return {
+                "x": row.x,
+                "y": 0 if behavioral else row.y,
+                "z": row.z,
+                "sensationalism": row.y if behavioral else None,
+                "confidence": float(row.confidence),
+            }
+
+        return {
+            "credit_total": total,
+            "level": level,
+            "tier": tier,
+            "policy_version": "tier-v1",
+            "read_article_count": len(read_article_ids),
+            "compared_issue_count": compared_issue_count,
+            "source_diversity_count": source_diversity_count,
+            "self_reported_profile": profile_view(ProfileKind.SELF_REPORTED),
+            "behavioral_profile": profile_view(ProfileKind.BEHAVIORAL),
+        }
 
     async def efficacy_view(self, user_id: str) -> dict[str, Any]:
         rows = list(
@@ -1197,15 +1730,19 @@ class ProductRepositoryMixin:
                     await self.session.scalars(
                         select(UserProfile).where(
                             UserProfile.user_id == user_id, UserProfile.active.is_(True)
-                        )
+                        ).order_by(UserProfile.created_at.desc())
                     )
                 ).all()
             )
             return [
                 {
                     "entity_type": "user",
-                    "entity_id": user_id,
-                    "label": "Your response-based coordinate",
+                    "entity_id": row.id,
+                    "label": (
+                        "행동 기반 관점"
+                        if _value(row.kind) == ProfileKind.BEHAVIORAL.value
+                        else "자기보고 관점"
+                    ),
                     "x": row.x,
                     "y": row.y,
                     "z": row.z,
@@ -1227,7 +1764,12 @@ class ProductRepositoryMixin:
                 )
             ).all()
         )
-        latest = await self._latest_scores()
+        analysis = await self._analysis_context()
+        latest: dict[str, ScoreVersion] = {
+            version_id: context["score"]
+            for version_id, context in analysis.items()
+            if context["status"] == "READY" and context.get("score") is not None
+        }
         if entity_type == "article":
             seen: set[str] = set()
             rows: list[dict[str, Any]] = []

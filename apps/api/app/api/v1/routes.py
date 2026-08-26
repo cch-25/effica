@@ -7,7 +7,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 from statistics import fmean
 from typing import Any, Literal
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlencode, urlsplit
 
 from fastapi import APIRouter, Cookie, Depends, Header, Query, Request, Response
 from fastapi.responses import RedirectResponse
@@ -28,6 +28,7 @@ from apps.api.app.api.v1.dependencies import (
 from apps.api.app.api.v1.schemas import (
     ArticlePage,
     ArticleView,
+    AssessmentPage,
     AutopilotSettingsPut,
     AutopilotSettingsView,
     ConsentSubmission,
@@ -38,6 +39,9 @@ from apps.api.app.api.v1.schemas import (
     EfficacyView,
     FeedItem,
     FeedPage,
+    IssueComparisonReviewPreview,
+    IssueComparisonReviewView,
+    IssueComparisonView,
     IssueDetailView,
     IssuePage,
     JobAccepted,
@@ -46,6 +50,7 @@ from apps.api.app.api.v1.schemas import (
     Page,
     PatchDocument,
     ProfileView,
+    ProgressView,
     QuestionnaireSubmission,
     QuestionnaireVersionView,
     ReadResult,
@@ -65,6 +70,7 @@ from apps.api.app.api.v1.schemas import (
     SplitIssueRequest,
     UserView,
     VisualizationPointPage,
+    VoteAggregateView,
     VoteInput,
     VoteView,
     WeightCreate,
@@ -84,7 +90,11 @@ from apps.api.app.domains.engagement.read import (
 )
 from apps.api.app.repositories.admin import AdminRepositoryError
 from apps.api.app.repositories.platform import MariaDBPlatformRepository
-from apps.api.app.repositories.product import ProductConflictError, ProductValidationError
+from apps.api.app.repositories.product import (
+    ProductComparisonError,
+    ProductConflictError,
+    ProductValidationError,
+)
 from apps.api.app.state import (
     PlatformState,
     decode_cursor,
@@ -311,8 +321,11 @@ async def auth_callback(
         raise ApiError(400, "OAUTH_STATE_INVALID", "OAuth state or nonce verification failed.")
     if error or not code:
         reason = "cancelled" if error == "access_denied" else "failed"
+        query = {"oauthError": reason}
+        if challenge.get("return_to"):
+            query["returnTo"] = challenge["return_to"]
         response = RedirectResponse(
-            f"{settings.web_base_url.rstrip('/')}/login?oauthError={reason}",
+            f"{settings.web_base_url.rstrip('/')}/login?{urlencode(query)}",
             status_code=302,
         )
         response.delete_cookie("oauth_state")
@@ -339,10 +352,17 @@ async def auth_callback(
             # response to the one-use browser nonce.
             expected_nonce=challenge["nonce"],
         )
-    except OAuthError as exc:
-        raise ApiError(
-            400, "OAUTH_CALLBACK_INVALID", "OAuth code or nonce verification failed."
-        ) from exc
+    except OAuthError:
+        query = {"oauthError": "failed"}
+        if challenge.get("return_to"):
+            query["returnTo"] = challenge["return_to"]
+        response = RedirectResponse(
+            f"{settings.web_base_url.rstrip('/')}/login?{urlencode(query)}",
+            status_code=302,
+        )
+        response.delete_cookie("oauth_state")
+        response.delete_cookie("oauth_nonce")
+        return response
     if repository is not None:
         user = await repository.create_or_get_oauth_user(
             provider=identity.provider,
@@ -379,11 +399,13 @@ async def auth_callback(
             "nonce_verified": oauth_nonce_cookie is not None,
         }
         onboarding_complete = bool(platform.users[user_id]["onboarding_complete"])
-    target = _web_return_target(
-        settings,
-        challenge.get("return_to"),
-        "/" if onboarding_complete else "/onboarding/consent",
-    )
+    if onboarding_complete:
+        target = _web_return_target(settings, challenge.get("return_to"), "/")
+    else:
+        onboarding_path = "/onboarding/consent"
+        if challenge.get("return_to") and challenge["return_to"] != "/":
+            onboarding_path += "?" + urlencode({"returnTo": challenge["return_to"]})
+        target = _web_return_target(settings, onboarding_path, "/onboarding/consent")
     response = RedirectResponse(target, status_code=302)
     response.set_cookie(
         "session",
@@ -764,6 +786,10 @@ async def feed(
                 coordinate={
                     **{key: score[key] for key in ("x", "y", "z", "sensationalism", "confidence")}
                 },
+                published_at=article.get("published_at"),
+                analysis_provider="openai",
+                analysis_status="READY",
+                score_version_id=str(score.get("score_version_id") or score["id"]),
                 reason_code="ADJACENT_PERSPECTIVE" if personalized else "BALANCED_FALLBACK",
                 rank=len(rows) + 1,
             ).model_dump()
@@ -871,6 +897,153 @@ async def list_issue_articles(
     return _page(rows, cursor)
 
 
+@router.get(
+    "/issues/{issue_id}/comparison",
+    response_model=IssueComparisonView,
+    operation_id="get_issue_comparison",
+)
+async def get_issue_comparison(
+    issue_id: str,
+    response: Response,
+    article_ids: list[str] = Query(min_length=2, max_length=4),
+    platform: PlatformState = Depends(get_state),
+    repository: MariaDBPlatformRepository | None = Depends(get_repository),
+) -> dict[str, Any]:
+    if len(set(article_ids)) != len(article_ids):
+        raise ApiError(
+            400,
+            "COMPARE_DUPLICATE_ARTICLE",
+            "Comparison articles must be unique.",
+        )
+    if repository is not None:
+        try:
+            result = await repository.issue_comparison_view(
+                issue_id=issue_id, article_ids=article_ids
+            )
+        except ProductComparisonError as exc:
+            status = 400 if exc.code == "COMPARE_ARTICLE_OUTSIDE_ISSUE" else 409
+            messages = {
+                "COMPARE_ARTICLE_OUTSIDE_ISSUE": "Every article must belong to the issue.",
+                "ANALYSIS_NOT_READY": "Trusted article analysis is not ready.",
+                "COMPARISON_NOT_READY": "A reviewed comparison is not ready.",
+            }
+            raise ApiError(status, exc.code, messages[exc.code]) from exc
+        if result is None:
+            raise _not_found("issue")
+    else:
+        issue = platform.issues.get(issue_id)
+        if issue is None or str(issue.get("status", "")).lower() in {
+            "merged",
+            "closed",
+            "archived",
+        }:
+            raise _not_found("issue")
+        if any(article_id not in issue["article_ids"] for article_id in article_ids):
+            raise ApiError(
+                400,
+                "COMPARE_ARTICLE_OUTSIDE_ISSUE",
+                "Every article must belong to the issue.",
+            )
+        snapshot = platform.comparison_snapshots.get(issue_id)
+        if (
+            snapshot is None
+            or snapshot.get("status") != "SUCCEEDED"
+            or snapshot.get("reviewed_at") is None
+            or snapshot.get("issue_version") != issue.get("version")
+            or not str(snapshot.get("model_alias", "")).strip()
+            or not str(snapshot.get("actual_model_id", "")).startswith("gpt-")
+        ):
+            raise ApiError(409, "COMPARISON_NOT_READY", "A reviewed comparison is not ready.")
+        snapshot_versions = snapshot.get("article_version_ids")
+        if not isinstance(snapshot_versions, dict) or any(
+            snapshot_versions.get(article_id)
+            != platform.articles.get(article_id, {}).get("current_version_id")
+            for article_id in article_ids
+        ):
+            raise ApiError(409, "COMPARISON_NOT_READY", "A reviewed comparison is not ready.")
+        output_articles = []
+        for article_id in article_ids:
+            article = platform.articles.get(article_id)
+            scores = platform.scores.get(article_id, [])
+            assessments = [
+                row
+                for row in platform.assessments.get(article_id, [])
+                if row.get("provider") == "openai"
+                and row.get("synthetic") is not True
+                and row.get("status") == "SUCCEEDED"
+            ]
+            if article is None or not scores or not assessments:
+                raise ApiError(409, "ANALYSIS_NOT_READY", "Trusted article analysis is not ready.")
+            assessment = assessments[0]
+            active_votes = [
+                history[-1]
+                for (_user_id, vote_article_id), history in platform.votes.items()
+                if vote_article_id == article_id and history and history[-1].get("active")
+            ]
+            qualified = [row for row in active_votes if row["quality_status"] == "QUALIFIED"]
+
+            def mean(key: str, rows: list[dict[str, Any]] = qualified) -> float | None:
+                return round(fmean(float(row[key]) for row in rows), 4) if rows else None
+
+            output_articles.append(
+                {
+                    "article": article,
+                    "score": scores[-1],
+                    "assessment": {
+                        "id": assessment["id"],
+                        "model_alias": assessment["model_alias"],
+                        "actual_model_id": assessment["actual_model_id"],
+                        "prompt_version": assessment["prompt_version"],
+                        "summary": assessment["rationale_summary"],
+                        "evidence": list(assessment.get("evidence") or [])[:5],
+                        "confidence": assessment["confidence"],
+                        "provider": "openai",
+                        "created_at": assessment["created_at"],
+                        "synthetic": False,
+                    },
+                    "frame": snapshot["article_frames"].get(article_id, {}),
+                    "vote_aggregate": {
+                        "qualified": {
+                            key: mean(key) for key in ("x", "y", "z", "sensationalism")
+                        },
+                        "qualified_count": len(qualified),
+                        "small_segments_suppressed": len(qualified) < 5,
+                        "snapshot_version": max(
+                            (row["revision"] for row in active_votes), default=None
+                        ),
+                        "generated_at": max(
+                            (row.get("updated_at") for row in active_votes), default=None
+                        ),
+                        "status": "ready",
+                    },
+                }
+            )
+        result = {
+            "issue": {
+                "id": issue_id,
+                "version": issue["version"],
+                "title": issue["title"],
+                "summary": issue["summary"],
+                "data_as_of": issue.get("data_as_of"),
+                "article_count": len(issue["article_ids"]),
+                "source_count": issue["source_count"],
+            },
+            "common_facts": snapshot["common_facts"],
+            "dimensions": snapshot["dimensions"],
+            "articles": output_articles,
+            "comparison_version": snapshot["id"],
+            "prompt_version": snapshot["prompt_version"],
+            "model_alias": snapshot["model_alias"],
+            "actual_model_id": snapshot["actual_model_id"],
+            "confidence": snapshot["confidence"],
+            "created_at": snapshot["created_at"],
+            "reviewed_at": snapshot["reviewed_at"],
+        }
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["ETag"] = f'"{stable_hash(result["comparison_version"] + ":" + ",".join(sorted(article_ids)))}"'
+    return result
+
+
 @router.get("/articles/{article_id}", response_model=ArticleView, operation_id="get_article")
 async def get_article(
     article_id: str,
@@ -888,7 +1061,11 @@ async def get_article(
     return article
 
 
-@router.get("/articles/{article_id}/assessments", operation_id="list_article_assessments")
+@router.get(
+    "/articles/{article_id}/assessments",
+    response_model=AssessmentPage,
+    operation_id="list_article_assessments",
+)
 async def article_assessments(
     article_id: str,
     platform: PlatformState = Depends(get_state),
@@ -901,9 +1078,25 @@ async def article_assessments(
         return assessments
     if article_id not in platform.articles:
         raise _not_found("article")
+    public_assessments = [
+        {
+            "id": str(item.get("id") or f"{article_id}-{index}"),
+            "model_alias": str(item["model_alias"]),
+            "actual_model_id": str(item.get("actual_model_id") or item["model_alias"]),
+            "prompt_version": str(item.get("prompt_version") or "fixture-v1"),
+            "summary": str(item.get("rationale_summary") or "제한 공개 분석"),
+            "evidence": list(item.get("evidence") or []),
+            "confidence": float(item.get("confidence") or 0),
+            "provider": "openai",
+            "created_at": item.get("created_at") or utcnow(),
+            "synthetic": False,
+        }
+        for index, item in enumerate(platform.assessments.get(article_id, []))
+        if item.get("provider") == "openai" and item.get("synthetic") is not True
+    ]
     return {
         "article_version_id": platform.articles[article_id]["current_version_id"],
-        "assessments": platform.assessments.get(article_id, []),
+        "assessments": public_assessments,
     }
 
 
@@ -1219,7 +1412,11 @@ async def return_read_session(
     }
 
 
-@router.get("/articles/{article_id}/votes/aggregate", operation_id="get_vote_aggregate")
+@router.get(
+    "/articles/{article_id}/votes/aggregate",
+    response_model=VoteAggregateView,
+    operation_id="get_vote_aggregate",
+)
 async def vote_aggregate(
     article_id: str,
     platform: PlatformState = Depends(get_state),
@@ -1243,12 +1440,12 @@ async def vote_aggregate(
         return round(fmean(row[key] for row in rows), 4) if rows else None
 
     return {
-        "raw": {key: aggregate(active, key) for key in ("x", "y", "z", "sensationalism")},
         "qualified": {key: aggregate(qualified, key) for key in ("x", "y", "z", "sensationalism")},
-        "raw_count": len(active),
         "qualified_count": len(qualified),
-        "segments": {} if len(qualified) < 5 else {"all": {"count": len(qualified)}},
         "small_segments_suppressed": len(qualified) < 5,
+        "snapshot_version": max((vote["revision"] for vote in active), default=None),
+        "generated_at": max((vote.get("updated_at") for vote in active), default=None),
+        "status": "ready",
     }
 
 
@@ -1402,7 +1599,7 @@ async def credits(
     return _page(list(reversed(platform.credits.get(principal.user_id, []))), cursor)
 
 
-@router.get("/me/progress", operation_id="get_progress")
+@router.get("/me/progress", response_model=ProgressView, operation_id="get_progress")
 async def progress(
     principal: Principal = Depends(require_member),
     platform: PlatformState = Depends(get_state),
@@ -1413,7 +1610,77 @@ async def progress(
     total = sum(entry["delta"] for entry in platform.credits.get(principal.user_id, []))
     level = max(1, total // 100 + 1)
     tier = "Explorer" if level < 3 else "Bridge Builder" if level < 6 else "Navigator"
-    return {"credit_total": total, "level": level, "tier": tier, "policy_version": "tier-v1"}
+    credited_session_ids = {
+        str(entry.get("event_key", "")).removeprefix("read:")
+        for entry in platform.credits.get(principal.user_id, [])
+        if str(entry.get("event_type", "")).upper() == "QUALIFIED_READ"
+    }
+    read_article_ids = {
+        session["article_id"]
+        for session_id, session in platform.read_sessions.items()
+        if session.get("user_id") == principal.user_id
+        and session_id in credited_session_ids
+    }
+    voted_article_ids = {
+        article_id
+        for (user_id, article_id), history in platform.votes.items()
+        if user_id == principal.user_id and history and history[-1].get("active")
+    }
+    engaged_article_ids = read_article_ids | voted_article_ids
+    source_ids = {
+        platform.articles[article_id]["source_id"]
+        for article_id in engaged_article_ids
+        if article_id in platform.articles
+    }
+    engaged_by_issue: dict[str, set[str]] = {}
+    for article_id in engaged_article_ids:
+        article = platform.articles.get(article_id)
+        issue_id = None if article is None else article.get("issue_id")
+        if issue_id:
+            engaged_by_issue.setdefault(str(issue_id), set()).add(article_id)
+    compared_issue_ids = {
+        issue_id for issue_id, ids in engaged_by_issue.items() if len(ids) >= 2
+    }
+    profiles = [
+        row
+        for row in platform.profiles.values()
+        if row.get("user_id") == principal.user_id and row.get("active")
+    ]
+
+    def memory_profile(kind: str) -> dict[str, Any] | None:
+        row = next(
+            (
+                item
+                for item in reversed(profiles)
+                if str(item.get("kind", "")).casefold() in {
+                    kind,
+                    f"{kind}_profile",
+                }
+            ),
+            None,
+        )
+        if row is None:
+            return None
+        behavioral = kind == "behavioral"
+        return {
+            "x": row["x"],
+            "y": 0 if behavioral else row["y"],
+            "z": row["z"],
+            "sensationalism": row.get("sensationalism", row["y"] if behavioral else None),
+            "confidence": row.get("confidence", 0),
+        }
+
+    return {
+        "credit_total": total,
+        "level": level,
+        "tier": tier,
+        "policy_version": "tier-v1",
+        "read_article_count": len(read_article_ids),
+        "compared_issue_count": len(compared_issue_ids),
+        "source_diversity_count": len(source_ids),
+        "self_reported_profile": memory_profile("self_reported"),
+        "behavioral_profile": memory_profile("behavioral"),
+    }
 
 
 @router.get("/me/efficacy", operation_id="get_efficacy")
@@ -1549,8 +1816,13 @@ async def visualization_points(
         rows = [
             {
                 "entity_type": "user",
-                "entity_id": principal.user_id,
-                "label": "Your response-based coordinate",
+                "entity_id": profile.get("id", principal.user_id),
+                "label": (
+                    "행동 기반 관점"
+                    if str(profile.get("kind", "")).casefold()
+                    in {"behavioral", "behavioral_profile"}
+                    else "자기보고 관점"
+                ),
                 **{
                     key: value
                     for key, value in profile.items()
@@ -2138,6 +2410,152 @@ async def admin_patch_issue(
         return issue
 
     return _idempotent(platform, f"admin:issue:{issue_id}", key, body.model_dump(), patch)
+
+
+@router.get(
+    "/admin/issues/{issue_id}/comparison",
+    response_model=IssueComparisonReviewPreview,
+    operation_id="admin_get_issue_comparison",
+)
+async def admin_get_issue_comparison(
+    issue_id: str,
+    _: Principal = Depends(require_analyst),
+    platform: PlatformState = Depends(get_state),
+    repository: MariaDBPlatformRepository | None = Depends(get_repository),
+) -> dict[str, Any]:
+    if repository is not None:
+        return await _admin_repo(repository.get_issue_comparison_for_review(issue_id))
+    issue = platform.issues.get(issue_id)
+    if issue is None:
+        raise _not_found("issue")
+    snapshot = platform.comparison_snapshots.get(issue_id)
+    if snapshot is None or snapshot.get("issue_version") != issue.get("version"):
+        raise _not_found("issue comparison")
+    return {
+        "snapshot_id": snapshot["id"],
+        "issue_id": issue_id,
+        "issue_version": snapshot["issue_version"],
+        "status": snapshot["status"],
+        "prompt_version": snapshot["prompt_version"],
+        "model_alias": snapshot["model_alias"],
+        "actual_model_id": snapshot["actual_model_id"],
+        "common_facts": snapshot["common_facts"],
+        "dimensions": snapshot["dimensions"],
+        "article_frames": snapshot["article_frames"],
+        "article_version_ids": snapshot["article_version_ids"],
+        "confidence": snapshot["confidence"],
+        "created_at": snapshot["created_at"],
+        "reviewed_at": snapshot.get("reviewed_at"),
+        "reviewed_by": snapshot.get("reviewed_by"),
+    }
+
+
+@router.post(
+    "/admin/issues/{issue_id}/comparison",
+    response_model=IssueComparisonReviewView,
+    dependencies=[Depends(require_csrf)],
+    operation_id="admin_review_issue_comparison",
+)
+async def admin_review_issue_comparison(
+    issue_id: str,
+    body: ReasonRequest,
+    request: Request,
+    principal: Principal = Depends(require_admin),
+    key: str = Depends(require_idempotency_key),
+    snapshot_id: str = Depends(require_if_match),
+    platform: PlatformState = Depends(get_state),
+    repository: MariaDBPlatformRepository | None = Depends(get_repository),
+) -> dict[str, Any]:
+    if repository is not None:
+        return await _admin_repo(
+            repository.review_issue_comparison(
+                issue_id,
+                snapshot_id=snapshot_id,
+                actor_id=principal.user_id,
+                idempotency_key=key,
+                reason=body.reason,
+                request_id=request.state.request_id,
+            )
+        )
+    issue = platform.issues.get(issue_id)
+    if issue is None:
+        raise _not_found("issue")
+    expected_snapshot_id = snapshot_id.strip().strip('"')
+    snapshot = platform.comparison_snapshots.get(issue_id)
+    if snapshot is None or snapshot.get("id") != expected_snapshot_id:
+        raise _not_found("issue comparison")
+
+    def review() -> dict[str, Any]:
+        if snapshot.get("status") != "SUCCEEDED" or snapshot.get("issue_version") != issue.get(
+            "version"
+        ):
+            raise ApiError(
+                409,
+                "VERSION_CONFLICT",
+                "Only the current successful comparison can be reviewed.",
+            )
+        model = next(
+            (
+                row
+                for row in platform.models.values()
+                if row.get("alias") == snapshot.get("model_alias")
+            ),
+            None,
+        )
+        if (
+            model is None
+            or model.get("provider") != "openai"
+            or not str(model.get("actual_model_id", "")).startswith("gpt-")
+            or model.get("status") != "ACTIVE"
+        ):
+            raise ApiError(
+                400,
+                "ADMIN_VALIDATION_ERROR",
+                "Comparison model provenance is not trusted.",
+            )
+        expected_versions = snapshot.get("article_version_ids")
+        article_frames = snapshot.get("article_frames")
+        current_versions = {
+            article_id: platform.articles.get(article_id, {}).get("current_version_id")
+            for article_id in issue.get("article_ids", [])
+            if article_id in (expected_versions or {})
+        }
+        if (
+            not isinstance(expected_versions, dict)
+            or not isinstance(article_frames, dict)
+            or not 2 <= len(expected_versions) <= 4
+            or set(expected_versions) != set(article_frames)
+            or current_versions != expected_versions
+        ):
+            raise ApiError(409, "VERSION_CONFLICT", "Comparison inputs changed before review.")
+        snapshot["reviewed_at"] = utcnow()
+        snapshot["reviewed_by"] = principal.user_id
+        result = {
+            "snapshot_id": snapshot["id"],
+            "issue_id": issue_id,
+            "issue_version": snapshot["issue_version"],
+            "reviewed_at": snapshot["reviewed_at"],
+            "reviewed_by": snapshot["reviewed_by"],
+        }
+        platform.audit_action(
+            principal.user_id,
+            "ISSUE_COMPARISON_REVIEWED",
+            "issue_comparison_snapshot",
+            snapshot["id"],
+            None,
+            result,
+            body.reason,
+            request.state.request_id,
+        )
+        return result
+
+    return _idempotent(
+        platform,
+        f"admin:issue-comparison-review:{issue_id}",
+        key,
+        {"snapshot_id": expected_snapshot_id, "reason": body.reason},
+        review,
+    )
 
 
 @router.get("/admin/models", response_model=Page, operation_id="admin_list_models")

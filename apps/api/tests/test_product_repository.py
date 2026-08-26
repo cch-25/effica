@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from apps.api.app.db.base import Base
 from apps.api.app.db.enums import (
     ArticleStatus,
+    AssessmentStatus,
     IssueStatus,
+    ModelStatus,
     ProfileKind,
     QuestionnaireKind,
     RevisionStatus,
@@ -25,6 +27,8 @@ from apps.api.app.db.models import (
     ArticleVersion,
     Issue,
     IssueMembership,
+    ModelAlias,
+    ModelAssessment,
     QuestionnaireVersion,
     ScoreVersion,
     Source,
@@ -45,8 +49,8 @@ async def test_db_product_engagement_vertical_slice() -> None:
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as session:
         repository = MariaDBPlatformRepository(session, encryption_secret="x" * 40)
-        user_id, source_id, article_id, version_id, issue_id, weight_id = (
-            new_ulid() for _ in range(6)
+        user_id, source_id, article_id, version_id, issue_id, weight_id, alias_id, assessment_id = (
+            new_ulid() for _ in range(8)
         )
         now = utc_now()
         session.add_all(
@@ -88,6 +92,14 @@ async def test_db_product_engagement_vertical_slice() -> None:
                     created_by=user_id,
                     created_at=now,
                     published_at=now,
+                ),
+                ModelAlias(
+                    id=alias_id,
+                    alias="phase-1-openai",
+                    provider="openai",
+                    actual_model_id="gpt-5-mini",
+                    status=ModelStatus.ACTIVE,
+                    config_json={},
                 ),
                 QuestionnaireVersion(
                     id=new_ulid(),
@@ -149,6 +161,23 @@ async def test_db_product_engagement_vertical_slice() -> None:
                     confidence=0.9,
                     created_at=now,
                 ),
+                ModelAssessment(
+                    id=assessment_id,
+                    article_version_id=version_id,
+                    model_alias_id=alias_id,
+                    prompt_version="phase-1-v1",
+                    x=20,
+                    y=0,
+                    z=0,
+                    sensationalism=25,
+                    confidence=0.75,
+                    evidence_json={"summary": "검증된 OpenAI 분석", "synthetic": False},
+                    raw_response_ref=None,
+                    token_usage=100,
+                    latency_ms=50,
+                    status=AssessmentStatus.SUCCEEDED,
+                    created_at=now,
+                ),
                 ScoreVersion(
                     id=new_ulid(),
                     article_version_id=version_id,
@@ -158,7 +187,11 @@ async def test_db_product_engagement_vertical_slice() -> None:
                     z=5,
                     sensationalism=25,
                     confidence=0.75,
-                    components_json={"model": 1.0},
+                    components_json={
+                        "model": 1.0,
+                        "analysis_provider": "openai",
+                        "assessment_ids": [assessment_id],
+                    },
                     status=ScoreStatus.ACTIVE,
                     created_at=now,
                 ),
