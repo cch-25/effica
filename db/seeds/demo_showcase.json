@@ -1,0 +1,130 @@
+{
+  "version": "2026-08-23-demo-v5",
+  "as_of": "2026-08-23T00:00:00+09:00",
+  "max_age_days": 7,
+  "issues": [
+    {
+      "key": "school-fire-evacuation-119-call-2026",
+      "title": "개학을 맞아 어린이 화재 대피를 돕는 119안심콜 가입 홍보를 시작한다",
+      "summary": "교육부와 소방청은 유치원생·초등학생과 보호자를 대상으로 화재 대피 안내 기능이 추가된 119안심콜 가입을 집중 홍보한다. 교육부 원문은 학교와 가정의 참여를, 소방청 자료는 119상황실의 운영 절차를, 정책뉴스는 돌봄 공백 어린이의 안전망을 중심으로 설명한다.",
+      "featured_rank": 1,
+      "selection_reason": "같은 공동 정책을 교육·소방 운영·생활 안전의 서로 다른 관점에서 설명해 출처별 강조점을 비교할 수 있다.",
+      "editorial_review_status": "APPROVED",
+      "reviewed_by": "johnnybae (human operator approval in Codex thread, 2026-08-23)",
+      "articles": [
+        {
+          "source": "교육부",
+          "source_home_url": "https://www.moe.go.kr/",
+          "source_type": "CRAWLER",
+          "policy_status": "APPROVED",
+          "robots_status": "APPROVED",
+          "terms_status": "APPROVED",
+          "policy_reference": "APPROVED: 두 교육부 보도자료는 각 페이지에서 공공누리 제1유형(출처표시)으로 제공되고 robots가 허용한다. 텍스트만 수집한다. https://www.moe.go.kr/boardCnts/viewRenew.do?boardID=294&boardSeq=106922&lev=0&searchType=null&statusYN=W&page=1&s=moe&m=020402&opType=N https://www.moe.go.kr/boardCnts/viewRenew.do?boardID=294&boardSeq=106930&lev=0&m=020402&opType=N&page=1&s=moe&searchType=null&statusYN=W https://www.moe.go.kr/robots.txt",
+          "url": "https://www.moe.go.kr/boardCnts/viewRenew.do?boardID=294&boardSeq=106922&lev=0&searchType=null&statusYN=W&page=1&s=moe&m=020402&opType=N"
+        },
+        {
+          "source": "소방청",
+          "source_home_url": "https://www.nfa.go.kr/",
+          "source_type": "CRAWLER",
+          "policy_status": "APPROVED",
+          "robots_status": "APPROVED",
+          "terms_status": "APPROVED",
+          "policy_reference": "APPROVED: 소방청 작성 보도자료를 정책브리핑이 텍스트 공공누리 제1유형으로 제공한다. 실제 수집 대상은 robots가 허용하는 korea.kr 재배포 URL이며 소방청 차단 경로는 수집하지 않는다. https://www.korea.kr/briefing/pressReleaseView.do?newsId=156774767 https://www.korea.kr/robots.txt https://www.nfa.go.kr/nfa/news/pressrelease/press/?boardId=bbs_0000000000000010&mode=view&cntId=3097",
+          "url": "https://www.korea.kr/briefing/pressReleaseView.do?newsId=156774767"
+        },
+        {
+          "source": "대한민국 정책브리핑",
+          "source_home_url": "https://www.korea.kr/",
+          "source_type": "CRAWLER",
+          "policy_status": "APPROVED",
+          "robots_status": "APPROVED",
+          "terms_status": "APPROVED",
+          "policy_reference": "APPROVED: manifest의 각 정책브리핑 URL은 페이지 하단에서 텍스트 공공누리 제1유형(출처표시)을 명시하고 robots가 해당 경로를 허용한다. 텍스트만 수집하며 사진·영상은 제외한다. https://www.korea.kr/etc/copyRight.do https://www.korea.kr/robots.txt",
+          "url": "https://www.korea.kr/news/policyNewsView.do?newsId=148970214"
+        }
+      ]
+    },
+    {
+      "key": "digital-sex-crime-illegal-sites-response-2026",
+      "title": "정부가 디지털성범죄 불법사이트를 삭제 지원에서 사이트 무력화 중심으로 대응한다",
+      "summary": "성평등가족부·방송미디어통신위원회·경찰청은 불법촬영물 유통사이트의 구조를 분석하고 긴급 접속 차단, 광고·결제 차단, 국제 수사 공조를 포함한 통합 대응 방안을 발표했다. 부처별 보도자료와 합동 브리핑은 피해자 보호, 온라인 유통 차단, 수사 집행의 연결을 각각 설명한다.",
+      "featured_rank": 2,
+      "selection_reason": "같은 합동 대책을 피해자 지원 부처, 온라인 유통 규제 기관, 관계부처 합동 문답의 서로 다른 책임과 관점에서 비교할 수 있다.",
+      "editorial_review_status": "APPROVED",
+      "reviewed_by": "johnnybae (human operator approval in Codex thread, 2026-08-23)",
+      "articles": [
+        {
+          "source": "성평등가족부",
+          "source_home_url": "https://www.mogef.go.kr/",
+          "source_type": "CRAWLER",
+          "policy_status": "APPROVED",
+          "robots_status": "APPROVED",
+          "terms_status": "APPROVED",
+          "policy_reference": "APPROVED: 성평등가족부 작성 보도자료를 정책브리핑이 텍스트 공공누리 제1유형으로 제공한다. 실제 수집 대상은 robots가 허용하는 korea.kr 재배포 URL이며 성평등가족부 원문 경로는 수집하지 않는다. https://www.korea.kr/briefing/pressReleaseView.do?newsId=156774936 https://www.korea.kr/robots.txt",
+          "url": "https://www.korea.kr/briefing/pressReleaseView.do?newsId=156774936"
+        },
+        {
+          "source": "방송미디어통신위원회",
+          "source_home_url": "https://www.kmcc.go.kr/",
+          "source_type": "CRAWLER",
+          "policy_status": "APPROVED",
+          "robots_status": "APPROVED",
+          "terms_status": "APPROVED",
+          "policy_reference": "APPROVED: 방송미디어통신위원회 작성 보도자료를 정책브리핑이 텍스트 공공누리 제1유형으로 제공한다. 실제 수집 대상은 robots가 허용하는 korea.kr 재배포 URL이다. https://www.korea.kr/briefing/pressReleaseView.do?newsId=156774915 https://www.korea.kr/robots.txt",
+          "url": "https://www.korea.kr/briefing/pressReleaseView.do?newsId=156774915"
+        },
+        {
+          "source": "대한민국 정책브리핑",
+          "source_home_url": "https://www.korea.kr/",
+          "source_type": "CRAWLER",
+          "policy_status": "APPROVED",
+          "robots_status": "APPROVED",
+          "terms_status": "APPROVED",
+          "policy_reference": "APPROVED: manifest의 각 정책브리핑 URL은 페이지 하단에서 텍스트 공공누리 제1유형(출처표시)을 명시하고 robots가 해당 경로를 허용한다. 텍스트만 수집하며 사진·영상은 제외한다. https://www.korea.kr/etc/copyRight.do https://www.korea.kr/robots.txt",
+          "url": "https://www.korea.kr/briefing/policyBriefingView.do?newsId=156775030"
+        }
+      ]
+    },
+    {
+      "key": "southern-flood-recovery-support-2026",
+      "title": "정부가 남부 집중호우 피해지역의 복구와 생활·금융 지원을 본격화한다",
+      "summary": "행정안전부는 중앙재난안전대책본부를 복구대책지원본부 체제로 전환했고, 금융위원회는 피해 가계·중소기업 긴급 지원을 마련했으며, 기후에너지환경부는 거제의 하천·상하수도 피해와 단전·단수 복구 상황을 점검했다.",
+      "featured_rank": 3,
+      "selection_reason": "같은 집중호우 피해를 재난 복구 총괄, 가계·기업 금융, 생활 기반시설 복원의 서로 다른 지원 축에서 비교할 수 있다.",
+      "editorial_review_status": "APPROVED",
+      "reviewed_by": "johnnybae (human operator approval in Codex thread, 2026-08-23)",
+      "articles": [
+        {
+          "source": "행정안전부",
+          "source_home_url": "https://www.mois.go.kr/",
+          "source_type": "CRAWLER",
+          "policy_status": "APPROVED",
+          "robots_status": "APPROVED",
+          "terms_status": "APPROVED",
+          "policy_reference": "APPROVED: 행정안전부 작성 보도자료를 정책브리핑이 텍스트 공공누리 제1유형으로 제공한다. 실제 수집 대상은 robots가 허용하는 korea.kr 재배포 URL이다. https://www.korea.kr/briefing/pressReleaseView.do?newsId=156775081 https://www.korea.kr/robots.txt",
+          "url": "https://www.korea.kr/briefing/pressReleaseView.do?newsId=156775081"
+        },
+        {
+          "source": "금융위원회",
+          "source_home_url": "https://www.fsc.go.kr/",
+          "source_type": "CRAWLER",
+          "policy_status": "APPROVED",
+          "robots_status": "APPROVED",
+          "terms_status": "APPROVED",
+          "policy_reference": "APPROVED: 금융위원회 작성 보도자료를 정책브리핑이 텍스트 공공누리 제1유형으로 제공한다. 실제 수집 대상은 robots가 허용하는 korea.kr 재배포 URL이다. https://www.korea.kr/briefing/pressReleaseView.do?newsId=156774938 https://www.korea.kr/robots.txt",
+          "url": "https://www.korea.kr/briefing/pressReleaseView.do?newsId=156774938"
+        },
+        {
+          "source": "기후에너지환경부",
+          "source_home_url": "https://www.mcee.go.kr/",
+          "source_type": "CRAWLER",
+          "policy_status": "APPROVED",
+          "robots_status": "APPROVED",
+          "terms_status": "APPROVED",
+          "policy_reference": "APPROVED: 기후에너지환경부 작성 보도자료를 정책브리핑이 텍스트 공공누리 제1유형으로 제공한다. 실제 수집 대상은 robots가 허용하는 korea.kr 재배포 URL이다. https://www.korea.kr/briefing/pressReleaseView.do?newsId=156775079 https://www.korea.kr/robots.txt",
+          "url": "https://www.korea.kr/briefing/pressReleaseView.do?newsId=156775079"
+        }
+      ]
+    }
+  ]
+}

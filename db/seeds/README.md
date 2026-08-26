@@ -27,3 +27,7 @@ uv run python -m db.seeds.seed
 스냅샷에는 계정, OAuth 주체, 토큰, 설문 응답, 비공개 URL, 비밀 값이 없어야
 합니다. 기사 추가 시 직접 원문 HTTPS URL, 한국어 원문 제목과 본문, 시간대가
 포함된 ISO 8601 발행일을 반드시 검증해야 합니다.
+
+Phase 1·2 대표 사건과 검수된 비교 snapshot은 이 기존 카테고리 seed와 분리된 `demo_showcase.json` 및
+`demo_showcase.py`로 관리한다. 운영 백업, 정책 검수, 멱등 refresh, trust audit,
+rollback 절차는 [DEMO_SHOWCASE_RUNBOOK.md](./DEMO_SHOWCASE_RUNBOOK.md)를 따른다.
