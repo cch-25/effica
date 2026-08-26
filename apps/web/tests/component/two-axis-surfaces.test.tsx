@@ -4,9 +4,9 @@ import { PerspectivePreview } from "@/features/share-cards/perspective-preview";
 import { VisualizationExplorer } from "@/features/visualization/visualization-explorer";
 import type { VisualizationPoint } from "@/lib/api/types";
 
-const mocks = vi.hoisted(() => ({ useVisualizationPointsQuery: vi.fn() }));
+const mocks = vi.hoisted(() => ({ useVisualizationPointsQuery: vi.fn(), useViewerQuery: vi.fn() }));
 
-vi.mock("@/lib/api/queries", () => ({ useVisualizationPointsQuery: mocks.useVisualizationPointsQuery }));
+vi.mock("@/lib/api/queries", () => ({ useVisualizationPointsQuery: mocks.useVisualizationPointsQuery, useViewerQuery: mocks.useViewerQuery }));
 
 const point: VisualizationPoint = {
   id: "article-1",
@@ -29,6 +29,7 @@ afterEach(() => {
 describe("두 기준 화면", () => {
   it("시각화에서 편향성과 과장성만 핵심 기준으로 안내한다", () => {
     mocks.useVisualizationPointsQuery.mockReturnValue({ data: { items: [point] } });
+    mocks.useViewerQuery.mockReturnValue({ error: { status: 401 } });
 
     render(<VisualizationExplorer />);
 
