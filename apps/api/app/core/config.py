@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-5.6-luna"
     llm_model_alias: str = "openai-default"
     llm_reasoning_effort: str = "xhigh"
+    llm_timeout_seconds: float = Field(default=120.0, gt=0, le=300)
     log_level: str = "INFO"
     google_client_id: str | None = None
     google_client_secret: str | None = None

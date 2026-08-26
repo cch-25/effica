@@ -867,14 +867,77 @@ class HttpLLMProvider(LLMProvider):
         self._circuit.record_success()
         return assessment
 
+    def analyze_issue_comparison(
+        self,
+        articles: Iterable[Mapping[str, Any]],
+        prompt_version: str,
+    ) -> dict[str, Any]:
+        """Compare two to four source-masked articles using strict structured output."""
+
+        article_rows = [dict(article) for article in articles]
+        if not 2 <= len(article_rows) <= 4:
+            raise ProviderSchemaError("issue comparison requires two to four articles")
+        article_ids = [str(article.get("article_id") or "") for article in article_rows]
+        if any(not article_id for article_id in article_ids) or len(set(article_ids)) != len(
+            article_ids
+        ):
+            raise ProviderSchemaError("issue comparison article identifiers are invalid")
+        if not isinstance(prompt_version, str) or not prompt_version.strip():
+            raise ProviderSchemaError("prompt version is required")
+
+        started = time.perf_counter()
+        self._metrics.request_started()
+        try:
+            self._circuit.before_call()
+        except ProviderCircuitOpenError as exc:
+            self._metrics.failure(exc.code, self._elapsed_ms(started))
+            raise
+        try:
+            self._rate_limiter.acquire()
+        except ProviderRateLimitError as exc:
+            self._circuit.release_probe()
+            self._metrics.failure(exc.code, self._elapsed_ms(started), rate_limited=True)
+            raise
+
+        payload = self._request_json_with_retries(
+            self._issue_comparison_request_body(article_rows, prompt_version),
+            started,
+        )
+        try:
+            candidate = dict(_extract_assessment_mapping(payload))
+            result = _validate_issue_comparison_output(candidate, set(article_ids))
+        except ProviderSchemaError as exc:
+            self._metrics.failure(exc.code, self._elapsed_ms(started))
+            self._circuit.record_failure()
+            raise
+        except Exception as exc:
+            error = _provider_schema_error("provider comparison output failed validation", exc)
+            self._metrics.failure(error.code, self._elapsed_ms(started))
+            self._circuit.record_failure()
+            raise error from exc
+
+        token_usage = _extract_token_usage(payload, candidate)
+        self._metrics.success(self._elapsed_ms(started), token_usage)
+        self._circuit.record_success()
+        return result
+
     def _request_with_retries(
         self,
         input: AssessmentInput,
         prompt_version: str,
         started: float,
     ) -> Mapping[str, Any]:
+        return self._request_json_with_retries(
+            self._request_body(input, prompt_version),
+            started,
+        )
+
+    def _request_json_with_retries(
+        self,
+        request_json: Mapping[str, Any],
+        started: float,
+    ) -> Mapping[str, Any]:
         attempts = self.config.max_retries + 1
-        request_json = self._request_body(input, prompt_version)
         last_error: ProviderError | None = None
         for attempt in range(attempts):
             try:
@@ -951,6 +1014,61 @@ class HttpLLMProvider(LLMProvider):
         self._metrics.failure(error.code, self._elapsed_ms(started))
         self._circuit.record_failure()
         raise error
+
+    def _issue_comparison_request_body(
+        self,
+        articles: list[dict[str, Any]],
+        prompt_version: str,
+    ) -> dict[str, object]:
+        blocks: list[str] = []
+        for article in articles:
+            source_name = str(article.get("source_name") or "") or None
+            source_url = str(article.get("source_url") or "") or None
+            title = mask_source_identity(
+                str(article.get("title") or ""), source_name, source_url
+            )
+            content = mask_source_identity(
+                str(article.get("content") or article.get("body") or "")[:30_000],
+                source_name,
+                source_url,
+            )
+            blocks.append(
+                "\n".join(
+                    (
+                        f"ARTICLE_ID: {article['article_id']}",
+                        f"ARTICLE_VERSION_ID: {article.get('article_version_id', '')}",
+                        f"TITLE: {title}",
+                        f"CONTENT:\n{content}",
+                    )
+                )
+            )
+        prompt = (
+            "Compare only the supplied article contents without inferring from publisher identity. "
+            "A common fact must be directly supported by at least two articles. Keep evidence_refs "
+            "short and use article IDs plus concise location labels; never reproduce long excerpts. "
+            "For every article, describe the headline frame, emphasized actors/values/effects, and "
+            "only a cautious omission note when the supplied content supports that comparison. "
+            "Do not judge truthfulness, overall quality, or the reader.\n\n"
+            f"PROMPT_VERSION: {prompt_version}\n\n" + "\n\n---\n\n".join(blocks)
+        )
+        return {
+            "model": self.config.actual_model_id,
+            "reasoning": {"effort": self.config.reasoning_effort},
+            "instructions": (
+                "You are a content-first issue framing analyst. Return only the requested "
+                "structured comparison. Do not include personal data, secrets, URLs, publisher "
+                "identity, or long source excerpts."
+            ),
+            "input": prompt,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "issue_comparison",
+                    "strict": True,
+                    "schema": _issue_comparison_schema(),
+                }
+            },
+        }
 
     def _retry(self, attempt: int) -> None:
         self._metrics.retry()
@@ -1130,6 +1248,127 @@ def _chat_completion_assessment_schema() -> dict[str, object]:
             "evidence",
             "rationale_summary",
         ],
+    }
+
+
+def _issue_comparison_schema() -> dict[str, object]:
+    string_list = {
+        "type": "array",
+        "maxItems": 12,
+        "items": {"type": "string", "minLength": 1, "maxLength": 240},
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "common_facts": {
+                "type": "array",
+                "maxItems": 12,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "id": {"type": "string", "minLength": 1, "maxLength": 80},
+                        "text": {"type": "string", "minLength": 1, "maxLength": 600},
+                        "article_ids": string_list,
+                        "evidence_refs": string_list,
+                    },
+                    "required": ["id", "text", "article_ids", "evidence_refs"],
+                },
+            },
+            "dimensions": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "key": {"type": "string", "minLength": 1, "maxLength": 80},
+                        "label": {"type": "string", "minLength": 1, "maxLength": 120},
+                    },
+                    "required": ["key", "label"],
+                },
+            },
+            "article_frames": {
+                "type": "array",
+                "maxItems": 4,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "article_id": {"type": "string", "minLength": 1},
+                        "headline_frame": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 600,
+                        },
+                        "emphasis": string_list,
+                        "omissions_note": {
+                            "type": ["string", "null"],
+                            "maxLength": 600,
+                        },
+                        "evidence_refs": string_list,
+                    },
+                    "required": [
+                        "article_id",
+                        "headline_frame",
+                        "emphasis",
+                        "omissions_note",
+                        "evidence_refs",
+                    ],
+                },
+            },
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        },
+        "required": ["common_facts", "dimensions", "article_frames", "confidence"],
+    }
+
+
+def _validate_issue_comparison_output(
+    candidate: Mapping[str, Any], article_ids: set[str]
+) -> dict[str, Any]:
+    if set(candidate) != {"common_facts", "dimensions", "article_frames", "confidence"}:
+        raise ProviderSchemaError("provider comparison output has unexpected fields")
+    common_facts = candidate.get("common_facts")
+    dimensions = candidate.get("dimensions")
+    frames = candidate.get("article_frames")
+    if not isinstance(common_facts, list) or not isinstance(dimensions, list):
+        raise ProviderSchemaError("provider comparison lists are invalid")
+    if not isinstance(frames, list) or len(frames) != len(article_ids):
+        raise ProviderSchemaError("provider comparison frames are invalid")
+    for fact in common_facts:
+        if not isinstance(fact, Mapping):
+            raise ProviderSchemaError("provider common fact is invalid")
+        supporting = fact.get("article_ids")
+        if (
+            not isinstance(supporting, list)
+            or len(set(map(str, supporting))) < 2
+            or not set(map(str, supporting)).issubset(article_ids)
+        ):
+            raise ProviderSchemaError("provider common fact support is invalid")
+    frame_map: dict[str, dict[str, Any]] = {}
+    for frame in frames:
+        if not isinstance(frame, Mapping):
+            raise ProviderSchemaError("provider article frame is invalid")
+        article_id = str(frame.get("article_id") or "")
+        if article_id not in article_ids or article_id in frame_map:
+            raise ProviderSchemaError("provider article frame identity is invalid")
+        value = dict(frame)
+        value.pop("article_id", None)
+        frame_map[article_id] = value
+    if set(frame_map) != article_ids:
+        raise ProviderSchemaError("provider article frames are incomplete")
+    try:
+        confidence = float(candidate.get("confidence"))
+    except (TypeError, ValueError) as exc:
+        raise ProviderSchemaError("provider comparison confidence is invalid") from exc
+    if not 0 <= confidence <= 1:
+        raise ProviderSchemaError("provider comparison confidence is invalid")
+    return {
+        "common_facts": [dict(item) for item in common_facts],
+        "dimensions": [dict(item) for item in dimensions],
+        "article_frames": frame_map,
+        "confidence": confidence,
     }
 
 

@@ -305,3 +305,78 @@ def test_openai_responses_style_sends_reasoning_and_strict_schema():
     assert result.token_usage == 18
     assert result.x == 10
     assert result.y == 0 and result.z == 0
+
+
+def test_openai_issue_comparison_uses_strict_schema_and_validates_support():
+    seen: list[dict[str, object]] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        comparison = {
+            "common_facts": [
+                {
+                    "id": "fact-1",
+                    "text": "Both articles describe the same policy decision.",
+                    "article_ids": ["article-1", "article-2"],
+                    "evidence_refs": ["article-1:policy", "article-2:policy"],
+                }
+            ],
+            "dimensions": [{"key": "responsibility", "label": "책임 귀속"}],
+            "article_frames": [
+                {
+                    "article_id": "article-1",
+                    "headline_frame": "Implementation benefits",
+                    "emphasis": ["benefits"],
+                    "omissions_note": None,
+                    "evidence_refs": ["article-1:headline"],
+                },
+                {
+                    "article_id": "article-2",
+                    "headline_frame": "Implementation costs",
+                    "emphasis": ["costs"],
+                    "omissions_note": None,
+                    "evidence_refs": ["article-2:headline"],
+                },
+            ],
+            "confidence": 0.82,
+        }
+        return httpx.Response(
+            200,
+            json={"output_text": json.dumps(comparison), "usage": {"total_tokens": 41}},
+            request=request,
+        )
+
+    provider = _provider(
+        httpx.MockTransport(handle),
+        config=ProviderConfig(
+            "openai-default",
+            "gpt-5.6-luna",
+            endpoint="https://api.openai.com/v1/responses",
+            reasoning_effort="xhigh",
+        ),
+    )
+    result = provider.analyze_issue_comparison(
+        [
+            {
+                "article_id": "article-1",
+                "article_version_id": "version-1",
+                "title": "Policy benefits",
+                "content": "The policy was announced and benefits were described.",
+            },
+            {
+                "article_id": "article-2",
+                "article_version_id": "version-2",
+                "title": "Policy costs",
+                "content": "The policy was announced and costs were described.",
+            },
+        ],
+        "issue-comparison-v1",
+    )
+
+    assert result["article_frames"]["article-2"]["headline_frame"] == "Implementation costs"
+    assert result["common_facts"][0]["article_ids"] == ["article-1", "article-2"]
+    text_format = seen[0]["text"]
+    assert isinstance(text_format, dict)
+    assert text_format["format"]["name"] == "issue_comparison"
+    assert text_format["format"]["strict"] is True
+    assert "publisher identity" in str(seen[0]["input"])

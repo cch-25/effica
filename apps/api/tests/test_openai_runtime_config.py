@@ -13,6 +13,7 @@ def test_openai_runtime_defaults_to_luna_xhigh_and_one_key() -> None:
     assert settings.live_llm_enabled is True
     assert settings.llm_model == "gpt-5.6-luna"
     assert settings.llm_reasoning_effort == "xhigh"
+    assert settings.llm_timeout_seconds == 120.0
     assert settings.openai_endpoint == "https://api.openai.com/v1/responses"
     settings.assert_safe_runtime()
 
@@ -34,6 +35,8 @@ def test_live_runtime_rejects_missing_key_and_non_openai_configuration() -> None
         )
     with pytest.raises(ValidationError):
         Settings(_env_file=None, openai_api_key="test-key", llm_model="solar-pro")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, llm_timeout_seconds=301)
 
 
 def test_production_requires_canonical_google_oauth_configuration() -> None:
