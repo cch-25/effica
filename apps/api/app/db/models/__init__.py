@@ -38,8 +38,10 @@ from ..enums import (
     ArticleStatus,
     AssessmentStatus,
     AutoPilotMode,
+    ComparisonSnapshotStatus,
     CrawlStatus,
     CreditStatus,
+    IssueKind,
     IssueStatus,
     JobStatus,
     ModelStatus,
@@ -411,11 +413,29 @@ class Issue(Base):
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[IssueStatus] = _enum(IssueStatus, default=IssueStatus.CANDIDATE.value, length=16)
+    issue_kind: Mapped[IssueKind] = _enum(
+        IssueKind,
+        default=IssueKind.TOPIC.value,
+        length=16,
+        constraint_name="issue_kind",
+    )
+    editorial_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    editorial_priority: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    editorial_reviewed_at: Mapped[datetime | None] = _timestamp(nullable=True, default=None)
+    editorial_data_as_of: Mapped[datetime | None] = _timestamp(nullable=True, default=None)
     opened_at: Mapped[datetime] = _timestamp()
     last_activity_at: Mapped[datetime] = _timestamp()
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
-    __table_args__ = (CheckConstraint("version > 0", name="positive_version"),)
+    __table_args__ = (
+        CheckConstraint("version > 0", name="positive_version"),
+        CheckConstraint(
+            "editorial_priority IS NULL OR editorial_priority > 0",
+            name="positive_editorial_priority",
+        ),
+        UniqueConstraint("editorial_key", name="uq_issues_editorial_key"),
+        Index("ix_issues_editorial_order", "issue_kind", "editorial_priority"),
+    )
 
 
 class IssueMembership(Base):
@@ -435,6 +455,49 @@ class IssueMembership(Base):
     created_at: Mapped[datetime] = _timestamp()
 
     __table_args__ = (_confidence_check(),)
+
+
+class IssueComparisonSnapshot(Base):
+    __tablename__ = "issue_comparison_snapshots"
+
+    id: Mapped[str] = _id()
+    issue_id: Mapped[str] = _fk("issues.id", ondelete="CASCADE")
+    issue_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    model_alias_id: Mapped[str] = _fk("model_aliases.id", ondelete="RESTRICT")
+    common_facts_json: Mapped[dict[str, Any]] = _json()
+    framing_dimensions_json: Mapped[dict[str, Any]] = _json()
+    article_frames_json: Mapped[dict[str, Any]] = _json()
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    status: Mapped[ComparisonSnapshotStatus] = _enum(
+        ComparisonSnapshotStatus,
+        default=ComparisonSnapshotStatus.PENDING.value,
+        length=16,
+    )
+    reviewed_at: Mapped[datetime | None] = _timestamp(nullable=True, default=None)
+    reviewed_by: Mapped[str | None] = _fk("users.id", ondelete="SET NULL", nullable=True)
+    created_at: Mapped[datetime] = _timestamp()
+
+    __table_args__ = (
+        UniqueConstraint(
+            "issue_id",
+            "issue_version",
+            "prompt_version",
+            name="uq_issue_comparison_issue_version_prompt",
+        ),
+        Index(
+            "ix_issue_comparison_public",
+            "issue_id",
+            "status",
+            "reviewed_at",
+            "created_at",
+        ),
+        CheckConstraint("issue_version > 0", name="positive_issue_version"),
+        _confidence_check(),
+        _json_check("common_facts_json"),
+        _json_check("framing_dimensions_json"),
+        _json_check("article_frames_json"),
+    )
 
 
 class FactCheckReference(Base):
@@ -961,6 +1024,7 @@ __all__ = [
     "FactCheckReference",
     "FeedImpression",
     "Issue",
+    "IssueComparisonSnapshot",
     "IssueMembership",
     "Job",
     "ModelAlias",

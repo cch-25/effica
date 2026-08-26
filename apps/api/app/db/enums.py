@@ -78,6 +78,18 @@ class IssueStatus(StrEnum):
     ARCHIVED = "archived"
 
 
+class IssueKind(StrEnum):
+    EVENT = "EVENT"
+    TOPIC = "TOPIC"
+
+
+class ComparisonSnapshotStatus(StrEnum):
+    PENDING = "PENDING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    SUPERSEDED = "SUPERSEDED"
+
+
 class ModelStatus(StrEnum):
     ACTIVE = "ACTIVE"
     DISABLED = "DISABLED"
