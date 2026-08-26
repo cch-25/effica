@@ -20,8 +20,9 @@ def test_deploy_manifest_is_runtime_only_and_complete() -> None:
         "apps/worker/__init__.py",
         "db/alembic.ini",
         "db/alembic/script.py.mako",
-        "db/seeds/articles.json",
-        "db/seeds/tier_policy.json",
+            "db/seeds/articles.json",
+            "db/seeds/demo_showcase.json",
+            "db/seeds/tier_policy.json",
         "pyproject.toml",
         "uv.lock",
     }

@@ -34,6 +34,7 @@ apps/api/app/domains/content/__init__.py
 apps/api/app/domains/content/adapters.py
 apps/api/app/domains/content/canonical.py
 apps/api/app/domains/content/policy.py
+apps/api/app/domains/content/trust.py
 apps/api/app/domains/content/versioning.py
 apps/api/app/domains/efficacy/__init__.py
 apps/api/app/domains/efficacy/scoring.py
@@ -69,6 +70,7 @@ apps/worker/worker/__init__.py
 apps/worker/worker/handlers/__init__.py
 apps/worker/worker/handlers/aggregate_votes.py
 apps/worker/worker/handlers/analyze.py
+apps/worker/worker/handlers/build_issue_comparison.py
 apps/worker/worker/handlers/base.py
 apps/worker/worker/handlers/calculate_score.py
 apps/worker/worker/handlers/cluster.py
@@ -97,9 +99,13 @@ db/alembic/versions/0005_remove_migration_index.py
 db/alembic/versions/0006_openai_single_model.py
 db/alembic/versions/0007_credit_reversal_uniqueness.py
 db/alembic/versions/0008_efficacy_questionnaire.py
+db/alembic/versions/0009_issue_editorial_metadata.py
+db/alembic/versions/0010_issue_comparison_snapshots.py
 db/seeds/__init__.py
 db/seeds/analyze_articles.py
 db/seeds/articles.json
+db/seeds/demo_showcase.json
+db/seeds/demo_showcase.py
 db/seeds/seed.py
 db/seeds/tier_policy.json
 pyproject.toml
