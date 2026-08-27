@@ -24,6 +24,7 @@ class HandlerContext:
     job_type: str = ""
     worker_id: str = ""
     idempotency_key: str = ""
+    attempt: int = 1
     now: datetime | None = None
     services: Mapping[str, Any] = field(default_factory=dict)
 

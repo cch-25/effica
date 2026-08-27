@@ -689,6 +689,32 @@ class MariaDBQueueRepository:
     add = enqueue
     put = enqueue
 
+    async def _mark_crawl_running(
+        self,
+        session: Any,
+        job: Job,
+        *,
+        moment: datetime,
+    ) -> None:
+        if job.job_type != "crawl":
+            return
+        await _maybe_await(
+            session.execute(
+                _sql(
+                    """
+                    UPDATE crawl_runs
+                    SET status = 'RUNNING', started_at = COALESCE(started_at, :now),
+                        finished_at = NULL, error_json = NULL
+                    WHERE id = :crawl_run_id AND status = 'PENDING'
+                    """.strip()
+                ),
+                {
+                    "crawl_run_id": job.payload.get("crawl_run_id") or job.id,
+                    "now": moment,
+                },
+            )
+        )
+
     async def _mark_exhausted_crawl_runs(
         self,
         session: Any,
@@ -864,7 +890,7 @@ class MariaDBQueueRepository:
                         rows = _result_rows(result)
                         if rows:
                             candidate = _job_from_row(rows[0])
-                            await _maybe_await(
+                            updated = await _maybe_await(
                                 session.execute(
                                     update,
                                     {
@@ -876,11 +902,16 @@ class MariaDBQueueRepository:
                                     },
                                 )
                             )
+                            if _rowcount(updated) != 1:
+                                return None
                             candidate.status = JobStatus.LEASED
                             candidate.lease_owner = worker_id
                             candidate.lease_expires_at = moment + timedelta(seconds=lease_seconds)
                             candidate.attempts += 1
                             candidate.updated_at = moment
+                            await self._mark_crawl_running(
+                                session, candidate, moment=moment
+                            )
                 return candidate
             finally:
                 try:
@@ -960,6 +991,7 @@ class MariaDBQueueRepository:
                             job.lease_expires_at = moment + timedelta(seconds=lease_seconds)
                             job.attempts += 1
                             job.updated_at = moment
+                            await self._mark_crawl_running(session, job, moment=moment)
                             claimed = job
                             break
                 return claimed
@@ -1132,7 +1164,50 @@ class MariaDBQueueRepository:
                     )
                 )
                 if _rowcount(updated) == 1:
-                    if job.job_type == "crawl" and status in {
+                    if job.job_type == "crawl":
+                        crawl_run_id = job.payload.get("crawl_run_id") or job_id
+                        if status == JobStatus.PENDING:
+                            await _maybe_await(
+                                session.execute(
+                                    _sql(
+                                        """
+                                        UPDATE crawl_runs
+                                        SET status = 'PENDING', finished_at = NULL,
+                                            error_json = :last_error_json
+                                        WHERE id = :crawl_run_id
+                                          AND status = 'RUNNING'
+                                        """.strip()
+                                    ),
+                                    {
+                                        "crawl_run_id": crawl_run_id,
+                                        "last_error_json": json.dumps(
+                                            dict(error), sort_keys=True, default=str
+                                        ),
+                                    },
+                                )
+                            )
+                        elif status in {JobStatus.FAILED, JobStatus.DEAD}:
+                            await _maybe_await(
+                                session.execute(
+                                    _sql(
+                                        """
+                                        UPDATE crawl_runs
+                                        SET status = 'FAILED', finished_at = :now,
+                                            error_json = :last_error_json
+                                        WHERE status IN ('PENDING', 'RUNNING')
+                                          AND id = :crawl_run_id
+                                        """.strip()
+                                    ),
+                                    {
+                                        "crawl_run_id": crawl_run_id,
+                                        "now": moment,
+                                        "last_error_json": json.dumps(
+                                            dict(error), sort_keys=True, default=str
+                                        ),
+                                    },
+                                )
+                            )
+                    if job.job_type == "render_share_card" and status in {
                         JobStatus.FAILED,
                         JobStatus.DEAD,
                     }:
@@ -1140,26 +1215,15 @@ class MariaDBQueueRepository:
                             session.execute(
                                 _sql(
                                     """
-                                    UPDATE crawl_runs
-                                    SET status = 'FAILED', finished_at = :now,
-                                        error_json = :last_error_json
-                                    WHERE status IN ('PENDING', 'RUNNING')
-                                      AND (
-                                        id = :id
-                                        OR (
-                                            :crawl_run_id IS NOT NULL
-                                            AND id = :crawl_run_id
-                                        )
-                                      )
+                                    UPDATE share_cards
+                                    SET status = 'failed'
+                                    WHERE id = :share_card_id
+                                      AND status IN ('queued', 'rendering')
                                     """.strip()
                                 ),
                                 {
-                                    "id": job_id,
-                                    "crawl_run_id": job.payload.get("crawl_run_id"),
-                                    "now": moment,
-                                    "last_error_json": json.dumps(
-                                        dict(error), sort_keys=True, default=str
-                                    ),
+                                    "share_card_id": job.payload.get("share_card_id")
+                                    or job.dedupe_key
                                 },
                             )
                         )
@@ -1187,21 +1251,55 @@ class MariaDBQueueRepository:
 
     async def retry(self, job_id: str, *, now: datetime | None = None) -> bool:
         moment = _aware_utc(now or self.clock())
-        statement = _sql(
-            f"""
-            UPDATE {self.table_name}
-            SET status = 'PENDING', attempts = 0, available_at = :now,
-                lease_owner = NULL, lease_expires_at = NULL,
-                last_error_json = NULL, updated_at = :now
-            WHERE id = :id AND status IN ('FAILED', 'DEAD', 'CANCELLED')
-            """.strip()
-        )
         async with _session_scope(self.session_factory) as session:
             async with _transaction(session):
-                updated = await _maybe_await(
-                    session.execute(statement, {"id": job_id, "now": moment})
+                result = await _maybe_await(
+                    session.execute(
+                        _sql(
+                            f"SELECT {self._SELECT_COLUMNS} FROM {self.table_name} "
+                            "WHERE id = :id AND status IN ('FAILED', 'DEAD', 'CANCELLED') "
+                            "LIMIT 1 FOR UPDATE"
+                        ),
+                        {"id": job_id},
+                    )
                 )
-                return _rowcount(updated) == 1
+                rows = _result_rows(result)
+                if not rows:
+                    return False
+                job = _job_from_row(rows[0])
+                updated = await _maybe_await(
+                    session.execute(
+                        _sql(
+                            f"""
+                            UPDATE {self.table_name}
+                            SET status = 'PENDING', attempts = 0, available_at = :now,
+                                lease_owner = NULL, lease_expires_at = NULL,
+                                last_error_json = NULL, updated_at = :now
+                            WHERE id = :id AND status IN ('FAILED', 'DEAD', 'CANCELLED')
+                            """.strip()
+                        ),
+                        {"id": job_id, "now": moment},
+                    )
+                )
+                if _rowcount(updated) != 1:
+                    return False
+                if job.job_type == "render_share_card":
+                    await _maybe_await(
+                        session.execute(
+                            _sql(
+                                """
+                                UPDATE share_cards
+                                SET status = 'queued', blob_id = NULL
+                                WHERE id = :share_card_id AND status = 'failed'
+                                """.strip()
+                            ),
+                            {
+                                "share_card_id": job.payload.get("share_card_id")
+                                or job.dedupe_key
+                            },
+                        )
+                    )
+                return True
 
     async def cancel(self, job_id: str, *, now: datetime | None = None) -> bool:
         moment = _aware_utc(now or self.clock())

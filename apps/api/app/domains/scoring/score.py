@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
@@ -25,7 +26,10 @@ class WeightProfile:
         object.__setattr__(self, "relative", values[1])
         object.__setattr__(self, "crowd", values[2])
         object.__setattr__(self, "source", values[3])
-        if any(value < 0 for value in values) or sum(values, Decimal(0)) <= 0:
+        if (
+            any(not value.is_finite() or value < 0 for value in values)
+            or sum(values, Decimal(0)) <= 0
+        ):
             raise ValueError("weights must be non-negative and have a positive total")
 
     @property
@@ -53,19 +57,58 @@ class ScoreComponents:
     source_sample_size: int = 0
     model_spread: float = 0.0
     sensationalism: float = 0.0
-    evidence_quality: float = 1.0
+    evidence_quality: float = 0.0
 
     def __post_init__(self) -> None:
         for name in ("model", "relative", "crowd", "source"):
             value = getattr(self, name)
             if isinstance(value, Mapping):
                 value = tuple(value.get(axis, 0) for axis in ("x", "y", "z"))
-            if len(value) != 3 or any(not -100 <= float(item) <= 100 for item in value):
+            if isinstance(value, (str, bytes)):
+                raise ValueError(f"{name} must contain three coordinates in [-100,100]")
+            try:
+                raw_coordinates = tuple(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{name} must contain three coordinates in [-100,100]"
+                ) from exc
+            if any(isinstance(item, bool) for item in raw_coordinates):
+                raise ValueError(f"{name} must contain three coordinates in [-100,100]")
+            try:
+                coordinates = tuple(float(item) for item in raw_coordinates)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{name} must contain three coordinates in [-100,100]"
+                ) from exc
+            if len(coordinates) != 3 or any(
+                not math.isfinite(item) or not -100 <= item <= 100
+                for item in coordinates
+            ):
                 raise ValueError(f"{name} must contain three coordinates in [-100,100]")
             # Only x is a canonical political-bias coordinate. Keep the
             # physical tuple shape for old callers while preventing legacy
             # y/z values from entering any new score calculation or snapshot.
-            object.__setattr__(self, name, (float(value[0]), 0.0, 0.0))
+            object.__setattr__(self, name, (coordinates[0], 0.0, 0.0))
+        if (
+            not isinstance(self.vote_count, int)
+            or isinstance(self.vote_count, bool)
+            or not isinstance(self.source_sample_size, int)
+            or isinstance(self.source_sample_size, bool)
+        ):
+            raise ValueError("score component counts must be integers")
+        numeric_metadata = (
+            self.sensationalism,
+            self.model_spread,
+            self.model_confidence,
+            self.evidence_quality,
+        )
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in numeric_metadata
+        ):
+            raise ValueError("score component metadata must be finite numbers")
         if not 0 <= self.sensationalism <= 100:
             raise ValueError("sensationalism must be in [0,100]")
         if (
@@ -156,6 +199,7 @@ def calculate_article_score(
     vote_factor = min(1.0, components.vote_count / 20.0)
     source_factor = min(1.0, components.source_sample_size / 20.0)
     spread_factor = max(0.0, 1.0 - min(1.0, components.model_spread / 100.0))
+    spread_confidence = spread_factor * 0.05 if components.model_confidence > 0 else 0.0
     confidence = round(
         max(
             0.0,
@@ -165,7 +209,7 @@ def calculate_article_score(
                 + components.evidence_quality * 0.25
                 + vote_factor * 0.15
                 + source_factor * 0.10
-                + spread_factor * 0.05,
+                + spread_confidence,
             ),
         ),
         6,
@@ -183,6 +227,9 @@ def calculate_article_score(
             "crowd": list(components.crowd),
             "source": list(components.source),
             "model_spread": components.model_spread,
+            "model_confidence": components.model_confidence,
+            "evidence_quality": components.evidence_quality,
+            "sensationalism": components.sensationalism,
             "vote_count": components.vote_count,
             "source_sample_size": components.source_sample_size,
         },

@@ -1,5 +1,11 @@
 # API contract changelog
 
+## 1.1.0 - 2026-08-26
+
+- Added: public `topic` classification on issue list and detail responses.
+- Changed: issue article rows may omit coordinates while analysis is still running, so titles,
+  sources, and canonical URLs remain readable before a comparison is ready.
+
 ## 1.0.1 - 2026-08-19
 
 - Changed: `/api/v1/auth/providers` exposes Google as the only production sign-in provider.

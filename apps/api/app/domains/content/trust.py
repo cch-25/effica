@@ -22,20 +22,25 @@ def evidence_is_synthetic(evidence: Any) -> bool:
 
 
 def is_trusted_openai_assessment(assessment: Any, alias: Any) -> bool:
-    """Apply the Phase 1 public provenance predicate to ORM-like rows."""
+    """Apply the public provenance predicate to ORM-like rows.
+
+    Alias status controls whether a model may receive *new* outbound work; it
+    is not a retroactive verdict on an immutable successful assessment.  An
+    operator must be able to rotate the single ACTIVE alias without making all
+    historical articles disappear.  Explicit synthetic markers and non-GPT
+    providers remain fail-closed.
+    """
 
     assessment_status = getattr(getattr(assessment, "status", None), "value", None) or getattr(
         assessment, "status", None
     )
-    alias_status = getattr(getattr(alias, "status", None), "value", None) or getattr(
-        alias, "status", None
-    )
     provider = str(getattr(alias, "provider", "")).casefold()
     alias_name = str(getattr(alias, "alias", "")).casefold()
+    actual_model_id = str(getattr(alias, "actual_model_id", "")).strip()
     return (
         str(assessment_status).upper() == "SUCCEEDED"
         and provider == "openai"
-        and str(alias_status).upper() == "ACTIVE"
+        and actual_model_id.startswith("gpt-")
         and alias_name not in _SYNTHETIC_ALIASES
         and not evidence_is_synthetic(getattr(assessment, "evidence_json", None))
     )
@@ -78,4 +83,13 @@ def public_assessment_summary(evidence: Any) -> str:
         ]
         if rationales:
             return " ".join(rationales)[:500]
-    return "제한 공개 근거를 확인할 수 있습니다."
+    return "공개 가능한 근거 인용이 제공되지 않았습니다."
+
+
+def public_assessment_evidence(evidence: Any) -> list[dict[str, Any]]:
+    """Return only the bounded public evidence list from a model payload."""
+
+    values = evidence.get("evidence") if isinstance(evidence, Mapping) else evidence
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes, bytearray)):
+        return []
+    return [dict(item) for item in values if isinstance(item, Mapping)][:5]

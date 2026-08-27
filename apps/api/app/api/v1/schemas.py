@@ -190,7 +190,7 @@ class ArticleView(ContractModel):
 
 
 class ArticleWithCoordinate(ArticleView):
-    coordinate: Coordinate
+    coordinate: Coordinate | None = None
 
 
 class ArticlePage(ContractModel):
@@ -216,6 +216,7 @@ class IssueView(ContractModel):
     id: str
     title: str
     summary: str
+    topic: str = Field(min_length=1, max_length=40)
     status: str
     kind: IssueKind = IssueKind.TOPIC
     source_count: int = Field(default=0, ge=0)

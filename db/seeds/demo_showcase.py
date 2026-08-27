@@ -13,7 +13,7 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -51,9 +51,10 @@ from apps.api.app.domains.content.trust import (
     is_trusted_openai_assessment,
     score_matches_trusted_assessments,
 )
+from db.seeds.source_feeds import scheduled_rss_config
 
 DEFAULT_MANIFEST = Path(__file__).with_name("demo_showcase.json")
-REQUIRED_DB_REVISION = "0010_issue_comparison_snapshots"
+REQUIRED_DB_REVISION = "0012_share_card_recovery"
 _GENERIC_TITLES = frozenset({"정치", "경제", "사회", "국제", "문화", "과학", "기술"})
 
 
@@ -64,6 +65,7 @@ class ManifestModel(BaseModel):
 class ShowcaseArticle(ManifestModel):
     source: str = Field(min_length=1, max_length=255)
     source_home_url: str
+    publisher_kind: Literal["MEDIA", "GOVERNMENT", "OTHER"]
     source_type: Literal["API", "RSS", "CRAWLER"] = "CRAWLER"
     policy_status: Literal["PENDING", "APPROVED", "REJECTED"]
     robots_status: Literal["PENDING", "APPROVED", "REJECTED"]
@@ -97,6 +99,7 @@ class ShowcaseIssue(ManifestModel):
     key: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,79}$")
     title: str = Field(min_length=10, max_length=500)
     summary: str = Field(min_length=40, max_length=1200)
+    topic: Literal["정치", "국제", "사회", "경제", "산업"]
     featured_rank: int = Field(gt=0)
     selection_reason: str = Field(min_length=10, max_length=1000)
     editorial_review_status: Literal["PENDING", "APPROVED"]
@@ -112,6 +115,8 @@ class ShowcaseIssue(ManifestModel):
             raise ValueError("issue article URLs must be unique")
         if len({article.source_home_url for article in self.articles}) < 3:
             raise ValueError("each showcase issue requires at least three distinct sources")
+        if sum(article.publisher_kind == "MEDIA" for article in self.articles) < 2:
+            raise ValueError("each showcase issue requires at least two media publishers")
         if self.editorial_review_status == "APPROVED" and self.reviewed_by.upper().startswith(
             "PENDING"
         ):
@@ -140,11 +145,11 @@ class ShowcaseManifest(ManifestModel):
             raise ValueError("showcase issue keys must be unique")
         if len(ranks) != len(set(ranks)):
             raise ValueError("showcase featured ranks must be unique")
-        source_identities: dict[str, tuple[str, str]] = {}
+        source_identities: dict[str, tuple[str, str, str]] = {}
         source_policy_decisions: dict[str, tuple[str, str, str, str]] = {}
         for issue in self.issues:
             for article in issue.articles:
-                identity = (article.source, article.source_type)
+                identity = (article.source, article.source_type, article.publisher_kind)
                 previous = source_identities.setdefault(article.source_home_url, identity)
                 if previous != identity:
                     raise ValueError("one source_home_url has conflicting source metadata")
@@ -167,6 +172,7 @@ class RefreshSummary:
     issues_created: int = 0
     issues_updated: int = 0
     sources_created: int = 0
+    scheduled_rss_adapters_planned: int = 0
     memberships_upserted: int = 0
     crawl_jobs_enqueued: int = 0
     analysis_jobs_enqueued: int = 0
@@ -186,6 +192,7 @@ class AuditIssue:
     title: str
     article_count: int
     source_count: int
+    media_source_count: int
     trusted_analysis_count: int
     synthetic_analysis_count: int
     data_as_of: datetime | None
@@ -293,11 +300,15 @@ async def preflight_showcase(session: AsyncSession, manifest: ShowcaseManifest) 
         field: {} for field in ("policy_status", "robots_status", "terms_status")
     }
     review_counts: dict[str, int] = {}
+    publisher_counts: dict[str, int] = {}
     for issue in manifest.issues:
         review_counts[issue.editorial_review_status] = (
             review_counts.get(issue.editorial_review_status, 0) + 1
         )
         for article in issue.articles:
+            publisher_counts[article.publisher_kind] = (
+                publisher_counts.get(article.publisher_kind, 0) + 1
+            )
             for decision_field in decision_counts:
                 value = str(getattr(article, decision_field))
                 status_counts = decision_counts[decision_field]
@@ -330,6 +341,7 @@ async def preflight_showcase(session: AsyncSession, manifest: ShowcaseManifest) 
             "article_count": article_count,
             "decision_counts": decision_counts,
             "editorial_review_counts": review_counts,
+            "publisher_counts": publisher_counts,
         },
         "database_counts": database_counts,
         "assessment_counts": [dict(row) for row in provider_rows],
@@ -352,7 +364,12 @@ async def _get_or_create_source(
     apply: bool,
     summary: RefreshSummary,
     planned_source_urls: set[str],
+    planned_scheduled_adapter_urls: set[str],
 ) -> Source | None:
+    scheduled_config = scheduled_rss_config(
+        article.source_home_url,
+        policy_reference=article.policy_reference,
+    )
     source = await session.scalar(
         select(Source).where(Source.canonical_url == article.source_home_url)
     )
@@ -394,11 +411,64 @@ async def _get_or_create_source(
                 adapter.rate_limit = adapter.rate_limit or 10
                 adapter.raw_payload_retention_days = 7
                 adapter.active = True
+        if scheduled_config is not None:
+            scheduled_adapter = await session.scalar(
+                select(SourceAdapter).where(
+                    SourceAdapter.source_id == source.id,
+                    SourceAdapter.adapter_type == AdapterType.RSS,
+                )
+            )
+            scheduled_changed = scheduled_adapter is None or any(
+                (
+                    not scheduled_adapter.active,
+                    scheduled_adapter.rate_limit != 10,
+                    scheduled_adapter.raw_payload_retention_days != 7,
+                    any(
+                        (scheduled_adapter.config_json or {}).get(key) != value
+                        for key, value in scheduled_config.items()
+                    )
+                    if scheduled_adapter is not None
+                    else True,
+                )
+            )
+            if (
+                scheduled_changed
+                and article.source_home_url not in planned_scheduled_adapter_urls
+            ):
+                summary.scheduled_rss_adapters_planned += 1
+                planned_scheduled_adapter_urls.add(article.source_home_url)
+            if apply and scheduled_changed:
+                if scheduled_adapter is None:
+                    session.add(
+                        SourceAdapter(
+                            id=new_ulid(),
+                            source_id=source.id,
+                            adapter_type=AdapterType.RSS,
+                            config_json=scheduled_config,
+                            rate_limit=10,
+                            raw_payload_retention_days=7,
+                            active=True,
+                        )
+                    )
+                else:
+                    scheduled_adapter.config_json = {
+                        **(scheduled_adapter.config_json or {}),
+                        **scheduled_config,
+                    }
+                    scheduled_adapter.rate_limit = 10
+                    scheduled_adapter.raw_payload_retention_days = 7
+                    scheduled_adapter.active = True
         return source
     if article.source_home_url not in planned_source_urls:
         summary.sources_created += 1
         planned_source_urls.add(article.source_home_url)
     if not apply:
+        if (
+            scheduled_config is not None
+            and article.source_home_url not in planned_scheduled_adapter_urls
+        ):
+            summary.scheduled_rss_adapters_planned += 1
+            planned_scheduled_adapter_urls.add(article.source_home_url)
         return None
     source = Source(
         id=new_ulid(),
@@ -423,6 +493,21 @@ async def _get_or_create_source(
             active=True,
         )
     )
+    if scheduled_config is not None:
+        session.add(
+            SourceAdapter(
+                id=new_ulid(),
+                source_id=source.id,
+                adapter_type=AdapterType.RSS,
+                config_json=scheduled_config,
+                rate_limit=10,
+                raw_payload_retention_days=7,
+                active=True,
+            )
+        )
+        if article.source_home_url not in planned_scheduled_adapter_urls:
+            summary.scheduled_rss_adapters_planned += 1
+            planned_scheduled_adapter_urls.add(article.source_home_url)
     return source
 
 
@@ -502,6 +587,7 @@ async def refresh_showcase(
     summary = RefreshSummary()
     request_id = f"demo-refresh:{manifest.version}"
     planned_source_urls: set[str] = set()
+    planned_scheduled_adapter_urls: set[str] = set()
     for issue_input in sorted(manifest.issues, key=lambda item: item.featured_rank):
         issue = await session.scalar(select(Issue).where(Issue.editorial_key == issue_input.key))
         if issue is None:
@@ -510,6 +596,7 @@ async def refresh_showcase(
                     id=new_ulid(),
                     title=issue_input.title,
                     summary=issue_input.summary,
+                    topic=issue_input.topic,
                     status=IssueStatus.ACTIVE,
                     issue_kind=IssueKind.EVENT,
                     editorial_key=issue_input.key,
@@ -528,6 +615,7 @@ async def refresh_showcase(
                 (
                     issue.title != issue_input.title,
                     issue.summary != issue_input.summary,
+                    issue.topic != issue_input.topic,
                     issue.status != IssueStatus.ACTIVE,
                     issue.issue_kind != IssueKind.EVENT,
                     issue.editorial_priority != issue_input.featured_rank,
@@ -540,6 +628,7 @@ async def refresh_showcase(
             if apply and issue_changed:
                 issue.title = issue_input.title
                 issue.summary = issue_input.summary
+                issue.topic = issue_input.topic
                 issue.status = IssueStatus.ACTIVE
                 issue.issue_kind = IssueKind.EVENT
                 issue.editorial_priority = issue_input.featured_rank
@@ -557,6 +646,7 @@ async def refresh_showcase(
                 apply=apply,
                 summary=summary,
                 planned_source_urls=planned_source_urls,
+                planned_scheduled_adapter_urls=planned_scheduled_adapter_urls,
             )
             url_hash = hashlib.sha256(article_input.url.encode()).digest()
             article = await session.scalar(
@@ -786,10 +876,17 @@ async def refresh_showcase(
 async def audit_showcase(
     session: AsyncSession,
     *,
+    manifest: ShowcaseManifest | None = None,
     max_age_days: int = 7,
     now: datetime | None = None,
 ) -> AuditResult:
     now = ensure_utc(now or utc_now())
+    media_source_urls = {
+        article.source_home_url
+        for manifest_issue in (manifest.issues if manifest is not None else [])
+        for article in manifest_issue.articles
+        if article.publisher_kind == "MEDIA"
+    }
     issues = list(
         (
             await session.scalars(
@@ -806,6 +903,7 @@ async def audit_showcase(
     reports: list[AuditIssue] = []
     errors: list[str] = []
     warnings: list[str] = []
+    ready_article_version_ids: set[str] = set()
     if len(issues) < 3:
         errors.append(f"대표 EVENT 이슈가 {len(issues)}개입니다. 최소 3개가 필요합니다.")
     if len(issues) > 5:
@@ -866,6 +964,8 @@ async def audit_showcase(
                 score for score in scores if score_matches_trusted_assessments(score, trusted)
             ]
             ready = bool(trusted and trusted_scores)
+            if ready and version is not None:
+                ready_article_version_ids.add(version.id)
             trusted_count += int(ready)
             synthetic_count += len(synthetic)
             for value in (
@@ -896,12 +996,20 @@ async def audit_showcase(
                 }
             )
         source_count = len({source.id for _article, source, _version in rows})
+        media_source_count = len(
+            {
+                source.id
+                for _article, source, _version in rows
+                if source.canonical_url in media_source_urls
+            }
+        )
         data_as_of = max(timestamps) if timestamps else issue.editorial_data_as_of
         report = AuditIssue(
             id=issue.id,
             title=issue.title,
             article_count=len(rows),
             source_count=source_count,
+            media_source_count=media_source_count,
             trusted_analysis_count=trusted_count,
             synthetic_analysis_count=synthetic_count,
             data_as_of=data_as_of,
@@ -953,6 +1061,10 @@ async def audit_showcase(
             errors.append(f"{issue.title}: 기사가 {len(rows)}개입니다. 최소 3개가 필요합니다.")
         if source_count < 3:
             errors.append(f"{issue.title}: 출처가 {source_count}개입니다. 최소 3개가 필요합니다.")
+        if manifest is not None and media_source_count < 2:
+            errors.append(
+                f"{issue.title}: 언론 출처가 {media_source_count}개입니다. 최소 2개가 필요합니다."
+            )
         if trusted_count != len(rows):
             errors.append(
                 f"{issue.title}: 신뢰 분석 {trusted_count}/{len(rows)}개로 100%가 아닙니다."
@@ -968,18 +1080,29 @@ async def audit_showcase(
                 f"{issue.title}: 최신 데이터가 {max_age_days}일 임계값보다 오래되었습니다."
             )
 
-    queue_rows = dict(
+    queue: dict[str, int] = {}
+    showcase_jobs = list(
         (
-            await session.execute(
-                select(Job.status, func.count())
-                .where(Job.dedupe_key.like("showcase:%"))
-                .group_by(Job.status)
+            await session.scalars(
+                select(Job).where(Job.dedupe_key.like("showcase:%"))
             )
         ).all()
     )
-    queue = {
-        str(getattr(status, "value", status)): int(count) for status, count in queue_rows.items()
-    }
+    for job in showcase_jobs:
+        status = str(getattr(job.status, "value", job.status))
+        payload = job.payload_json if isinstance(job.payload_json, dict) else {}
+        if (
+            status in {"FAILED", "DEAD", "CANCELLED"}
+            and job.job_type == "analyze"
+            and str(payload.get("article_version_id") or "")
+            in ready_article_version_ids
+        ):
+            # The regular crawl pipeline and the showcase refresh can race to
+            # analyze the same imported version under different dedupe keys.
+            # A terminal duplicate is resolved once that exact version has a
+            # trusted OpenAI assessment and matching active score.
+            continue
+        queue[status] = queue.get(status, 0) + 1
     if queue.get("DEAD", 0) or queue.get("FAILED", 0):
         errors.append("showcase crawl/analyze 작업에 실패 또는 DEAD 작업이 남아 있습니다.")
     if queue.get("PENDING", 0) or queue.get("LEASED", 0):
@@ -1160,6 +1283,7 @@ async def _run_with_database(args: argparse.Namespace) -> int:
                 return 0
             audit_result = await audit_showcase(
                 session,
+                manifest=manifest,
                 max_age_days=args.max_age_days,
             )
             print(json.dumps(audit_result.as_dict(), ensure_ascii=False, indent=2))
@@ -1180,6 +1304,7 @@ def main(argv: list[str] | None = None) -> int:
     comparisons = subparsers.add_parser("comparisons")
     comparisons.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     audit = subparsers.add_parser("audit")
+    audit.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     audit.add_argument("--max-age-days", type=int, default=7)
     audit.add_argument("--allow-stale", action="store_true")
     args = parser.parse_args(argv)

@@ -39,6 +39,7 @@ from apps.api.app.db.enums import (
     ModelStatus,
     RecommendationStatus,
     RevisionStatus,
+    ShareCardStatus,
     SourcePolicyStatus,
     SourceType,
 )
@@ -55,6 +56,7 @@ from apps.api.app.db.models import (
     Job,
     ModelAlias,
     ModelAssessment,
+    ShareCard,
     Source,
     SourceAdapter,
     WeightEvidenceSnapshot,
@@ -837,6 +839,7 @@ class AdminRepositoryMixin:
                     id=target_issue_id,
                     title=source.title,
                     summary=source.summary,
+                    topic=source.topic,
                     status=IssueStatus.CANDIDATE,
                     opened_at=now,
                     last_activity_at=now,
@@ -955,11 +958,12 @@ class AdminRepositoryMixin:
                 "id": issue.id,
                 "title": issue.title,
                 "summary": issue.summary,
+                "topic": issue.topic,
                 "status": _value(issue.status),
                 "version": issue.version,
                 "last_activity_at": _row_datetime(issue.last_activity_at),
             }
-            allowed = {"title", "summary", "status"}
+            allowed = {"title", "summary", "topic", "status"}
             for field, value in payload.items():
                 if field not in allowed:
                     continue
@@ -970,6 +974,11 @@ class AdminRepositoryMixin:
                     issue.title = title
                 elif field == "status":
                     issue.status = _normalise_status(value, IssueStatus, field="status")
+                elif field == "topic":
+                    topic = str(value).strip()
+                    if not topic or len(topic) > 40:
+                        raise AdminValidationError("Issue topic must contain 1 to 40 characters.")
+                    issue.topic = topic
                 else:
                     issue.summary = None if value is None else str(value)
             issue.version += 1
@@ -979,6 +988,7 @@ class AdminRepositoryMixin:
                 "id": issue.id,
                 "title": issue.title,
                 "summary": issue.summary,
+                "topic": issue.topic,
                 "status": _value(issue.status),
                 "version": issue.version,
                 "last_activity_at": _row_datetime(issue.last_activity_at),
@@ -2385,6 +2395,15 @@ class AdminRepositoryMixin:
             row.lease_expires_at = None
             row.last_error_json = None
             row.updated_at = utc_now()
+            if row.job_type == "render_share_card":
+                card = await self.session.scalar(
+                    select(ShareCard)
+                    .where(ShareCard.id == row.dedupe_key)
+                    .with_for_update()
+                )
+                if card is not None and _value(card.status) == "failed":
+                    card.status = ShareCardStatus.QUEUED
+                    card.blob_id = None
             await self.session.flush()
             result = {"job_id": row.id, "status": JobStatus.PENDING.value}
             return result, before, result

@@ -31,3 +31,44 @@ uv run python -m db.seeds.seed
 Phase 1·2 대표 사건과 검수된 비교 snapshot은 이 기존 카테고리 seed와 분리된 `demo_showcase.json` 및
 `demo_showcase.py`로 관리한다. 운영 백업, 정책 검수, 멱등 refresh, trust audit,
 rollback 절차는 [DEMO_SHOWCASE_RUNBOOK.md](./DEMO_SHOWCASE_RUNBOOK.md)를 따른다.
+
+## 기존 운영 데이터 파이프라인 복구
+
+일반 시드 교체와 분리된 복구 모드는 기존 계정·기사·평가 기록을 삭제하지 않는다. 먼저
+같은 세대로 dry-run을 실행해 출처별 기사/본문/신뢰 가능한 OpenAI 평가/공개 가능한 활성
+점수와 큐 상태를 확인한다.
+
+```sh
+./.agents/scripts/run.sh seed --repair-pipeline --generation 2026-08-27-r1 --dry-run
+./.agents/scripts/run.sh seed --repair-pipeline --generation 2026-08-27-r1
+```
+
+복구는 한 DB 트랜잭션에서 다음 작업만 수행한다.
+
+- 잘못되거나 비어 있는 `articles.current_version_id`를 해당 기사의 최신 버전으로 연결한다.
+- 신뢰 가능한 OpenAI 평가와 provenance가 일치하는 `draft` 점수만 `active`로 승격한다.
+  기존 `active` 점수는 변경하거나 삭제하지 않는다.
+- 본문은 있지만 신뢰 평가가 없는 버전은 `analyze`, 평가가 있지만 공개 가능한 점수가
+  없는 버전은 `calculate_score` 작업을 재큐잉한다.
+- 본문/버전이 없는 출처는 승인 상태와 활성 adapter를 확인한 뒤 제한된 `crawl` 작업을
+  큐에 넣는다. 정책이 승인되지 않은 CRAWLER 출처는 절대 실행하지 않는다.
+- 검수된 공식 RSS는 정치면 한 곳이 아니라 뉴시스 속보·이투데이 전체뉴스처럼 대주제를
+  포괄하는 feed를 사용한다. scheduled RSS는 제목·원문 URL·발행시각·feed 제공 요약만
+  수집하며 링크된 기사 페이지를 다시 크롤링하지 않는다.
+- `--bootstrap-news-sources`를 명시하면 행정안전부·중소벤처기업부·농림축산식품부·
+  국가데이터처·관세청의 공식 보도자료 RSS 출처와 adapter를 멱등 등록한다. 이 옵션은
+  기존 자동 클러스터가 만든 공개 불가 candidate TOPIC도 삭제 대신 archive 처리한다.
+
+공식 RSS 출처 확장과 즉시 재수집은 반드시 dry-run을 먼저 확인한 뒤 새 세대로 실행한다.
+
+```sh
+./.agents/scripts/run.sh seed --repair-pipeline --bootstrap-news-sources \
+  --generation 2026-08-28-news-v1 --dry-run
+./.agents/scripts/run.sh seed --repair-pipeline --bootstrap-news-sources \
+  --generation 2026-08-28-news-v1
+```
+
+모든 새 작업 dedupe key에는 명시한 generation이 들어간다. 같은 generation 재실행은
+중복 작업을 만들지 않는다. 작업이 `SUCCEEDED`했지만 기대 데이터가 여전히 없다면 새
+generation으로 다시 진단·복구한다. 실제 변경 실행은 요약과 함께
+`PIPELINE_RECOVERY_APPLIED` audit log를 남긴다.

@@ -5,6 +5,7 @@ import json
 import os
 from collections.abc import Mapping
 from concurrent.futures import ProcessPoolExecutor
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -17,12 +18,44 @@ from apps.api.app.jobs.types import generate_job_id
 from apps.worker.worker.handlers.base import HandlerContext, HandlerResult
 from apps.worker.worker.handlers.registry import HandlerRegistry, build_default_registry
 from apps.worker.worker.main import WorkerConfig, WorkerRuntime
-from apps.worker.worker.queue import JobStatus, MariaDBQueueRepository
-from apps.worker.worker.services import MariaDBResultApplier
+from apps.worker.worker.queue import Job, JobStatus, MariaDBQueueRepository
+from apps.worker.worker.services import MariaDBCrawlScheduler, MariaDBResultApplier
 
 DATABASE_URL = os.environ.get("CI_MARIADB_URL")
 API_BASE_URL = os.environ.get("CI_API_BASE_URL")
 pytestmark = pytest.mark.mariadb
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not DATABASE_URL, reason="CI_MARIADB_URL is not configured")
+async def test_mariadb_share_card_blob_accepts_iso_expiry_timestamp() -> None:
+    """Exercise the textual asyncmy binding used by share-card rendering."""
+
+    assert DATABASE_URL is not None
+    engine = create_async_engine(DATABASE_URL, pool_pre_ping=True)
+    try:
+        async with engine.connect() as connection:
+            transaction = await connection.begin()
+            factory = async_sessionmaker(bind=connection, expire_on_commit=False)
+            try:
+                async with factory() as session:
+                    applier = MariaDBResultApplier(factory)
+                    payload = f"share-card-ci-{uuid4().hex}".encode()
+                    blob_id = await applier._store_blob(
+                        session,
+                        payload,
+                        mime_type="image/png",
+                        expires_at="2026-08-27T15:30:00+09:00",
+                    )
+                    expires_at = await session.scalar(
+                        text("SELECT expires_at FROM stored_blobs WHERE id = :id"),
+                        {"id": blob_id},
+                    )
+                    assert expires_at == datetime(2026, 8, 27, 6, 30)
+            finally:
+                await transaction.rollback()
+    finally:
+        await engine.dispose()
 
 
 async def _connection_probe(url: str) -> tuple[str, int, str]:
@@ -330,3 +363,167 @@ def test_mariadb_api_repository_enqueues_and_completes_a_real_job() -> None:
     assert _run_export_worker((DATABASE_URL, "ci-api-worker", job_id))
     rows = asyncio.run(_job_rows(DATABASE_URL, [job_id]))
     assert rows == [{"id": job_id, "status": "SUCCEEDED", "attempts": 1}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not DATABASE_URL, reason="CI_MARIADB_URL is not configured")
+async def test_mariadb_scheduler_query_and_advisory_lock_are_dialect_valid() -> None:
+    """Validate the exact scheduler SELECT without enqueueing production work."""
+
+    assert DATABASE_URL is not None
+    engine = create_async_engine(DATABASE_URL, pool_pre_ping=True)
+    lock_name = f"effica:ci-scheduler:{uuid4().hex}"
+    try:
+        async with engine.connect() as connection:
+            connection_id = int(
+                (await connection.execute(text("SELECT CONNECTION_ID()"))).scalar_one()
+            )
+            acquired = int(
+                (
+                    await connection.execute(
+                        text("SELECT GET_LOCK(:lock_name, 0)"),
+                        {"lock_name": lock_name},
+                    )
+                ).scalar_one()
+            )
+            assert acquired == 1
+            try:
+                owner = int(
+                    (
+                        await connection.execute(
+                            text("SELECT IS_USED_LOCK(:lock_name)"),
+                            {"lock_name": lock_name},
+                        )
+                    ).scalar_one()
+                )
+                assert owner == connection_id
+
+                scheduler = MariaDBCrawlScheduler(lambda: None, batch_size=5)
+                explain = await connection.execute(
+                    text(f"EXPLAIN {scheduler.candidate_source_statement()}"),
+                    {"dedupe_prefix": "scheduled:", "bucket": "0"},
+                )
+                assert explain.mappings().all()
+            finally:
+                released = int(
+                    (
+                        await connection.execute(
+                            text("SELECT RELEASE_LOCK(:lock_name)"),
+                            {"lock_name": lock_name},
+                        )
+                    ).scalar_one()
+                )
+                assert released == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not DATABASE_URL, reason="CI_MARIADB_URL is not configured")
+async def test_mariadb_score_promotion_is_innodb_atomic_and_rollback_safe() -> None:
+    """Exercise the real FOR UPDATE/upsert/promotion SQL, then roll it all back."""
+
+    assert DATABASE_URL is not None
+    engine = create_async_engine(DATABASE_URL, pool_pre_ping=True)
+    version_id = ""
+    before: list[dict[str, object]] = []
+    try:
+        async with engine.connect() as connection:
+            transaction = await connection.begin()
+            try:
+                target = (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT av.id AS version_id, w.id AS weight_id
+                            FROM article_versions av
+                            JOIN weight_profile_revisions w ON w.status = 'active'
+                            ORDER BY av.id, w.revision DESC
+                            LIMIT 1
+                            """
+                        )
+                    )
+                ).mappings().first()
+                assert target is not None
+                version_id = str(target["version_id"])
+                weight_id = str(target["weight_id"])
+                before = [
+                    dict(row)
+                    for row in (
+                        await connection.execute(
+                            text(
+                                """
+                                SELECT id, status, x, y, z, sensationalism, confidence,
+                                       components_json, created_at
+                                FROM score_versions
+                                WHERE article_version_id = :version_id
+                                ORDER BY id
+                                """
+                            ),
+                            {"version_id": version_id},
+                        )
+                    ).mappings().all()
+                ]
+
+                applier = MariaDBResultApplier(lambda: None)
+                await applier._apply_score(
+                    connection,
+                    Job(
+                        id=f"ci-score-{uuid4().hex}",
+                        job_type="calculate_score",
+                        payload={
+                            "article_version_id": version_id,
+                            "weight_revision_id": weight_id,
+                        },
+                    ),
+                    {
+                        "article_version_id": version_id,
+                        "weight_revision_id": weight_id,
+                        "x": 7,
+                        "y": 0,
+                        "z": 0,
+                        "sensationalism": 11,
+                        "confidence": 0.75,
+                        "components": {"integration_probe": True},
+                    },
+                    datetime(2026, 8, 27, 12, 0),
+                )
+                active_count = int(
+                    (
+                        await connection.execute(
+                            text(
+                                """
+                                SELECT COUNT(*) FROM score_versions
+                                WHERE article_version_id = :version_id
+                                  AND status = 'active'
+                                """
+                            ),
+                            {"version_id": version_id},
+                        )
+                    ).scalar_one()
+                )
+                assert active_count == 1
+            finally:
+                await transaction.rollback()
+
+        async with engine.connect() as verification:
+            after = [
+                dict(row)
+                for row in (
+                    await verification.execute(
+                        text(
+                            """
+                            SELECT id, status, x, y, z, sensationalism, confidence,
+                                   components_json, created_at
+                            FROM score_versions
+                            WHERE article_version_id = :version_id
+                            ORDER BY id
+                            """
+                        ),
+                        {"version_id": version_id},
+                    )
+                ).mappings().all()
+            ]
+            assert after == before
+    finally:
+        await engine.dispose()

@@ -22,9 +22,34 @@ from app.domains.efficacy import EfficacyResponse, aggregate_efficacy
 from app.domains.engagement import CreditLedger
 from app.domains.feed import FeedCandidate, rank_feed
 from app.domains.issues import Issue, IssueClusterStore
+from app.domains.issues.topics import (
+    PUBLIC_ISSUE_TOPICS,
+    canonical_topic_issue_id,
+    infer_issue_topic,
+    normalize_issue_topic,
+)
 from app.domains.scoring import Vote, aggregate_votes
 from app.domains.users import QuestionnaireVersion, QuestionSpec, score_questionnaire
 from app.domains.users.service import QuestionnaireValidationError
+
+
+def test_public_topic_taxonomy_preserves_culture_and_sports_buckets() -> None:
+    assert PUBLIC_ISSUE_TOPICS == (
+        "정치",
+        "사회",
+        "경제",
+        "국제",
+        "산업",
+        "문화",
+        "스포츠",
+        "기타",
+    )
+    assert infer_issue_topic("프로야구 KBO 시즌 개막") == "스포츠"
+    assert infer_issue_topic("배우 신작 영화 공개") == "문화"
+    assert normalize_issue_topic("문화", "전시 소식") == "문화"
+    assert infer_issue_topic("분류 키워드가 없는 속보") == "기타"
+    assert canonical_topic_issue_id("경제") == canonical_topic_issue_id("경제")
+    assert len(canonical_topic_issue_id("경제")) == 26
 
 
 def test_d01_evidence_quote_must_be_the_exact_unicode_source_slice() -> None:
@@ -53,6 +78,23 @@ def test_d01_evidence_quote_must_be_the_exact_unicode_source_slice() -> None:
             [Evidence(article_version_id="v1", start=0, end=1, quote="e")],
             article_version_id="v1",
             source_text="é",
+        )
+
+
+def test_d01_evidence_repairs_only_a_unique_exact_quote_location() -> None:
+    repaired = validate_public_evidence(
+        [Evidence(article_version_id="v1", start=0, end=1, quote="고유 인용")],
+        article_version_id="v1",
+        source_text="앞 문장. 고유 인용 뒤 문장.",
+    )
+    assert repaired[0].start == 6
+    assert repaired[0].end == 11
+
+    with pytest.raises(ProviderSchemaError):
+        validate_public_evidence(
+            [Evidence(article_version_id="v1", start=0, end=1, quote="반복")],
+            article_version_id="v1",
+            source_text="반복, 반복",
         )
 
 

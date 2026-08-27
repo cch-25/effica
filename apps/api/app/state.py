@@ -259,6 +259,7 @@ class PlatformState:
             "id": issue_id,
             "title": "Fixture policy issue",
             "summary": "Multiple synthetic perspectives on one policy issue.",
+            "topic": "정치",
             "status": "OPEN",
             "kind": "EVENT",
             "source_count": 3,

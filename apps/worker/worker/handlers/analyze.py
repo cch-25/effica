@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import Mapping
 from typing import Any
@@ -9,7 +10,9 @@ from typing import Any
 from apps.api.app.domains.analysis import (
     AssessmentInput,
     LLMProvider,
+    ProviderConfigurationError,
     ProviderError,
+    ProviderHTTPError,
     ProviderSchemaError,
     ensemble_assessments,
     make_stub_providers,
@@ -67,21 +70,57 @@ async def handle(
         source_url=str(source["source_url"]) if source.get("source_url") else None,
         author=str(source["author"]) if source.get("author") else None,
     )
-    prompt_version = str(source.get("prompt_version", "bias-sensationalism-v1"))
+    prompt_value = source.get("prompt_version", "bias-sensationalism-v1")
+    if not isinstance(prompt_value, str) or not prompt_value.strip():
+        raise NonRetryableHandlerError(
+            "prompt_version must be a non-empty string",
+            code="INVALID_ANALYSIS_PAYLOAD",
+            details={"field": "prompt_version"},
+        )
+    prompt_version = prompt_value.strip()
     configured = None if context is None else context.services.get("analysis_providers")
-    providers = (
-        list(configured)
-        if isinstance(configured, (list, tuple))
-        and len(configured) >= 1
-        and all(isinstance(item, LLMProvider) for item in configured)
-        else []
-    )
+    if configured is not None and (
+        not isinstance(configured, (list, tuple))
+        or not configured
+        or not all(isinstance(item, LLMProvider) for item in configured)
+    ):
+        raise NonRetryableHandlerError(
+            "analysis_providers must contain valid providers",
+            code="INVALID_ANALYSIS_PROVIDER",
+        )
+    providers = list(configured) if isinstance(configured, (list, tuple)) else []
     owns_providers = False
     factory = None if context is None else context.services.get("analysis_provider_factory")
     if not providers and callable(factory):
-        built = factory()
-        if inspect.isawaitable(built):
-            built = await built
+        try:
+            try:
+                factory_signature = inspect.signature(factory)
+                supports_attempt = "attempt" in factory_signature.parameters or any(
+                    parameter.kind == parameter.VAR_KEYWORD
+                    for parameter in factory_signature.parameters.values()
+                )
+            except (TypeError, ValueError):
+                supports_attempt = False
+            built = (
+                factory(attempt=context.attempt if context is not None else 1)
+                if supports_attempt
+                else factory()
+            )
+            if inspect.isawaitable(built):
+                built = await built
+        except ProviderError as exc:
+            raise HandlerError(
+                "analysis provider initialization failed",
+                code=exc.code,
+                details={"stage": "provider_factory"},
+                retryable=_provider_error_is_retryable(exc),
+            ) from exc
+        except (TypeError, ValueError) as exc:
+            raise NonRetryableHandlerError(
+                "analysis provider configuration is invalid",
+                code="INVALID_ANALYSIS_PROVIDER",
+                details={"stage": "provider_factory"},
+            ) from exc
         if not isinstance(built, LLMProvider):
             raise NonRetryableHandlerError(
                 "analysis provider factory returned an invalid provider",
@@ -96,13 +135,20 @@ async def handle(
     try:
         for provider in providers:
             try:
-                assessments.append(provider.analyze_article(assessment_input, prompt_version))
+                assessments.append(
+                    await asyncio.to_thread(
+                        provider.analyze_article,
+                        assessment_input,
+                        prompt_version,
+                    )
+                )
             except ProviderError as exc:
+                retryable = _provider_error_is_retryable(exc)
                 provider_errors.append(
                     {
                         "model_alias": provider.config.alias,
                         "code": exc.code,
-                        "retryable": not isinstance(exc, ProviderSchemaError),
+                        "retryable": retryable,
                     }
                 )
     finally:
@@ -130,7 +176,13 @@ async def handle(
     serialized_assessments: list[dict[str, Any]] = []
     provider_by_alias = {provider.config.alias: provider for provider in providers}
     for assessment in assessments:
-        provider = provider_by_alias[assessment.model_alias]
+        provider = provider_by_alias.get(assessment.model_alias)
+        if provider is None:
+            raise NonRetryableHandlerError(
+                "provider returned an unknown model alias",
+                code="INVALID_ANALYSIS_PROVIDER_OUTPUT",
+                details={"model_alias": assessment.model_alias},
+            )
         item = assessment.model_dump(mode="json")
         if provider.config.model_alias_id:
             item["model_alias_id"] = provider.config.model_alias_id
@@ -150,3 +202,18 @@ async def handle(
 
 
 run = handle
+
+
+def _provider_error_is_retryable(exc: ProviderError) -> bool:
+    """Preserve provider-specific retry semantics at the queue boundary."""
+
+    if isinstance(exc, ProviderHTTPError):
+        return exc.retryable
+    if isinstance(exc, ProviderConfigurationError):
+        return False
+    # A structured-output rejection is an upstream generation failure. A
+    # later request can succeed, unlike invalid handler input which is
+    # rejected before a provider is called.
+    if isinstance(exc, ProviderSchemaError):
+        return True
+    return bool(getattr(exc, "retryable", True))

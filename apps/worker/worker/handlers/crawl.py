@@ -9,12 +9,16 @@ worker runtime owns that service and can inject a fully offline transport.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
-from collections.abc import Mapping
+import re
+from collections import Counter
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from xml.etree import ElementTree
 
 try:
     from apps.api.app.domains.content import (
@@ -69,7 +73,11 @@ def canonical_url(value: str) -> str:
 async def handle(payload: Mapping[str, Any], context: HandlerContext | None = None) -> HandlerResult:
     require_mapping(payload)
     source = dict(payload)
-    if source.get("url") in (None, "") and source.get("source_id"):
+    # Admin-created crawl jobs include a URL, but adapter fields, pagination,
+    # rate limits and retention live only on source_adapters.  Looking up the
+    # source only when URL was absent silently discarded all of that production
+    # configuration and is a direct cause of empty/misparsed crawls.
+    if source.get("source_id"):
         loaded = await lookup_service(
             context,
             ("source_lookup", "load_source", "sources"),
@@ -77,6 +85,8 @@ async def handle(payload: Mapping[str, Any], context: HandlerContext | None = No
             payload=source,
         )
         if isinstance(loaded, Mapping):
+            # Explicit job fields (mode/request metadata and policy snapshots)
+            # remain authoritative over the current source row.
             source = {**dict(loaded), **source}
     if source.get("url") in (None, ""):
         raise NonRetryableHandlerError(
@@ -160,7 +170,7 @@ async def handle(payload: Mapping[str, Any], context: HandlerContext | None = No
         fetched = await _invoke_source_fetcher(fetcher, source, url)
         response = _coerce_response(fetched, url=url, source_type=source_type)
         payload_value = _payload_for_adapter(source_type, response)
-        candidates = _parse_payload(
+        candidates, parse_stats = _parse_payload_resilient(
             source_type,
             payload_value,
             source_id=source_id,
@@ -168,6 +178,62 @@ async def handle(payload: Mapping[str, Any], context: HandlerContext | None = No
             policy=_crawler_guard(source_type, source),
             config=adapter_config,
         )
+        candidates, pagination_stats = await _fetch_additional_pages(
+            fetcher,
+            source,
+            source_type=source_type,
+            source_id=source_id,
+            initial_url=url,
+            initial_payload=payload_value,
+            initial_response=response,
+            initial_candidates=candidates,
+            policy=_crawler_guard(source_type, source),
+            config=adapter_config,
+        )
+        for key in ("parse_item_count", "parse_rejected_count"):
+            parse_stats[key] = parse_stats.get(key, 0) + int(pagination_stats.pop(key, 0) or 0)
+        discovery_stats: dict[str, Any] = {}
+        hydration_stats: dict[str, Any] = {}
+        candidates = _limit_candidates(
+            _deduplicate_candidates(candidates), adapter_config.get("max_items")
+        )
+        if source_type == "RSS" and _config_bool(
+            adapter_config.get("hydrate_article_links"), default=False
+        ):
+            candidates, hydration_stats = await _hydrate_rss_articles(
+                fetcher,
+                source,
+                source_id=source_id,
+                seed_url=url,
+                initial_candidates=candidates,
+                config=adapter_config,
+            )
+        if source_type == "CRAWLER":
+            candidates, discovery_stats = await _fetch_discovered_articles(
+                fetcher,
+                source,
+                source_id=source_id,
+                seed_url=url,
+                seed_payload=payload_value,
+                initial_candidates=candidates,
+                policy=_crawler_guard(source_type, source),
+                config=adapter_config,
+            )
+        candidates = _limit_candidates(
+            _deduplicate_candidates(candidates), adapter_config.get("max_items")
+        )
+        if not candidates and not _config_bool(
+            adapter_config.get("allow_empty_result"), default=False
+        ):
+            raise NonRetryableHandlerError(
+                "source returned no usable article metadata",
+                code="SOURCE_NO_ARTICLES",
+                details={
+                    "source_type": source_type,
+                    "parse_item_count": parse_stats.get("parse_item_count", 0),
+                    "parse_rejected_count": parse_stats.get("parse_rejected_count", 0),
+                },
+            )
     except SourceFetchError as exc:
         error_type = RetryableHandlerError if exc.retryable else NonRetryableHandlerError
         raise error_type(str(exc), code=exc.code, details=exc.details) from exc
@@ -176,7 +242,7 @@ async def handle(payload: Mapping[str, Any], context: HandlerContext | None = No
             "crawler policy, robots and terms approval are required",
             code="CRAWLER_POLICY_NOT_APPROVED",
         ) from exc
-    except NonRetryableHandlerError:
+    except (NonRetryableHandlerError, RetryableHandlerError):
         raise
     except Exception as exc:
         # Parsing failures are source-data errors, not transient worker
@@ -193,6 +259,12 @@ async def handle(payload: Mapping[str, Any], context: HandlerContext | None = No
         candidates=candidates,
         response=response,
         fetched=True,
+        extra_stats={
+            **parse_stats,
+            **pagination_stats,
+            **hydration_stats,
+            **discovery_stats,
+        },
     )
 
 
@@ -390,7 +462,23 @@ def _payload_for_adapter(source_type: str, response: SourceFetchResponse) -> Any
         except Exception as exc:
             raise ValueError("invalid API response") from exc
     if source_type == "RSS":
-        return response.text
+        # ElementTree can honour the XML encoding declaration only when it
+        # receives bytes, but Python's bundled Expat still rejects some common
+        # multibyte encodings (notably EUC-KR).  Preserve supported raw XML and
+        # transcode only that unsupported case to an honest UTF-8 declaration.
+        try:
+            ElementTree.fromstring(response.body)
+            return response.body
+        except (ElementTree.ParseError, ValueError):
+            decoded = response.text
+            decoded = re.sub(
+                r"(<\?xml\b[^>]*\bencoding\s*=\s*)[\"'][^\"']+[\"']",
+                r'\1"utf-8"',
+                decoded,
+                count=1,
+                flags=re.I,
+            )
+            return decoded.encode("utf-8")
     if source_type == "CRAWLER":
         return {"url": response.url, "html": response.text}
     raise ValueError(f"unsupported source type: {source_type}")
@@ -426,6 +514,683 @@ def _parse_payload(
             config,
         ).parse(crawler_payload)
     raise ValueError(f"unsupported source type: {source_type}")
+
+
+def _parse_payload_resilient(
+    source_type: str,
+    payload: Any,
+    *,
+    source_id: Any,
+    url: str,
+    policy: CrawlerPolicyGuard | None,
+    config: Mapping[str, Any] | None = None,
+) -> tuple[list[ArticleCandidate], dict[str, int]]:
+    """Keep valid API articles when one malformed item shares the response.
+
+    APIAdapter deliberately fails fast for a malformed candidate.  At the
+    ingestion boundary that used to discard every valid sibling in the same
+    response.  Parse the already-discovered API item list independently,
+    surface a rejected count, and still fail when *all* supplied items are
+    invalid so a broken field mapping cannot masquerade as an empty feed.
+    """
+
+    if source_type != "API":
+        return (
+            _parse_payload(
+                source_type,
+                payload,
+                source_id=source_id,
+                url=url,
+                policy=policy,
+                config=config,
+            ),
+            {"parse_item_count": 0, "parse_rejected_count": 0},
+        )
+    adapter = APIAdapter(None if source_id is None else str(source_id), config)
+    items = adapter._items(payload)  # type: ignore[attr-defined]
+    if not isinstance(items, Iterable) or isinstance(
+        items, (str, bytes, bytearray, Mapping)
+    ):
+        # Preserve the adapter's canonical error for a structurally invalid
+        # response rather than silently treating it as no news.
+        return adapter.parse(payload), {"parse_item_count": 0, "parse_rejected_count": 0}
+    accepted: list[ArticleCandidate] = []
+    scanned = 0
+    rejected = 0
+    for item in items:
+        scanned += 1
+        if not isinstance(item, Mapping):
+            rejected += 1
+            continue
+        try:
+            parsed = adapter.parse([item])
+        except (TypeError, ValueError):
+            rejected += 1
+            continue
+        if not parsed:
+            rejected += 1
+            continue
+        accepted.extend(parsed)
+    if scanned and rejected == scanned:
+        raise ValueError("all API article items were invalid")
+    return accepted, {"parse_item_count": scanned, "parse_rejected_count": rejected}
+
+
+async def _fetch_additional_pages(
+    fetcher: Any,
+    source: Mapping[str, Any],
+    *,
+    source_type: str,
+    source_id: Any,
+    initial_url: str,
+    initial_payload: Any,
+    initial_response: SourceFetchResponse,
+    initial_candidates: list[ArticleCandidate],
+    policy: CrawlerPolicyGuard | None,
+    config: Mapping[str, Any],
+) -> tuple[list[ArticleCandidate], dict[str, Any]]:
+    """Follow explicit API/RSS next links with hard bounds and partial success."""
+
+    stats: dict[str, Any] = {
+        "pages_fetched": 1,
+        "page_failures": 0,
+        "pagination_cycle_detected": False,
+    }
+    if source_type not in {"API", "RSS"} or not _pagination_enabled(config):
+        return list(initial_candidates), stats
+    pagination = config.get("pagination")
+    page_config = dict(pagination) if isinstance(pagination, Mapping) else {}
+    max_pages = _bounded_positive_int(
+        page_config.get("max_pages", config.get("max_pages")), default=10, maximum=25
+    )
+    if max_pages <= 1:
+        return list(initial_candidates), stats
+
+    candidates = list(initial_candidates)
+    current_payload = initial_payload
+    current_response = initial_response
+    seen = {_normalised_navigation_url(initial_url), _normalised_navigation_url(initial_response.url)}
+    failure_counts: Counter[str] = Counter()
+    last_failure_retryable = False
+    while stats["pages_fetched"] < max_pages:
+        if _candidate_limit_reached(candidates, config.get("max_items")):
+            stats["pagination_stopped_at_item_limit"] = True
+            break
+        raw_next = _next_page_reference(
+            source_type,
+            current_payload,
+            current_response,
+            page_config=page_config,
+        )
+        if not raw_next:
+            break
+        next_url = _resolve_navigation_url(current_response.url, raw_next)
+        if next_url is None:
+            failure_counts["SOURCE_PAGINATION_URL_INVALID"] += 1
+            stats["page_failures"] += 1
+            break
+        normalised = _normalised_navigation_url(next_url)
+        if normalised in seen:
+            stats["pagination_cycle_detected"] = True
+            break
+        if not _navigation_allowed(
+            initial_url,
+            next_url,
+            config,
+            purpose="pagination",
+        ):
+            failure_counts["SOURCE_PAGINATION_ORIGIN_BLOCKED"] += 1
+            stats["page_failures"] += 1
+            break
+        seen.add(normalised)
+        child_source = _navigation_source(
+            source,
+            next_url,
+            config,
+            purpose="page",
+            seed_url=initial_url,
+        )
+        try:
+            fetched = await _invoke_source_fetcher(fetcher, child_source, next_url)
+            response = _coerce_response(fetched, url=next_url, source_type=source_type)
+            page_payload = _payload_for_adapter(source_type, response)
+            page_candidates, page_parse_stats = _parse_payload_resilient(
+                source_type,
+                page_payload,
+                source_id=source_id,
+                url=next_url,
+                policy=policy,
+                config=config,
+            )
+        except SourceFetchError as exc:
+            failure_counts[exc.code] += 1
+            stats["page_failures"] += 1
+            last_failure_retryable = exc.retryable
+            break
+        except (TypeError, ValueError, ElementTree.ParseError):
+            failure_counts["SOURCE_PAGE_PARSE_FAILED"] += 1
+            stats["page_failures"] += 1
+            break
+        candidates.extend(page_candidates)
+        stats["pages_fetched"] += 1
+        stats["parse_item_count"] = stats.get("parse_item_count", 0) + page_parse_stats.get(
+            "parse_item_count", 0
+        )
+        stats["parse_rejected_count"] = stats.get(
+            "parse_rejected_count", 0
+        ) + page_parse_stats.get("parse_rejected_count", 0)
+        current_payload = page_payload
+        current_response = response
+    if failure_counts:
+        stats["page_failure_counts"] = dict(sorted(failure_counts.items()))
+    if not candidates and failure_counts:
+        error_type = RetryableHandlerError if last_failure_retryable else NonRetryableHandlerError
+        raise error_type(
+            "source pagination failed before yielding an article",
+            code="SOURCE_PAGINATION_FAILED",
+            details={"failure_counts": dict(sorted(failure_counts.items()))},
+        )
+    return candidates, stats
+
+
+async def _fetch_discovered_articles(
+    fetcher: Any,
+    source: Mapping[str, Any],
+    *,
+    source_id: Any,
+    seed_url: str,
+    seed_payload: Any,
+    initial_candidates: list[ArticleCandidate],
+    policy: CrawlerPolicyGuard,
+    config: Mapping[str, Any],
+) -> tuple[list[ArticleCandidate], dict[str, Any]]:
+    """Turn crawler index links into real, body-bearing article candidates."""
+
+    candidates = list(initial_candidates)
+    discover_enabled = _config_bool(config.get("discover_links"), default=True)
+    if discover_enabled and isinstance(seed_payload, Mapping):
+        body_threshold = _bounded_nonnegative_int(
+            config.get("discovery_body_threshold"), default=80, maximum=10_000
+        )
+        discover_always = _config_bool(
+            config.get("discover_links_always"), default=False
+        ) or str(config.get("page_type", "")).strip().lower() in {
+            "index",
+            "listing",
+            "section",
+        }
+        if discover_always or max((len(item.body.strip()) for item in candidates), default=0) < body_threshold:
+            adapter = CrawlerAdapter(
+                None if source_id is None else str(source_id),
+                policy,
+                config,
+            )
+            candidates.extend(adapter.discover_links(seed_payload))
+
+    candidates = _deduplicate_candidates(candidates)
+    rich_initial = [candidate for candidate in candidates if candidate.body.strip()]
+    discovered = [
+        candidate
+        for candidate in candidates
+        if not candidate.body.strip()
+        and _normalised_navigation_url(candidate.url) != _normalised_navigation_url(seed_url)
+        and _navigation_allowed(seed_url, candidate.url, config, purpose="discovery")
+    ]
+    max_fetches = _bounded_positive_int(
+        config.get("max_article_fetches", config.get("max_links")),
+        default=40,
+        maximum=100,
+    )
+    scheduled = discovered[:max_fetches]
+    concurrency = _bounded_positive_int(
+        config.get("fetch_concurrency"), default=4, maximum=12
+    )
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def fetch_one(candidate: ArticleCandidate) -> tuple[list[ArticleCandidate], str | None, bool]:
+        async with semaphore:
+            child_source = _navigation_source(
+                source,
+                candidate.url,
+                {**dict(config), "discover_links": False},
+                purpose="article",
+                seed_url=seed_url,
+            )
+            try:
+                fetched = await _invoke_source_fetcher(fetcher, child_source, candidate.url)
+                response = _coerce_response(
+                    fetched, url=candidate.url, source_type="CRAWLER"
+                )
+                child_payload = _payload_for_adapter("CRAWLER", response)
+                parsed, _parse_stats = _parse_payload_resilient(
+                    "CRAWLER",
+                    child_payload,
+                    source_id=source_id,
+                    url=candidate.url,
+                    policy=policy,
+                    config={**dict(config), "discover_links": False},
+                )
+                rich = [item for item in parsed if item.body.strip()]
+                if not rich:
+                    return [], "SOURCE_DISCOVERED_ARTICLE_EMPTY", False
+                return rich, None, False
+            except SourceFetchError as exc:
+                return [], exc.code, exc.retryable
+            except (CrawlerPolicyError, PermissionError):
+                return [], "CRAWLER_POLICY_NOT_APPROVED", False
+            except Exception:
+                return [], "SOURCE_DISCOVERED_ARTICLE_PARSE_FAILED", False
+
+    results = await asyncio.gather(*(fetch_one(candidate) for candidate in scheduled))
+    fetched_articles: list[ArticleCandidate] = []
+    failure_counts: Counter[str] = Counter()
+    retryable_failure = False
+    for parsed, error_code, retryable in results:
+        fetched_articles.extend(parsed)
+        if error_code:
+            failure_counts[error_code] += 1
+            retryable_failure = retryable_failure or retryable
+    stats: dict[str, Any] = {
+        "discovered_count": len(discovered),
+        "article_fetch_attempted": len(scheduled),
+        "article_fetch_succeeded": len(results) - sum(failure_counts.values()),
+        "article_fetch_failed": sum(failure_counts.values()),
+        "article_fetch_skipped": max(0, len(discovered) - len(scheduled)),
+    }
+    if failure_counts:
+        stats["article_fetch_failure_counts"] = dict(sorted(failure_counts.items()))
+
+    articles = _deduplicate_candidates([*rich_initial, *fetched_articles])
+    if _config_bool(config.get("persist_unfetched_links"), default=False):
+        articles = _deduplicate_candidates([*articles, *discovered])
+    if not articles and failure_counts:
+        error_type = RetryableHandlerError if retryable_failure else NonRetryableHandlerError
+        raise error_type(
+            "discovered article pages failed before yielding usable content",
+            code="SOURCE_DISCOVERY_FETCH_FAILED",
+            details={"failure_counts": dict(sorted(failure_counts.items()))},
+        )
+    if not articles and not _config_bool(config.get("allow_empty_result"), default=False):
+        raise NonRetryableHandlerError(
+            "crawler page yielded no body-bearing articles",
+            code="SOURCE_NO_ARTICLES",
+            details={"discovered_count": len(discovered)},
+        )
+    return articles, stats
+
+
+async def _hydrate_rss_articles(
+    fetcher: Any,
+    source: Mapping[str, Any],
+    *,
+    source_id: Any,
+    seed_url: str,
+    initial_candidates: list[ArticleCandidate],
+    config: Mapping[str, Any],
+) -> tuple[list[ArticleCandidate], dict[str, Any]]:
+    """Replace short RSS summaries with approved article-page bodies.
+
+    This path is deliberately opt-in.  A feed fetch does not automatically
+    grant permission to crawl every linked page, so all three crawler policy
+    statuses must be approved before the option can perform network I/O.
+    """
+
+    if any(
+        str(source.get(key, "")).upper() != _APPROVED_POLICY_STATUS
+        for key in ("policy_status", "robots_status", "terms_status")
+    ):
+        raise NonRetryableHandlerError(
+            "RSS article hydration requires approved policy, robots and terms status",
+            code="RSS_HYDRATION_POLICY_NOT_APPROVED",
+        )
+    try:
+        policy = CrawlerPolicyGuard.from_source(source)
+        policy.check()
+    except PermissionError as exc:
+        raise NonRetryableHandlerError(
+            "RSS article hydration requires approved policy, robots and terms status",
+            code="RSS_HYDRATION_POLICY_NOT_APPROVED",
+        ) from exc
+
+    minimum_chars = _bounded_nonnegative_int(
+        config.get("hydrate_min_body_chars"), default=300, maximum=100_000
+    )
+    eligible: list[tuple[int, ArticleCandidate]] = []
+    origin_skipped = 0
+    for index, candidate in enumerate(initial_candidates):
+        if len(candidate.body.strip()) >= minimum_chars:
+            continue
+        if not _navigation_allowed(seed_url, candidate.url, config, purpose="hydration"):
+            origin_skipped += 1
+            continue
+        eligible.append((index, candidate))
+    max_fetches = _bounded_positive_int(
+        config.get("max_hydration_fetches", config.get("max_article_fetches")),
+        default=40,
+        maximum=100,
+    )
+    scheduled = eligible[:max_fetches]
+    concurrency = _bounded_positive_int(
+        config.get("hydration_concurrency", config.get("fetch_concurrency")),
+        default=4,
+        maximum=12,
+    )
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def fetch_one(
+        index: int, candidate: ArticleCandidate
+    ) -> tuple[int, ArticleCandidate | None, str | None]:
+        async with semaphore:
+            child_source = _navigation_source(
+                source,
+                candidate.url,
+                {**dict(config), "discover_links": False},
+                purpose="hydration",
+                seed_url=seed_url,
+            )
+            # The fetch service must enforce crawler policy and advertise HTML
+            # for an article page, rather than reusing the RSS Accept header.
+            child_source["source_type"] = "CRAWLER"
+            child_source["adapter_type"] = "CRAWLER"
+            try:
+                fetched = await _invoke_source_fetcher(fetcher, child_source, candidate.url)
+                response = _coerce_response(
+                    fetched, url=candidate.url, source_type="CRAWLER"
+                )
+                child_payload = _payload_for_adapter("CRAWLER", response)
+                parsed, _parse_stats = _parse_payload_resilient(
+                    "CRAWLER",
+                    child_payload,
+                    source_id=source_id,
+                    url=candidate.url,
+                    policy=policy,
+                    config={**dict(config), "discover_links": False},
+                )
+                rich = max(
+                    (item for item in parsed if item.body.strip()),
+                    key=lambda item: len(item.body),
+                    default=None,
+                )
+                if rich is None:
+                    return index, None, "RSS_HYDRATED_ARTICLE_EMPTY"
+                hydrated = ArticleCandidate(
+                    url=rich.url,
+                    title=rich.title or candidate.title,
+                    body=rich.body,
+                    author=rich.author or candidate.author,
+                    published_at=candidate.published_at or rich.published_at,
+                    source_id=candidate.source_id,
+                    raw_payload=rich.raw_payload,
+                    external_id=candidate.external_id,
+                    adapter_type=candidate.adapter_type,
+                )
+                return index, hydrated, None
+            except SourceFetchError as exc:
+                return index, None, exc.code
+            except Exception:
+                return index, None, "RSS_HYDRATED_ARTICLE_PARSE_FAILED"
+
+    results = await asyncio.gather(
+        *(fetch_one(index, candidate) for index, candidate in scheduled)
+    )
+    articles = list(initial_candidates)
+    failure_counts: Counter[str] = Counter()
+    succeeded = 0
+    for index, hydrated, error_code in results:
+        if hydrated is not None:
+            articles[index] = hydrated
+            succeeded += 1
+        elif error_code:
+            failure_counts[error_code] += 1
+    stats: dict[str, Any] = {
+        "hydration_eligible_count": len(eligible),
+        "hydration_attempted": len(scheduled),
+        "hydration_succeeded": succeeded,
+        "hydration_failed": sum(failure_counts.values()),
+        "hydration_skipped": max(0, len(eligible) - len(scheduled)) + origin_skipped,
+        "hydration_origin_skipped": origin_skipped,
+    }
+    if failure_counts:
+        stats["hydration_failure_counts"] = dict(sorted(failure_counts.items()))
+    return _deduplicate_candidates(articles), stats
+
+
+def _pagination_enabled(config: Mapping[str, Any]) -> bool:
+    pagination = config.get("pagination")
+    if isinstance(pagination, Mapping) and "enabled" in pagination:
+        return _config_bool(pagination.get("enabled"), default=True)
+    return _config_bool(config.get("paginate"), default=True)
+
+
+def _next_page_reference(
+    source_type: str,
+    payload: Any,
+    response: SourceFetchResponse,
+    *,
+    page_config: Mapping[str, Any],
+) -> str | None:
+    header_next = _link_header_next(response.headers.get("link"))
+    if header_next:
+        return header_next
+    if source_type == "API" and isinstance(payload, Mapping):
+        configured = page_config.get("next_path") or page_config.get("next_url_path")
+        paths = [configured] if configured else [
+            "next",
+            "next_url",
+            "nextUrl",
+            "links.next",
+            "pagination.next",
+            "paging.next",
+            "meta.next",
+            "response.next",
+        ]
+        for path in paths:
+            value = _mapping_path(payload, path)
+            if isinstance(value, Mapping):
+                value = value.get("href") or value.get("url")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    if source_type == "RSS" and isinstance(payload, (str, bytes, bytearray)):
+        try:
+            root = ElementTree.fromstring(payload)
+        except (ElementTree.ParseError, ValueError):
+            return None
+        for node in root.iter():
+            if node.tag.rsplit("}", 1)[-1].lower() != "link":
+                continue
+            if str(node.attrib.get("rel", "")).lower() == "next" and node.attrib.get("href"):
+                return str(node.attrib["href"]).strip()
+    return None
+
+
+def _link_header_next(value: str | None) -> str | None:
+    if not value:
+        return None
+    for part in value.split(","):
+        sections = [section.strip() for section in part.split(";")]
+        if not sections or not sections[0].startswith("<") or not sections[0].endswith(">"):
+            continue
+        relations = " ".join(sections[1:]).lower()
+        if "rel=next" in relations or 'rel="next"' in relations or "rel='next'" in relations:
+            return sections[0][1:-1].strip()
+    return None
+
+
+def _mapping_path(mapping: Mapping[str, Any], path: Any) -> Any:
+    if not isinstance(path, str) or not path:
+        return None
+    current: Any = mapping
+    for part in path.split("."):
+        if not isinstance(current, Mapping):
+            return None
+        if part in current:
+            current = current[part]
+            continue
+        lowered = {str(key).lower(): value for key, value in current.items()}
+        current = lowered.get(part.lower())
+    return current
+
+
+def _resolve_navigation_url(base_url: str, reference: str) -> str | None:
+    value = str(reference).strip()
+    if not value or value.lower().startswith(("javascript:", "data:", "file:")):
+        return None
+    # A bare cursor/token is not a URL.  Following it as a relative path would
+    # send a surprising request (for example cursor "abc" -> /abc).  APIs that
+    # use opaque cursors should expose a URL in next_path or a Link header.
+    if "://" not in value and not value.startswith(("/", "?", "./", "../")):
+        return None
+    try:
+        resolved = urljoin(base_url, value)
+        parsed = urlsplit(resolved)
+    except (TypeError, ValueError):
+        return None
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return None
+    try:
+        return canonical_url(resolved)
+    except NonRetryableHandlerError:
+        return None
+
+
+def _normalised_navigation_url(value: str) -> str:
+    try:
+        return canonical_url(value)
+    except (NonRetryableHandlerError, TypeError, ValueError):
+        return str(value).strip()
+
+
+def _navigation_allowed(
+    seed_url: str,
+    target_url: str,
+    config: Mapping[str, Any],
+    *,
+    purpose: str,
+) -> bool:
+    try:
+        seed_host = (urlsplit(seed_url).hostname or "").lower().removeprefix("www.")
+        target_host = (urlsplit(target_url).hostname or "").lower().removeprefix("www.")
+    except ValueError:
+        return False
+    if not seed_host or not target_host:
+        return False
+    if target_host == seed_host:
+        return True
+    domain_key = "pagination_domains" if purpose == "pagination" else "allowed_domains"
+    allowed = config.get(domain_key)
+    if isinstance(allowed, (list, tuple, set)):
+        for item in allowed:
+            domain = str(item).strip().lower()
+            if "://" in domain:
+                domain = (urlsplit(domain).hostname or "").lower()
+            domain = domain.removeprefix("www.").lstrip(".")
+            if domain and (target_host == domain or target_host.endswith(f".{domain}")):
+                return True
+    allow_key = "allow_external_pagination" if purpose == "pagination" else "allow_external_links"
+    return _config_bool(config.get(allow_key), default=False)
+
+
+def _navigation_source(
+    source: Mapping[str, Any],
+    url: str,
+    config: Mapping[str, Any],
+    *,
+    purpose: str,
+    seed_url: str,
+) -> dict[str, Any]:
+    """Build a GET child request without replaying index POST/query payloads."""
+
+    child = dict(source)
+    for key in ("config_json", "adapter_config", "config"):
+        child.pop(key, None)
+    child_config = dict(config)
+    for key in ("params", "query_params", "body", "json", "http_method"):
+        child_config.pop(key, None)
+    child_config["method"] = "GET"
+    override = config.get(f"{purpose}_request")
+    if isinstance(override, Mapping):
+        child_config.update(dict(override))
+    if urlsplit(seed_url).hostname != urlsplit(url).hostname:
+        # An explicitly allowed external link is still not authority to forward
+        # API keys, cookies or a source-specific Authorization header.
+        if not _config_bool(config.get("forward_cross_origin_credentials"), default=False):
+            for holder in (child, child_config):
+                headers = holder.get("headers")
+                if isinstance(headers, Mapping):
+                    holder["headers"] = {
+                        key: value
+                        for key, value in headers.items()
+                        if str(key).lower()
+                        not in {"authorization", "cookie", "proxy-authorization"}
+                    }
+    child["config"] = child_config
+    child["url"] = url
+    return child
+
+
+def _deduplicate_candidates(candidates: Iterable[ArticleCandidate]) -> list[ArticleCandidate]:
+    result: list[ArticleCandidate] = []
+    positions: dict[str, int] = {}
+    for candidate in candidates:
+        key = candidate.canonical_url
+        position = positions.get(key)
+        if position is None:
+            positions[key] = len(result)
+            result.append(candidate)
+            continue
+        existing = result[position]
+        existing_quality = (bool(existing.body.strip()), len(existing.body), bool(existing.title.strip()))
+        candidate_quality = (
+            bool(candidate.body.strip()),
+            len(candidate.body),
+            bool(candidate.title.strip()),
+        )
+        if candidate_quality > existing_quality:
+            result[position] = candidate
+    return result
+
+
+def _candidate_limit_reached(candidates: Iterable[ArticleCandidate], raw_limit: Any) -> bool:
+    limit = _optional_positive_int(raw_limit)
+    return limit is not None and len(_deduplicate_candidates(candidates)) >= limit
+
+
+def _limit_candidates(candidates: list[ArticleCandidate], raw_limit: Any) -> list[ArticleCandidate]:
+    limit = _optional_positive_int(raw_limit)
+    return candidates if limit is None else candidates[:limit]
+
+
+def _optional_positive_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _bounded_positive_int(value: Any, *, default: int, maximum: int) -> int:
+    parsed = _optional_positive_int(value)
+    return min(maximum, parsed if parsed is not None else default)
+
+
+def _bounded_nonnegative_int(value: Any, *, default: int, maximum: int) -> int:
+    if value in (None, ""):
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return min(maximum, max(0, parsed))
+
+
+def _config_bool(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
 def _retention_days(source: Mapping[str, Any]) -> int | None:
@@ -483,6 +1248,7 @@ def _ingestion_result(
     candidates: list[ArticleCandidate],
     response: SourceFetchResponse | None,
     fetched: bool,
+    extra_stats: Mapping[str, Any] | None = None,
 ) -> HandlerResult:
     fetched_at = response.fetched_at if response is not None else datetime.now(UTC)
     if fetched_at.tzinfo is None:
@@ -513,6 +1279,8 @@ def _ingestion_result(
                 "byte_size": len(response.body),
             }
         )
+    if extra_stats:
+        stats.update(dict(extra_stats))
     value = {
         "source_id": source_id,
         "url": url,

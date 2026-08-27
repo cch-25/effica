@@ -37,8 +37,23 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-5.6-luna"
     llm_model_alias: str = "openai-default"
     llm_reasoning_effort: str = "xhigh"
-    llm_timeout_seconds: float = Field(default=120.0, gt=0, le=300)
+    llm_timeout_seconds: float = Field(default=180.0, gt=0, le=300)
+    # The durable queue is the retry authority. Keeping provider-local retries
+    # at zero prevents one slow request from occupying a worker slot for
+    # several timeout windows before queue backoff can restore fairness.
+    llm_max_retries: int = Field(default=0, ge=0, le=4)
     log_level: str = "INFO"
+    worker_lease_seconds: float = Field(default=180.0, gt=5, le=3600)
+    worker_heartbeat_seconds: float = Field(default=45.0, gt=1, le=1200)
+    worker_poll_interval_seconds: float = Field(default=0.5, ge=0.05, le=60)
+    worker_shutdown_grace_seconds: float = Field(default=195.0, ge=0, le=600)
+    worker_max_concurrency: int = Field(default=4, ge=1, le=32)
+    worker_queue_error_backoff_base_seconds: float = Field(default=1.0, gt=0, le=60)
+    worker_queue_error_backoff_max_seconds: float = Field(default=30.0, gt=0, le=300)
+    worker_crawl_scheduler_enabled: bool = True
+    worker_crawl_interval_seconds: float = Field(default=900.0, ge=60, le=86400)
+    worker_crawl_batch_size: int = Field(default=50, ge=1, le=500)
+    worker_crawl_max_attempts: int = Field(default=5, ge=1, le=20)
     google_client_id: str | None = None
     google_client_secret: str | None = None
     cohort_minimum: int = Field(default=5, ge=3)
@@ -129,6 +144,25 @@ class Settings(BaseSettings):
         if self.llm_provider_mode == "live":
             if not self.openai_api_key:
                 raise RuntimeError("live LLM mode requires OPENAI_API_KEY")
+        if (
+            self.live_llm_enabled
+            and self.worker_shutdown_grace_seconds < self.llm_timeout_seconds + 10
+        ):
+            raise RuntimeError(
+                "WORKER_SHUTDOWN_GRACE_SECONDS must be at least "
+                "LLM_TIMEOUT_SECONDS + 10 when live LLM is enabled"
+            )
+        if self.worker_heartbeat_seconds >= self.worker_lease_seconds / 2:
+            raise RuntimeError(
+                "WORKER_HEARTBEAT_SECONDS must be less than half WORKER_LEASE_SECONDS"
+            )
+        if (
+            self.worker_queue_error_backoff_max_seconds
+            < self.worker_queue_error_backoff_base_seconds
+        ):
+            raise RuntimeError(
+                "WORKER_QUEUE_ERROR_BACKOFF_MAX_SECONDS must be at least the base delay"
+            )
 
 
 @lru_cache

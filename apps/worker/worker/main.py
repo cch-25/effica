@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import signal
+import time
 import uuid
 from collections.abc import Callable, Mapping
 from contextlib import suppress
@@ -22,6 +23,7 @@ from .handlers.registry import HandlerRegistry, build_default_registry
 from .queue import ExponentialBackoff, Job, JobStatus, MariaDBQueueRepository, QueueRepository
 from .services import (
     DurableResultApplier,
+    MariaDBCrawlScheduler,
     MariaDBIdempotencyStore,
     MariaDBResultApplier,
     MariaDBWorkerService,
@@ -32,6 +34,12 @@ from .services import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _reasoning_effort_for_attempt(configured: str, attempt: int) -> str:
+    if attempt >= 4 and configured in {"xhigh", "max"}:
+        return "high"
+    return configured
 
 
 class HeartbeatError(HandlerError):
@@ -54,6 +62,8 @@ class WorkerConfig:
     backoff_base_seconds: float = 1.0
     backoff_max_seconds: float = 300.0
     backoff_jitter_ratio: float = 0.2
+    queue_error_backoff_base_seconds: float = 1.0
+    queue_error_backoff_max_seconds: float = 30.0
 
     def __post_init__(self) -> None:
         if not self.worker_id:
@@ -68,6 +78,12 @@ class WorkerConfig:
             raise ValueError("shutdown_grace_seconds must be non-negative")
         if self.max_concurrency < 1:
             raise ValueError("max_concurrency must be at least 1")
+        if self.heartbeat_interval >= self.lease_seconds / 2:
+            raise ValueError("heartbeat interval must be less than half the lease")
+        if self.queue_error_backoff_base_seconds <= 0:
+            raise ValueError("queue error backoff base must be positive")
+        if self.queue_error_backoff_max_seconds < self.queue_error_backoff_base_seconds:
+            raise ValueError("queue error backoff maximum must be at least the base")
 
     @property
     def heartbeat_interval(self) -> float:
@@ -86,6 +102,14 @@ class IdempotencyStore(Protocol):
     async def complete(self, key: str, owner_token: str, result: Any) -> None: ...
 
     async def abandon(self, key: str, owner_token: str) -> None: ...
+
+
+class CrawlScheduler(Protocol):
+    """One bounded, distributed-safe source scheduling tick."""
+
+    interval_seconds: float
+
+    async def tick(self, worker_id: str) -> int: ...
 
 
 class MemoryIdempotencyStore:
@@ -146,6 +170,7 @@ class WorkerRuntime:
         config: WorkerConfig | None = None,
         idempotency_store: IdempotencyStore | None = None,
         result_applier: ResultApplier | None = None,
+        crawl_scheduler: CrawlScheduler | None = None,
         services: Mapping[str, Any] | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -158,21 +183,50 @@ class WorkerRuntime:
         # MariaDB implementation.  This prevents a handler's value from ever
         # being silently discarded before SUCCEEDED.
         self.result_applier = result_applier or MemoryResultApplier()
+        self.crawl_scheduler = crawl_scheduler
         self.services = dict(services or {})
         self.clock = clock
         self.stop_event = asyncio.Event()
         self._active: set[asyncio.Task[Any]] = set()
         self._shutdown_started = False
         self._signals_installed = False
+        self._scheduler_task: asyncio.Task[Any] | None = None
+        self._claimed_count = 0
+        self._succeeded_count = 0
+        self._failed_count = 0
+        self._queue_error_count = 0
+        self._last_job_id: str | None = None
+        self._last_queue_error: str | None = None
         self.backoff = ExponentialBackoff(
             base_seconds=self.config.backoff_base_seconds,
             max_seconds=self.config.backoff_max_seconds,
+            jitter_ratio=self.config.backoff_jitter_ratio,
+        )
+        self.queue_error_backoff = ExponentialBackoff(
+            base_seconds=self.config.queue_error_backoff_base_seconds,
+            max_seconds=self.config.queue_error_backoff_max_seconds,
             jitter_ratio=self.config.backoff_jitter_ratio,
         )
 
     @property
     def worker_id(self) -> str:
         return self.config.worker_id
+
+    def health_snapshot(self) -> dict[str, Any]:
+        """Return a secret-free runtime snapshot for logs and supervisors."""
+
+        return {
+            "worker_id": self.worker_id,
+            "stopping": self.stop_event.is_set(),
+            "active_jobs": len(self._active),
+            "claimed": self._claimed_count,
+            "succeeded": self._succeeded_count,
+            "failed": self._failed_count,
+            "queue_errors": self._queue_error_count,
+            "last_job_id": self._last_job_id,
+            "last_queue_error": self._last_queue_error,
+            "scheduler_enabled": self.crawl_scheduler is not None,
+        }
 
     def request_stop(self, *_signals: Any) -> None:
         """Signal-safe stop request; active handlers finish within grace."""
@@ -212,6 +266,7 @@ class WorkerRuntime:
         )
         if job is None:
             return False
+        self._record_claim(job)
         await self._process_claimed(job)
         return True
 
@@ -226,6 +281,7 @@ class WorkerRuntime:
             job_type=job.job_type,
             worker_id=self.worker_id,
             idempotency_key=idempotency_key,
+            attempt=job.attempts,
             now=self.clock() if self.clock else None,
             services=self.services,
         )
@@ -241,6 +297,8 @@ class WorkerRuntime:
                         )
                         if not completed:
                             logger.warning("job lease lost before cached completion: %s", job.id)
+                        else:
+                            self._record_success(job, cached=True)
                         return
                 handler = self.registry.get(job.job_type)
                 if handler is None:
@@ -264,6 +322,8 @@ class WorkerRuntime:
                     # the update.  Durable idempotency still prevents a
                     # second side effect; leave the row for reconciliation.
                     logger.warning("job lease lost before completion: %s", job.id)
+                else:
+                    self._record_success(job)
 
             await self._run_with_heartbeat(operation(), heartbeat_task)
         except asyncio.CancelledError:
@@ -408,13 +468,111 @@ class WorkerRuntime:
         # ResultApplicationError defaults to retryable=False so apply conflicts
         # (0 share rows, stale aggregates) become FAILED instead of PENDING.
         delay = self.backoff.delay(job.attempts) if retryable else 0.0
-        return await self.repository.fail(
+        status = await self.repository.fail(
             job.id,
             self.worker_id,
             error,
             retryable=retryable,
             backoff_seconds=delay,
         )
+        self._failed_count += 1
+        self._last_job_id = job.id
+        logger.warning(
+            "job_failed",
+            extra={
+                "event": "job_failed",
+                "worker_id": self.worker_id,
+                "job_id": job.id,
+                "job_type": job.job_type,
+                "attempt": job.attempts,
+                "max_attempts": job.max_attempts,
+                "status": status.value,
+                "retryable": retryable,
+                "retry_delay_seconds": round(delay, 3),
+                "error_code": str(error.get("code") or "UNKNOWN"),
+            },
+        )
+        return status
+
+    def _record_claim(self, job: Job) -> None:
+        self._claimed_count += 1
+        self._last_job_id = job.id
+        logger.info(
+            "job_claimed",
+            extra={
+                "event": "job_claimed",
+                "worker_id": self.worker_id,
+                "job_id": job.id,
+                "job_type": job.job_type,
+                "attempt": job.attempts,
+                "max_attempts": job.max_attempts,
+            },
+        )
+
+    def _record_success(self, job: Job, *, cached: bool = False) -> None:
+        self._succeeded_count += 1
+        self._last_job_id = job.id
+        logger.info(
+            "job_succeeded",
+            extra={
+                "event": "job_succeeded",
+                "worker_id": self.worker_id,
+                "job_id": job.id,
+                "job_type": job.job_type,
+                "attempt": job.attempts,
+                "idempotent_replay": cached,
+            },
+        )
+
+    def _task_done(self, task: asyncio.Task[Any]) -> None:
+        self._active.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error(
+                "job_task_crashed",
+                exc_info=(type(error), error, error.__traceback__),
+                extra={
+                    "event": "job_task_crashed",
+                    "worker_id": self.worker_id,
+                    **self.health_snapshot(),
+                },
+            )
+
+    async def _crawl_scheduler_loop(self) -> None:
+        assert self.crawl_scheduler is not None
+        interval = float(self.crawl_scheduler.interval_seconds)
+        while not self.stop_event.is_set():
+            started = time.monotonic()
+            try:
+                created = await self.crawl_scheduler.tick(self.worker_id)
+                logger.info(
+                    "crawl_schedule_tick",
+                    extra={
+                        "event": "crawl_schedule_tick",
+                        "worker_id": self.worker_id,
+                        "jobs_created": created,
+                        "interval_seconds": interval,
+                    },
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error(
+                    "crawl_schedule_failed",
+                    exc_info=True,
+                    extra={
+                        "event": "crawl_schedule_failed",
+                        "worker_id": self.worker_id,
+                        "exception_type": exc.__class__.__name__,
+                    },
+                )
+            remaining = max(0.0, interval - (time.monotonic() - started))
+            try:
+                await asyncio.wait_for(self.stop_event.wait(), timeout=remaining)
+            except TimeoutError:
+                pass
 
     async def retry_job(self, job_id: str) -> bool:
         return await self.repository.retry(job_id)
@@ -437,23 +595,76 @@ class WorkerRuntime:
 
         self.install_signal_handlers()
         self._shutdown_started = False
+        queue_error_attempt = 0
+        if self.crawl_scheduler is not None:
+            # Tick immediately at process startup; the scheduler's advisory
+            # lock and interval-bucket dedupe make this fleet-safe.
+            self._scheduler_task = asyncio.create_task(self._crawl_scheduler_loop())
+        logger.info(
+            "worker_started",
+            extra={
+                "event": "worker_started",
+                "worker_id": self.worker_id,
+                "max_concurrency": self.config.max_concurrency,
+                "lease_seconds": self.config.lease_seconds,
+                "scheduler_enabled": self.crawl_scheduler is not None,
+            },
+        )
         try:
             while not self.stop_event.is_set():
                 # Fill the bounded worker pool.  Claims are short DB
                 # transactions; handlers run concurrently outside them.
+                claim_error = False
                 while (
                     len(self._active) < self.config.max_concurrency and not self.stop_event.is_set()
                 ):
-                    job = await self.repository.claim(
-                        self.worker_id,
-                        lease_seconds=self.config.lease_seconds,
-                    )
+                    try:
+                        job = await self.repository.claim(
+                            self.worker_id,
+                            lease_seconds=self.config.lease_seconds,
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        queue_error_attempt += 1
+                        self._queue_error_count += 1
+                        self._last_queue_error = exc.__class__.__name__
+                        delay = self.queue_error_backoff.delay(queue_error_attempt)
+                        logger.error(
+                            "queue_claim_failed",
+                            exc_info=True,
+                            extra={
+                                "event": "queue_claim_failed",
+                                "worker_id": self.worker_id,
+                                "consecutive_errors": queue_error_attempt,
+                                "retry_delay_seconds": round(delay, 3),
+                                "active_jobs": len(self._active),
+                            },
+                        )
+                        claim_error = True
+                        if self._active:
+                            await asyncio.wait(
+                                tuple(self._active),
+                                timeout=delay,
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                        else:
+                            try:
+                                await asyncio.wait_for(self.stop_event.wait(), timeout=delay)
+                            except TimeoutError:
+                                pass
+                        break
+                    queue_error_attempt = 0
+                    self._last_queue_error = None
                     if job is None:
                         break
+                    self._record_claim(job)
                     task = asyncio.create_task(self._process_claimed(job))
                     self._active.add(task)
-                    task.add_done_callback(self._active.discard)
+                    task.add_done_callback(self._task_done)
 
+                if claim_error:
+                    continue
                 if self._active:
                     # Waiting on a snapshot avoids mutating the set while
                     # callbacks discard completed tasks.
@@ -483,6 +694,11 @@ class WorkerRuntime:
         if self._shutdown_started:
             return 0
         self._shutdown_started = True
+        if self._scheduler_task is not None:
+            self._scheduler_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._scheduler_task
+            self._scheduler_task = None
         if self._active:
             _, pending = await asyncio.wait(
                 self._active,
@@ -493,7 +709,17 @@ class WorkerRuntime:
             for task in pending:
                 with suppress(asyncio.CancelledError):
                     await task
-        return await self.repository.release_leases(self.worker_id)
+        released = await self.repository.release_leases(self.worker_id)
+        logger.info(
+            "worker_stopped",
+            extra={
+                "event": "worker_stopped",
+                "worker_id": self.worker_id,
+                "released_leases": released,
+                **self.health_snapshot(),
+            },
+        )
+        return released
 
 
 async def run_worker(
@@ -503,6 +729,7 @@ async def run_worker(
     config: WorkerConfig | None = None,
     idempotency_store: IdempotencyStore | None = None,
     result_applier: ResultApplier | None = None,
+    crawl_scheduler: CrawlScheduler | None = None,
     services: Mapping[str, Any] | None = None,
 ) -> None:
     """Convenience entry point for process supervisors."""
@@ -513,6 +740,7 @@ async def run_worker(
         config=config,
         idempotency_store=idempotency_store,
         result_applier=result_applier,
+        crawl_scheduler=crawl_scheduler,
         services=services,
     )
     await runtime.run_forever()
@@ -525,10 +753,29 @@ def build_mariadb_runtime(
     registry: HandlerRegistry | None = None,
     idempotency_store: IdempotencyStore | None = None,
     result_applier: ResultApplier | None = None,
+    crawl_scheduler: CrawlScheduler | None = None,
     services: Mapping[str, Any] | None = None,
 ) -> WorkerRuntime:
     """Build the executable runtime using the API's shared session factory."""
 
+    from apps.api.app.core.config import get_settings
+
+    settings = get_settings()
+    settings.assert_safe_runtime()
+    if config is None:
+        config = WorkerConfig(
+            lease_seconds=settings.worker_lease_seconds,
+            heartbeat_seconds=settings.worker_heartbeat_seconds,
+            poll_interval_seconds=settings.worker_poll_interval_seconds,
+            shutdown_grace_seconds=settings.worker_shutdown_grace_seconds,
+            max_concurrency=settings.worker_max_concurrency,
+            queue_error_backoff_base_seconds=(
+                settings.worker_queue_error_backoff_base_seconds
+            ),
+            queue_error_backoff_max_seconds=(
+                settings.worker_queue_error_backoff_max_seconds
+            ),
+        )
     if session_factory is None:
         from apps.api.app.db.session import session_factory as api_session_factory
 
@@ -538,6 +785,13 @@ def build_mariadb_runtime(
         idempotency_store = MariaDBIdempotencyStore(session_factory)
     if result_applier is None:
         result_applier = MariaDBResultApplier(session_factory)
+    if crawl_scheduler is None and settings.worker_crawl_scheduler_enabled:
+        crawl_scheduler = MariaDBCrawlScheduler(
+            session_factory,
+            interval_seconds=settings.worker_crawl_interval_seconds,
+            batch_size=settings.worker_crawl_batch_size,
+            max_attempts=settings.worker_crawl_max_attempts,
+        )
     if services is None:
         services = _default_services(session_factory)
     return WorkerRuntime(
@@ -546,6 +800,7 @@ def build_mariadb_runtime(
         config=config,
         idempotency_store=idempotency_store,
         result_applier=result_applier,
+        crawl_scheduler=crawl_scheduler,
         services=services,
     )
 
@@ -566,22 +821,28 @@ def _default_services(session_factory: Callable[[], Any]) -> dict[str, Any]:
         HttpLLMProvider,
         ProviderConfig,
         ProviderError,
-        ProviderSchemaError,
     )
 
-    async def analysis_provider_factory() -> HttpLLMProvider:
+    async def analysis_provider_factory(*, attempt: int = 1) -> HttpLLMProvider:
         configured = await lookups.analysis_model_lookup()
+        reasoning_effort = str(
+            (configured or {}).get("reasoning_effort")
+            or settings.llm_reasoning_effort
+        )
+        # Preserve the highest configured quality for normal requests. After
+        # three durable attempts, trade only the excess reasoning budget for
+        # completion so one pathological article cannot remain permanently
+        # unassessed after repeatedly reaching the request timeout.
+        reasoning_effort = _reasoning_effort_for_attempt(reasoning_effort, attempt)
         return HttpLLMProvider(
             ProviderConfig(
                 alias=str((configured or {}).get("alias") or settings.llm_model_alias),
                 actual_model_id=str(
                     (configured or {}).get("actual_model_id") or settings.llm_model
                 ),
-                reasoning_effort=str(
-                    (configured or {}).get("reasoning_effort")
-                    or settings.llm_reasoning_effort
-                ),
+                reasoning_effort=reasoning_effort,
                 timeout_seconds=settings.llm_timeout_seconds,
+                max_retries=settings.llm_max_retries,
                 model_alias_id=(configured or {}).get("model_alias_id"),
                 endpoint=settings.openai_endpoint,
                 api_key=settings.openai_api_key,
@@ -598,11 +859,21 @@ def _default_services(session_factory: Callable[[], Any]) -> dict[str, Any]:
             return None
         articles = await lookups.issue_comparison_inputs(version_ids)
         if len(articles) != len(version_ids):
-            return None
+            # Comparison work carries immutable article-version identities.
+            # A later crawl may make one of those versions non-current before
+            # the job is leased.  That is expected queue staleness, not an AI
+            # or data-quality failure, and must not consume terminal retries.
+            return {
+                "status": "SKIPPED",
+                "skip_reason": "STALE_ARTICLE_VERSIONS",
+                "expected_article_versions": len(version_ids),
+                "current_article_versions": len(articles),
+            }
         provider = await analysis_provider_factory()
         try:
             try:
-                result = provider.analyze_issue_comparison(
+                result = await asyncio.to_thread(
+                    provider.analyze_issue_comparison,
                     articles,
                     str(value.get("prompt_version") or "issue-comparison-v1"),
                 )
@@ -610,8 +881,16 @@ def _default_services(session_factory: Callable[[], Any]) -> dict[str, Any]:
                 raise HandlerError(
                     "issue comparison provider request failed",
                     code=exc.code,
-                    details={"model_alias": provider.config.alias},
-                    retryable=not isinstance(exc, ProviderSchemaError),
+                    details={
+                        "model_alias": provider.config.alias,
+                        "provider_message": str(exc)[:240],
+                    },
+                    # Strict structured output still needs domain checks for
+                    # cross-article identities and evidence support. A model
+                    # can miss one of those constraints transiently, so let
+                    # the durable queue retry instead of terminally stranding
+                    # an otherwise current comparison.
+                    retryable=True,
                 ) from exc
             result["model_alias_id"] = provider.config.model_alias_id
             result["article_version_ids"] = {
@@ -629,12 +908,18 @@ def _default_services(session_factory: Callable[[], Any]) -> dict[str, Any]:
 async def main() -> None:
     """Run the MariaDB worker when invoked by ``run.sh worker`` or systemd."""
 
+    from apps.api.app.core.config import get_settings
+    from apps.api.app.core.logging import configure_logging
+
+    settings = get_settings()
+    configure_logging(level=settings.log_level, logger_name=__name__)
     runtime = build_mariadb_runtime()
     await runtime.run_forever()
 
 
 __all__ = [
     "HandlerRegistry",
+    "CrawlScheduler",
     "DurableResultApplier",
     "IdempotencyStore",
     "MariaDBIdempotencyStore",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from statistics import mean
@@ -42,7 +43,7 @@ def ensemble_assessments(
     callers can persist it separately.
     """
 
-    if min_success_models < 1 or max_spread < 0:
+    if min_success_models < 1 or not math.isfinite(max_spread) or max_spread < 0:
         raise ValueError("invalid ensemble policy")
     normalised = [
         item if isinstance(item, ModelAssessment) else ModelAssessment.model_validate(item)

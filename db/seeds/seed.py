@@ -22,6 +22,11 @@ from sqlalchemy import text
 from apps.api.app.core.config import get_settings
 from apps.api.app.db.session import create_engine, dispose_engine
 from apps.api.app.db.ulid import _encode_ulid
+from apps.api.app.domains.issues.topics import infer_issue_topic
+from db.seeds.pipeline_recovery import (
+    default_recovery_generation,
+    run_pipeline_recovery,
+)
 
 ARTICLE_DATA = Path(__file__).with_name("articles.json")
 MINIMUM_ARTICLE_COUNT = 50
@@ -46,6 +51,31 @@ def _parse_published_at(value: str) -> datetime:
     if parsed.tzinfo is None:
         raise ValueError(f"published_at must include a timezone: {value}")
     return parsed.astimezone(UTC).replace(tzinfo=None)
+
+
+def _score_components(
+    *,
+    assessment: dict[str, Any],
+    assessment_id: str,
+    category: str,
+    bias_label: str,
+) -> dict[str, Any]:
+    """Build a public score component payload with durable AI provenance."""
+
+    return {
+        "analysis_provider": "openai",
+        "assessment_ids": [assessment_id],
+        "actual_model_ids": [assessment["actual_model_id"]],
+        "분석방식": "LLM",
+        "평가기준": ["편향성", "과장성"],
+        "편향판정": bias_label,
+        "분류": category,
+        "근거요약": assessment["rationale_summary"],
+        "모델평가ID": assessment_id,
+        "모델별칭": assessment["model_alias"],
+        "프롬프트버전": assessment["prompt_version"],
+        "호환필드": {"y": 0, "z": 0},
+    }
 
 
 def _load_articles(*, require_assessments: bool = True) -> list[dict[str, Any]]:
@@ -215,7 +245,42 @@ async def _insert_articles(connection: Any, articles: list[dict[str, Any]]) -> N
         (row["source_name"], row["source_home_url"])
         for row in articles
     }
+    source_ids: dict[str, str] = {}
     for source_name, source_url in sorted(sources):
+        existing = await connection.execute(
+            text(
+                """
+                SELECT sources.id
+                FROM sources
+                WHERE sources.active = 1
+                  AND (
+                    sources.canonical_url = :url
+                    OR LOWER(TRIM(sources.name)) = LOWER(TRIM(:name))
+                  )
+                ORDER BY
+                  CASE WHEN sources.policy_status = 'APPROVED'
+                         AND sources.robots_status = 'APPROVED'
+                         AND sources.terms_status = 'APPROVED'
+                         AND EXISTS (
+                           SELECT 1 FROM source_adapters
+                           WHERE source_adapters.source_id = sources.id
+                             AND source_adapters.active = 1
+                         )
+                    THEN 0
+                    WHEN sources.canonical_url = :url THEN 1
+                    ELSE 2
+                  END,
+                  sources.id
+                LIMIT 1
+                """
+            ),
+            {"name": source_name[:255], "url": source_url},
+        )
+        existing_source_id = existing.scalar_one_or_none()
+        if existing_source_id is not None:
+            source_ids[source_url] = str(existing_source_id)
+            continue
+        source_id = _stable_ulid("source", source_url)
         await connection.execute(
             text(
                 """
@@ -227,11 +292,12 @@ async def _insert_articles(connection: Any, articles: list[dict[str, Any]]) -> N
                 """
             ),
             {
-                "id": _stable_ulid("source", source_url),
+                "id": source_id,
                 "name": source_name[:255],
                 "url": source_url,
             },
         )
+        source_ids[source_url] = source_id
 
     category_dates: dict[str, list[datetime]] = {}
     for row in articles:
@@ -243,14 +309,15 @@ async def _insert_articles(connection: Any, articles: list[dict[str, Any]]) -> N
             text(
                 """
                 INSERT INTO issues
-                  (id, title, summary, status, opened_at, last_activity_at, version)
-                VALUES (:id, :title, :summary, 'active', :opened_at, :last_activity_at, 1)
+                  (id, title, summary, topic, status, opened_at, last_activity_at, version)
+                VALUES (:id, :title, :summary, :topic, 'active', :opened_at, :last_activity_at, 1)
                 """
             ),
             {
                 "id": _stable_ulid("issue", category),
                 "title": category[:500],
                 "summary": f"{category} 분야의 최신 한국어 원문 기사 모음",
+                "topic": infer_issue_topic(category, f"{category} 분야의 최신 한국어 원문 기사 모음"),
                 "opened_at": min(dates),
                 "last_activity_at": max(dates),
             },
@@ -267,7 +334,7 @@ async def _insert_articles(connection: Any, articles: list[dict[str, Any]]) -> N
             INSERT INTO model_aliases
               (id, alias, provider, actual_model_id, status, config_json)
             VALUES
-              (:id, 'openai-bias-v1', 'openai', :actual_model_id, 'ACTIVE', :config_json)
+              (:id, 'openai-bias-v1', 'openai', :actual_model_id, 'DEPRECATED', :config_json)
             ON DUPLICATE KEY UPDATE actual_model_id = VALUES(actual_model_id),
               provider = VALUES(provider), status = VALUES(status),
               config_json = VALUES(config_json)
@@ -325,7 +392,7 @@ async def _insert_articles(connection: Any, articles: list[dict[str, Any]]) -> N
         article_id = _stable_ulid("article", url)
         blob_id = _stable_ulid("blob", url)
         version_id = _stable_ulid("version", url)
-        source_id = _stable_ulid("source", row["source_home_url"])
+        source_id = source_ids[row["source_home_url"]]
         published_at = _parse_published_at(row["published_at"])
         assessment = row["llm_assessment"]
         bias = int(assessment["bias"])
@@ -456,17 +523,12 @@ async def _insert_articles(connection: Any, articles: list[dict[str, Any]]) -> N
                 "sensationalism": sensationalism,
                 "confidence": confidence,
                 "components": json.dumps(
-                    {
-                        "분석방식": "LLM",
-                        "평가기준": ["편향성", "과장성"],
-                        "편향판정": bias_label,
-                        "분류": row["category"],
-                        "근거요약": assessment["rationale_summary"],
-                        "모델평가ID": assessment_id,
-                        "모델별칭": assessment["model_alias"],
-                        "프롬프트버전": assessment["prompt_version"],
-                        "호환필드": {"y": 0, "z": 0},
-                    },
+                    _score_components(
+                        assessment=assessment,
+                        assessment_id=assessment_id,
+                        category=row["category"],
+                        bias_label=bias_label,
+                    ),
                     ensure_ascii=False,
                 ),
                 "created_at": fetched_at,
@@ -646,7 +708,37 @@ def main() -> int:
         action="store_true",
         help="DB를 변경하지 않고 실제 기사 그래프를 검증합니다",
     )
+    parser.add_argument(
+        "--repair-pipeline",
+        action="store_true",
+        help="기본 시드 적재 없이 기존 콘텐츠 파이프라인 결함을 진단·복구합니다",
+    )
+    parser.add_argument(
+        "--generation",
+        help="복구 큐 dedupe 세대(기본값: 현재 UTC 날짜)",
+    )
+    parser.add_argument(
+        "--bootstrap-news-sources",
+        action="store_true",
+        help="검수된 공공기관 공식 RSS 출처를 복구 과정에서 함께 등록합니다",
+    )
     args = parser.parse_args()
+    if args.repair_pipeline and args.verify_only:
+        parser.error("--repair-pipeline과 --verify-only는 함께 사용할 수 없습니다")
+    if args.generation and not args.repair_pipeline:
+        parser.error("--generation은 --repair-pipeline과 함께 사용해야 합니다")
+    if args.bootstrap_news_sources and not args.repair_pipeline:
+        parser.error("--bootstrap-news-sources는 --repair-pipeline과 함께 사용해야 합니다")
+    if args.repair_pipeline:
+        report = asyncio.run(
+            run_pipeline_recovery(
+                generation=args.generation or default_recovery_generation(),
+                dry_run=args.dry_run,
+                bootstrap_sources=args.bootstrap_news_sources,
+            )
+        )
+        print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
+        return 0
     if args.dry_run and args.verify_only:
         parser.error("--dry-run과 --verify-only는 함께 사용할 수 없습니다")
     if args.verify_only:

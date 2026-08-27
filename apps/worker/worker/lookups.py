@@ -264,7 +264,6 @@ class MariaDBWorkerLookups:
             JOIN model_aliases aliases ON aliases.id = ma.model_alias_id
             WHERE ma.article_version_id = :version_id
               AND ma.status = 'SUCCEEDED'
-              AND aliases.status = 'ACTIVE'
               AND aliases.provider = 'openai'
               AND aliases.actual_model_id LIKE 'gpt-%'
               AND aliases.alias NOT IN ('dummy-crawl-v1', 'deterministic-stub')
@@ -277,6 +276,13 @@ class MariaDBWorkerLookups:
             for row in assessments
             if not evidence_is_synthetic(_json_value(row.get("evidence_json"), {}))
         ]
+        # A score without at least one trusted assessment is not an OpenAI
+        # score.  Returning a zero-filled component payload here used to let
+        # ``calculate_score`` persist a plausible-looking score with empty
+        # assessment provenance, which public reads could not distinguish
+        # from a real analysis.
+        if not assessments:
+            return None
         votes = await self.votes_lookup(version["article_id"])
 
         def axes(rows: list[dict[str, Any]]) -> tuple[float, float, float]:
@@ -287,11 +293,29 @@ class MariaDBWorkerLookups:
         model = axes(assessments)
         crowd_rows = [row for row in votes if row.get("quality_status") in {"VALID", "QUALIFIED"}]
         crowd = axes(crowd_rows)
-        confidence = fmean(float(row["confidence"]) for row in assessments) if assessments else 0.0
-        spread_values = [float(row[name]) for row in assessments for name in ("x", "y", "z")]
+        confidence = fmean(float(row["confidence"]) for row in assessments)
+        # Only x is a canonical bias coordinate.  Treating one model's legacy
+        # y/z compatibility zeros as additional model observations inflated
+        # spread (and reduced confidence) even under the single-model policy.
+        spread_values = [float(row["x"]) for row in assessments]
         spread = pstdev(spread_values) if len(spread_values) > 1 else 0.0
-        sensationalism_rows = assessments or crowd_rows
-        sensationalism = fmean(float(row["sensationalism"]) for row in sensationalism_rows) if sensationalism_rows else 0.0
+        sensationalism = fmean(float(row["sensationalism"]) for row in assessments)
+
+        def has_evidence(row: Mapping[str, Any]) -> bool:
+            evidence = _json_value(row.get("evidence_json"), [])
+            if isinstance(evidence, Mapping):
+                evidence = evidence.get("evidence", evidence)
+            if isinstance(evidence, Sequence) and not isinstance(
+                evidence, (str, bytes, bytearray)
+            ):
+                return any(isinstance(item, Mapping) for item in evidence)
+            return isinstance(evidence, Mapping) and bool(evidence)
+
+        # One trusted assessment is complete under the production single-model
+        # policy.  Evidence quality measures whether that assessment supplied
+        # structured evidence; it must not be divided by the retired three-
+        # provider ensemble size.
+        evidence_quality = fmean(1.0 if has_evidence(row) else 0.0 for row in assessments)
         return {
             "components": {
                 "model": model,
@@ -303,7 +327,7 @@ class MariaDBWorkerLookups:
                 "source_sample_size": 0,
                 "model_spread": spread,
                 "sensationalism": sensationalism,
-                "evidence_quality": min(1.0, len(assessments) / 3.0),
+                "evidence_quality": evidence_quality,
             },
             "provenance": {
                 "analysis_provider": "openai",

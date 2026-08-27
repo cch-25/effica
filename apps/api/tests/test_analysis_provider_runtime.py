@@ -380,3 +380,5 @@ def test_openai_issue_comparison_uses_strict_schema_and_validates_support():
     assert text_format["format"]["name"] == "issue_comparison"
     assert text_format["format"]["strict"] is True
     assert "publisher identity" in str(seen[0]["input"])
+    assert "at least two distinct supplied ARTICLE_ID" in str(seen[0]["input"])
+    assert "exactly one article_frames item" in str(seen[0]["input"])

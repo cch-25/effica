@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from .topics import infer_issue_topic
+
 _TOKEN_RE = re.compile(r"[\w가-힣]{2,}", re.UNICODE)
 _STOPWORDS = {
     "about",
@@ -174,12 +176,26 @@ def cluster_issue_candidates(
     for group in groups:
         ids = [article.article_id for article in group]
         title = min((article.title for article in group if article.title), default="Untitled issue")
+        source_ids = sorted(
+            {str(article.source_id) for article in group if article.source_id}
+        )
         digest = hashlib.sha256("|".join(ids).encode()).hexdigest()[:16]
         candidates.append(
             {
                 "candidate_id": digest,
                 "title": title,
                 "article_ids": ids,
+                "source_ids": source_ids,
+                "article_count": len(ids),
+                "source_count": len(source_ids),
+                "topic": infer_issue_topic(
+                    title,
+                    " ".join(article.body[:500] for article in group),
+                ),
+                "summary": (
+                    f"서로 다른 {len(source_ids)}개 출처의 {len(ids)}개 보도가 "
+                    "같은 사건을 다룹니다."
+                ),
                 "confidence": _group_confidence(group),
             }
         )

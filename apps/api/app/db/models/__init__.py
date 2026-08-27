@@ -412,6 +412,7 @@ class Issue(Base):
     id: Mapped[str] = _id()
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    topic: Mapped[str] = mapped_column(String(40), nullable=False, default="일반")
     status: Mapped[IssueStatus] = _enum(IssueStatus, default=IssueStatus.CANDIDATE.value, length=16)
     issue_kind: Mapped[IssueKind] = _enum(
         IssueKind,
@@ -434,6 +435,7 @@ class Issue(Base):
             name="positive_editorial_priority",
         ),
         UniqueConstraint("editorial_key", name="uq_issues_editorial_key"),
+        Index("ix_issues_topic", "topic"),
         Index("ix_issues_editorial_order", "issue_kind", "editorial_priority"),
     )
 

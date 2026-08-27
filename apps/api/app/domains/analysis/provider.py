@@ -45,6 +45,7 @@ class ProviderError(RuntimeError):
     """
 
     code = "PROVIDER_ERROR"
+    retryable = True
 
     def __init__(self, message: str | None = None, *, code: str | None = None) -> None:
         self.code = code or type(self).code
@@ -53,6 +54,7 @@ class ProviderError(RuntimeError):
 
 class ProviderConfigurationError(ProviderError, ValueError):
     code = "PROVIDER_CONFIGURATION_ERROR"
+    retryable = False
 
 
 class ProviderTransportError(ProviderError):
@@ -85,7 +87,16 @@ class ProviderCircuitOpenError(ProviderError):
 
 
 class ProviderSchemaError(ProviderError, ValueError):
+    """A structurally invalid upstream response.
+
+    The handler has already validated its own input before invoking a
+    provider.  A schema rejection at this boundary is therefore an upstream
+    generation failure and a fresh job attempt may produce a valid structured
+    response.
+    """
+
     code = "PROVIDER_SCHEMA_REJECTED"
+    retryable = True
 
 
 # Short aliases are useful to callers that use the control name rather than
@@ -99,6 +110,7 @@ _MAX_RETRIES = 8
 _MAX_BACKOFF_SECONDS = 60.0
 _MAX_TIMEOUT_SECONDS = 300.0
 _RETRYABLE_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
+_MAX_ARTICLE_PROMPT_CHARS = 60_000
 
 
 @dataclass(frozen=True)
@@ -339,22 +351,33 @@ def validate_public_evidence(
             raise _provider_schema_error("provider evidence failed schema validation", exc) from exc
         if parsed.article_version_id != article_version_id:
             raise _provider_schema_error("provider evidence references another article version")
+        evidence_start = parsed.start
+        evidence_end = parsed.end
         if source_text is not None:
-            if parsed.end > text_length:
-                raise _provider_schema_error("provider evidence location is outside article content")
             # Offsets are Python/Unicode character offsets, with an exclusive
             # end. Validate the model's quote before any masking or redaction
-            # so a fabricated quote cannot be persisted as source evidence.
-            if source_text[parsed.start : parsed.end] != parsed.quote:
-                raise _provider_schema_error(
-                    "provider evidence quote does not match article content"
-                )
+            # so a fabricated quote cannot be persisted as source evidence. A
+            # unique exact quote may safely repair a model's Unicode offset
+            # counting error; ambiguous or absent quotes still fail closed.
+            if (
+                evidence_end > text_length
+                or source_text[evidence_start:evidence_end] != parsed.quote
+            ):
+                resolved_start = source_text.find(parsed.quote)
+                if resolved_start < 0 or source_text.find(
+                    parsed.quote, resolved_start + 1
+                ) >= 0:
+                    raise _provider_schema_error(
+                        "provider evidence quote does not match a unique article location"
+                    )
+                evidence_start = resolved_start
+                evidence_end = resolved_start + len(parsed.quote)
         try:
             result.append(
                 Evidence(
                     article_version_id=article_version_id,
-                    start=parsed.start,
-                    end=parsed.end,
+                    start=evidence_start,
+                    end=evidence_end,
                     quote=sanitize_rationale(
                         parsed.quote,
                         max_chars=500,
@@ -1044,9 +1067,11 @@ class HttpLLMProvider(LLMProvider):
             )
         prompt = (
             "Compare only the supplied article contents without inferring from publisher identity. "
-            "A common fact must be directly supported by at least two articles. Keep evidence_refs "
-            "short and use article IDs plus concise location labels; never reproduce long excerpts. "
-            "For every article, describe the headline frame, emphasized actors/values/effects, and "
+            "A common fact must list at least two distinct supplied ARTICLE_ID values that directly "
+            "support it; omit a fact instead of listing only one article. Keep evidence_refs short "
+            "and use article IDs plus concise location labels; never reproduce long excerpts. "
+            "Return exactly one article_frames item for every supplied ARTICLE_ID, with no missing "
+            "or duplicate IDs. For every article, describe the headline frame, emphasized actors/values/effects, and "
             "only a cautious omission note when the supplied content supports that comparison. "
             "Do not judge truthfulness, overall quality, or the reader.\n\n"
             f"PROMPT_VERSION: {prompt_version}\n\n" + "\n\n---\n\n".join(blocks)
@@ -1083,8 +1108,10 @@ class HttpLLMProvider(LLMProvider):
         # Deliberately omit source_name/source_url/author.  The title/body are
         # masked again here so custom callers cannot accidentally bypass the
         # content-first boundary.
-        title = mask_source_identity(input.title, input.source_name, input.source_url)
-        content = mask_source_identity(input.content, input.source_name, input.source_url)
+        title = mask_source_identity(input.title, input.source_name, input.source_url)[:2_000]
+        full_content = mask_source_identity(input.content, input.source_name, input.source_url)
+        content = full_content[:_MAX_ARTICLE_PROMPT_CHARS]
+        content_truncated = len(content) < len(full_content)
         prompt = (
             "Assess only the supplied article content. Do not infer from publisher identity. "
             "Return exactly two evaluation scores. X is political bias: -100 means strongly "
@@ -1099,6 +1126,7 @@ class HttpLLMProvider(LLMProvider):
             f"PROMPT_VERSION: {prompt_version}\n"
             f"ARTICLE_VERSION_ID: {input.article_version_id}\n"
             f"TITLE: {title}\n"
+            f"CONTENT_TRUNCATED: {'true' if content_truncated else 'false'}\n"
             f"CONTENT:\n{content}"
         )
         return {

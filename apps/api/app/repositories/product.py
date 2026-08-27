@@ -18,13 +18,17 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from apps.api.app.db.enums import (
+    ArticleStatus,
     CreditStatus,
     IssueKind,
+    IssueStatus,
+    JobStatus,
     ProfileKind,
     QuestionnaireKind,
     ReadSessionStatus,
     ScoreStatus,
     ShareCardStatus,
+    SourcePolicyStatus,
     VoteQualityStatus,
 )
 from apps.api.app.db.models import (
@@ -36,6 +40,7 @@ from apps.api.app.db.models import (
     Issue,
     IssueComparisonSnapshot,
     IssueMembership,
+    Job,
     ModelAlias,
     ModelAssessment,
     QuestionnaireVersion,
@@ -54,11 +59,13 @@ from apps.api.app.db.ulid import new_ulid
 from apps.api.app.db.utc import utc_now
 from apps.api.app.domains.content.trust import (
     is_trusted_openai_assessment,
+    public_assessment_evidence,
     public_assessment_summary,
     score_matches_trusted_assessments,
 )
 from apps.api.app.domains.engagement.read import evaluate_read_eligibility
 from apps.api.app.domains.feed.ranking import FeedCandidate, rank_feed
+from apps.api.app.domains.issues.topics import normalize_issue_topic
 from apps.api.app.domains.scoring.behavior import (
     BehavioralProfile,
     BehaviorEvent,
@@ -138,6 +145,7 @@ class ProductRepositoryMixin:
         issue_id: str | None,
         *,
         analysis_status: str = "PROCESSING",
+        summary: str = "",
     ) -> dict[str, Any]:
         return {
             "id": article.id,
@@ -147,6 +155,7 @@ class ProductRepositoryMixin:
             "canonical_url": article.canonical_url,
             "title": article.title,
             "author": article.author,
+            "summary": summary,
             "published_at": article.published_at,
             "current_version_id": article.current_version_id,
             "analysis_status": analysis_status,
@@ -349,10 +358,9 @@ class ProductRepositoryMixin:
         to_time: Any = None,
         recent_first: bool = True,
     ) -> list[dict[str, Any]]:
-        statement = select(Issue).where(Issue.status.not_in(_TERMINAL_ISSUE_STATUSES))
-        if topic:
-            pattern = f"%{topic}%"
-            statement = statement.where(Issue.title.ilike(pattern) | Issue.summary.ilike(pattern))
+        # Candidate clusters are internal work-in-progress. Public issue
+        # directories expose only active events and active topic collections.
+        statement = select(Issue).where(Issue.status == IssueStatus.ACTIVE)
         if from_time:
             statement = statement.where(Issue.last_activity_at >= from_time)
         if to_time:
@@ -367,7 +375,15 @@ class ProductRepositoryMixin:
                         ArticleVersion.fetched_at,
                     )
                     .join(Article, Article.id == IssueMembership.article_id)
+                    .join(Source, Source.id == Article.source_id)
                     .outerjoin(ArticleVersion, ArticleVersion.id == Article.current_version_id)
+                    .where(
+                        Article.status.not_in(
+                            (ArticleStatus.REMOVED, ArticleStatus.BLOCKED)
+                        ),
+                        Source.active.is_(True),
+                        Source.policy_status == SourcePolicyStatus.APPROVED,
+                    )
                 )
             ).all()
         )
@@ -397,7 +413,6 @@ class ProductRepositoryMixin:
             if _value(row.issue_kind) == IssueKind.EVENT.value and (
                 len(article_rows) < 3
                 or source_count < 3
-                or row.editorial_reviewed_at is None
                 or not (row.summary or "").strip()
             ):
                 analysis_status = "PARTIAL" if ready_count else "PROCESSING"
@@ -418,10 +433,12 @@ class ProductRepositoryMixin:
                 if data_as_of is not None and now - data_as_of > timedelta(days=7)
                 else "CURRENT"
             )
+            public_topic = normalize_issue_topic(row.topic, row.title, row.summary or "")
             output.append({
                 "id": row.id,
                 "title": row.title,
                 "summary": row.summary or "",
+                "topic": public_topic,
                 "status": _value(row.status),
                 "kind": _value(row.issue_kind),
                 "source_count": source_count,
@@ -434,6 +451,8 @@ class ProductRepositoryMixin:
                 "version": row.version,
                 "article_ids": article_ids,
             })
+        if topic:
+            output = [item for item in output if item["topic"].casefold() == topic.casefold()]
         direction = -1 if recent_first else 1
         output.sort(
             key=lambda item: (
@@ -488,7 +507,14 @@ class ProductRepositoryMixin:
                     select(Article, Source)
                     .join(IssueMembership, IssueMembership.article_id == Article.id)
                     .join(Source, Source.id == Article.source_id)
-                    .where(IssueMembership.issue_id == issue_id)
+                    .where(
+                        IssueMembership.issue_id == issue_id,
+                        Article.status.not_in(
+                            (ArticleStatus.REMOVED, ArticleStatus.BLOCKED)
+                        ),
+                        Source.active.is_(True),
+                        Source.policy_status == SourcePolicyStatus.APPROVED,
+                    )
                     .order_by(Article.published_at.desc(), Article.id.desc())
                 )
             ).all()
@@ -498,7 +524,25 @@ class ProductRepositoryMixin:
         for article, source in rows:
             trusted = analysis.get(article.current_version_id or "", {})
             score = trusted.get("score")
-            if trusted.get("status") != "READY" or score is None:
+            analysis_status = trusted.get("status", "PROCESSING")
+            trusted_assessments = trusted.get("trusted_assessments", [])
+            summary = (
+                public_assessment_summary(trusted_assessments[0][0].evidence_json)
+                if trusted_assessments
+                else ""
+            )
+            if analysis_status != "READY" or score is None:
+                if perspective != "all":
+                    continue
+                output.append(
+                    self._article_view(
+                        article,
+                        source,
+                        issue_id,
+                        analysis_status=analysis_status,
+                        summary=summary,
+                    )
+                )
                 continue
             if perspective == "negative_x" and score.x >= -10:
                 continue
@@ -509,7 +553,11 @@ class ProductRepositoryMixin:
             output.append(
                 {
                     **self._article_view(
-                        article, source, issue_id, analysis_status="READY"
+                        article,
+                        source,
+                        issue_id,
+                        analysis_status="READY",
+                        summary=summary,
                     ),
                     "coordinate": {
                         "x": score.x,
@@ -698,12 +746,7 @@ class ProductRepositoryMixin:
             score = scores_by_version[version_id]
             assessment, alias = assessments_by_version[version_id][0]
             evidence_json = assessment.evidence_json
-            if isinstance(evidence_json, dict):
-                evidence = evidence_json.get("evidence", [])
-            elif isinstance(evidence_json, list):
-                evidence = evidence_json
-            else:
-                evidence = []
+            evidence = public_assessment_evidence(evidence_json)
             aggregate = aggregates.get(article_id)
             aggregate_payload = aggregate.aggregate_json if aggregate is not None else {}
             qualified = aggregate_payload.get("qualified", {})
@@ -716,7 +759,11 @@ class ProductRepositoryMixin:
             output_articles.append(
                 {
                     "article": self._article_view(
-                        article, source, issue_id, analysis_status="READY"
+                        article,
+                        source,
+                        issue_id,
+                        analysis_status="READY",
+                        summary=public_assessment_summary(evidence_json),
                     ),
                     "score": self._score_view(score),
                     "assessment": {
@@ -725,7 +772,7 @@ class ProductRepositoryMixin:
                         "actual_model_id": alias.actual_model_id,
                         "prompt_version": assessment.prompt_version,
                         "summary": public_assessment_summary(evidence_json),
-                        "evidence": list(evidence)[:5],
+                        "evidence": evidence,
                         "confidence": float(assessment.confidence),
                         "provider": "openai",
                         "created_at": assessment.created_at,
@@ -796,7 +843,17 @@ class ProductRepositoryMixin:
         status = analysis.get(context[0].current_version_id or "", {}).get(
             "status", "PROCESSING"
         )
-        return self._article_view(*context, analysis_status=status)
+        trusted = analysis.get(context[0].current_version_id or "", {}).get(
+            "trusted_assessments", []
+        )
+        summary = (
+            public_assessment_summary(trusted[0][0].evidence_json) if trusted else ""
+        )
+        return self._article_view(
+            *context,
+            analysis_status=status,
+            summary=summary,
+        )
 
     async def assessment_view(self, article_id: str) -> dict[str, Any] | None:
         context = await self._article_context(article_id)
@@ -817,7 +874,7 @@ class ProductRepositoryMixin:
                     "prompt_version": assessment.prompt_version,
                     "summary": public_assessment_summary(assessment.evidence_json),
                     "confidence": float(assessment.confidence),
-                    "evidence": assessment.evidence_json,
+                    "evidence": public_assessment_evidence(assessment.evidence_json),
                     "provider": "openai",
                     "created_at": assessment.created_at,
                     "synthetic": False,
@@ -1684,12 +1741,79 @@ class ProductRepositoryMixin:
         if card is None or card.user_id != user_id:
             return None
         blob = await self.session.get(StoredBlob, card.blob_id) if card.blob_id else None
+        status = _value(card.status)
+        if status in {ShareCardStatus.QUEUED.value, ShareCardStatus.RENDERING.value}:
+            render_job_status = await self.session.scalar(
+                select(Job.status).where(
+                    Job.job_type == "render_share_card",
+                    Job.dedupe_key == card.id,
+                )
+            )
+            if _value(render_job_status) in {
+                JobStatus.FAILED.value,
+                JobStatus.DEAD.value,
+                JobStatus.CANCELLED.value,
+            }:
+                status = ShareCardStatus.FAILED.value
         return {
             "id": card.id,
-            "status": _value(card.status),
+            "status": status,
             "public_token": self._share_token(card.id),
             "etag": None if blob is None else f'"{blob.sha256.hex()}"',
             "snapshot": card.snapshot_json,
+        }
+
+    async def retry_share_card(
+        self, *, card_id: str, user_id: str
+    ) -> dict[str, Any] | None:
+        card = await self.session.scalar(
+            select(ShareCard).where(ShareCard.id == card_id).with_for_update()
+        )
+        if card is None or card.user_id != user_id:
+            return None
+        if _value(card.status) in {
+            ShareCardStatus.READY.value,
+            ShareCardStatus.REVOKED.value,
+        } or (card.expires_at is not None and card.expires_at <= utc_now()):
+            raise ProductConflictError("Share card is not retryable.")
+
+        job = await self.session.scalar(
+            select(Job)
+            .where(Job.job_type == "render_share_card", Job.dedupe_key == card.id)
+            .order_by(Job.created_at.desc(), Job.id.desc())
+            .with_for_update()
+        )
+        if job is None:
+            raise ProductConflictError("Share card render job was not found.")
+        status = _value(job.status)
+        if status in {
+            JobStatus.FAILED.value,
+            JobStatus.DEAD.value,
+            JobStatus.CANCELLED.value,
+        }:
+            now = utc_now()
+            job.status = JobStatus.PENDING
+            job.attempts = 0
+            job.available_at = now
+            job.lease_owner = None
+            job.lease_expires_at = None
+            job.last_error_json = None
+            job.updated_at = now
+            card.status = ShareCardStatus.QUEUED
+            card.blob_id = None
+            await self.session.commit()
+        elif status == JobStatus.PENDING.value:
+            card.status = ShareCardStatus.QUEUED
+            await self.session.commit()
+        elif status == JobStatus.LEASED.value:
+            card.status = ShareCardStatus.RENDERING
+            await self.session.commit()
+        else:
+            raise ProductConflictError("Share card render job is not retryable.")
+        return {
+            "job_id": job.id,
+            "status": _value(job.status),
+            "share_card_id": card.id,
         }
 
     async def public_share_card(self, token: str) -> tuple[ShareCard, StoredBlob | None] | None:

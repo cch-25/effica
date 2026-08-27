@@ -10,10 +10,12 @@ public-network request in a unit test.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import inspect
 import ipaddress
 import json
 import math
+import re
 import socket
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -40,6 +42,15 @@ _DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 _APPROVED_POLICY_STATUS = "APPROVED"
 _DEFAULT_RATE_LIMIT_PER_MINUTE = 0
 _IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
+_CHARSET_PARAMETER = re.compile(r"charset\s*=\s*[\"']?\s*([^\s;\"'>/]+)", re.I)
+_HTML_META_CHARSET = re.compile(
+    br"<meta\b[^>]*\bcharset\s*=\s*[\"']?\s*([^\s;\"'>/]+)", re.I
+)
+_HTML_META_CONTENT_TYPE = re.compile(
+    br"<meta\b[^>]*\bcontent\s*=\s*[\"'][^\"']*charset\s*=\s*([^\s;\"'>/]+)",
+    re.I,
+)
+_XML_ENCODING = re.compile(br"<\?xml\b[^>]*\bencoding\s*=\s*[\"']\s*([^\s\"']+)", re.I)
 
 
 class SourceFetchError(RuntimeError):
@@ -100,17 +111,51 @@ class SourceFetchResponse:
 
     @property
     def text(self) -> str:
+        """Decode text without silently destroying non-UTF-8 news pages.
+
+        Korean publishers still commonly serve CP949/EUC-KR HTML, sometimes
+        without an HTTP charset.  The old UTF-8-with-replacement fallback made
+        those pages parse successfully but persisted unreadable titles and
+        bodies.  Honour BOM/HTTP declarations first, then bounded XML/HTML
+        declarations, and only use replacement decoding as a final fallback.
+        """
+
+        if not self.body:
+            return ""
+        candidates: list[str] = []
+        if self.body.startswith(codecs.BOM_UTF8):
+            candidates.append("utf-8-sig")
+        elif self.body.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+            candidates.append("utf-32")
+        elif self.body.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+            candidates.append("utf-16")
         content_type = self.headers.get("content-type", "")
-        charset = "utf-8"
-        marker = "charset="
-        if marker in content_type.lower():
-            candidate = content_type.lower().split(marker, 1)[1].split(";", 1)[0].strip()
-            if candidate:
-                charset = candidate
-        try:
-            return self.body.decode(charset, errors="replace")
-        except (LookupError, UnicodeError):
-            return self.body.decode("utf-8", errors="replace")
+        header_match = _CHARSET_PARAMETER.search(content_type)
+        if header_match:
+            candidates.append(header_match.group(1))
+        prefix = self.body[:8192]
+        for pattern in (_XML_ENCODING, _HTML_META_CHARSET, _HTML_META_CONTENT_TYPE):
+            match = pattern.search(prefix)
+            if match:
+                candidates.append(match.group(1).decode("ascii", errors="ignore"))
+        candidates.append("utf-8")
+
+        tried: set[str] = set()
+        for candidate in candidates:
+            normalized = candidate.strip().strip("\"'").lower()
+            if not normalized or normalized in tried:
+                continue
+            tried.add(normalized)
+            aliases = (normalized, "cp949") if normalized in {"euc-kr", "euckr", "ks_c_5601-1987"} else (normalized,)
+            for encoding in aliases:
+                if encoding in tried and encoding != normalized:
+                    continue
+                tried.add(encoding)
+                try:
+                    return self.body.decode(encoding, errors="strict")
+                except (LookupError, UnicodeDecodeError):
+                    continue
+        return self.body.decode("utf-8", errors="replace")
 
     @property
     def content_type(self) -> str:
@@ -459,7 +504,7 @@ class SourceFetchService:
             raise SourceFetchError(
                 "source hostname could not be resolved",
                 code="SOURCE_DNS_RESOLUTION_FAILED",
-                retryable=False,
+                retryable=True,
             ) from exc
         except Exception as exc:
             raise SourceFetchError(
@@ -479,7 +524,7 @@ class SourceFetchService:
             raise SourceFetchError(
                 "source hostname has no usable address",
                 code="SOURCE_DNS_RESOLUTION_FAILED",
-                retryable=False,
+                retryable=True,
             )
         for address in addresses:
             self._assert_public_address(address)
@@ -724,7 +769,23 @@ class SourceFetchService:
                     retryable=retryable,
                     details={"status_code": status, "attempts": request_count},
                 )
-            except SourceFetchError:
+            except SourceFetchError as exc:
+                # DNS failures are commonly transient.  Retry them inside the
+                # bounded source request just like transport failures; policy,
+                # SSRF and parser/config errors remain immediate failures.
+                if (
+                    exc.retryable
+                    and exc.code == "SOURCE_DNS_RESOLUTION_FAILED"
+                    and retry_count < settings.max_retries
+                ):
+                    retry_count += 1
+                    await self._backoff(
+                        retry_count,
+                        None,
+                        base_seconds=current_settings.backoff_base_seconds,
+                        max_seconds=current_settings.backoff_max_seconds,
+                    )
+                    continue
                 raise
             except (TimeoutError, httpx.TimeoutException) as exc:
                 if retry_count < settings.max_retries:

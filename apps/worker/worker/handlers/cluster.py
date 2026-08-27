@@ -43,8 +43,17 @@ async def handle(
         )
     except (TypeError, ValueError) as exc:
         raise NonRetryableHandlerError(str(exc), code="INVALID_CLUSTER_PAYLOAD") from exc
+    # A single article, or multiple articles from only one publisher, is not
+    # an issue. Keep it as article inventory and wait for the next rolling,
+    # cross-source sweep instead of creating public singleton noise.
+    eligible = [
+        candidate
+        for candidate in candidates
+        if int(candidate.get("article_count", 0)) >= 2
+        and int(candidate.get("source_count", 0)) >= 2
+    ]
     return HandlerResult(
-        value={"candidates": candidates, "candidate": True},
+        value={"candidates": eligible, "candidate": True},
         side_effect_key=(context.idempotency_key if context else None),
     )
 

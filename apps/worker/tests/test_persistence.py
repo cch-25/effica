@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import Any
 
 from apps.api.app.jobs.payloads import JobPayloadError, validate_job_payload
@@ -12,7 +13,56 @@ from apps.worker.worker.services import (
     MariaDBResultApplier,
     MemoryResultApplier,
     ResultApplicationError,
+    _database_confidence,
+    _database_timestamp,
 )
+
+
+def test_crawl_result_keeps_new_articles_in_a_canonical_topic_bucket() -> None:
+    class Session:
+        def __init__(self) -> None:
+            self.statements: list[tuple[str, dict[str, Any]]] = []
+
+        async def execute(self, statement, params=None):
+            self.statements.append((str(statement), dict(params or {})))
+            return []
+
+    async def scenario() -> None:
+        session = Session()
+        applier = MariaDBResultApplier(lambda: None)
+        await applier._upsert_topic_membership(
+            session,
+            article_id="article-1",
+            title="프로야구 KBO 시즌 개막",
+            summary="",
+            now=datetime.now(UTC),
+        )
+
+        assert len(session.statements) == 2
+        issue_query, issue_params = session.statements[0]
+        membership_query, membership_params = session.statements[1]
+        assert "issue_kind" in issue_query
+        assert issue_params["topic"] == "스포츠"
+        assert issue_params["editorial_key"] == "public-topic:스포츠"
+        assert "issue_memberships" in membership_query
+        assert membership_params["article_id"] == "article-1"
+
+    asyncio.run(scenario())
+
+
+def test_database_timestamp_normalizes_iso_offsets_for_mariadb() -> None:
+    normalized = _database_timestamp("2026-08-26T21:30:45.123456+09:00")
+
+    assert normalized is not None
+    assert normalized.isoformat() == "2026-08-26T12:30:45.123456"
+    assert normalized.tzinfo is None
+
+
+def test_database_confidence_matches_numeric_column_precision() -> None:
+    assert _database_confidence(0.987654321) == 0.9877
+    assert _database_confidence(2) == 1.0
+    assert _database_confidence(-1) == 0.0
+    assert _database_confidence(float("nan")) == 0.0
 
 
 def test_all_builtin_payload_contracts_accept_identifier_only_producers() -> None:
@@ -230,8 +280,6 @@ def test_mariadb_applier_allocates_revisioned_snapshots_and_canonical_alias_ids(
 
 
 def test_share_card_apply_requires_updated_row() -> None:
-    from datetime import UTC, datetime
-
     class Result:
         def __init__(self, rowcount: int) -> None:
             self.rowcount = rowcount
@@ -262,7 +310,7 @@ def test_share_card_apply_requires_updated_row() -> None:
     asyncio.run(scenario())
 
 
-def test_analysis_result_enqueues_validated_score_and_cluster_jobs_once() -> None:
+def test_analysis_result_enqueues_score_without_singleton_cluster_job() -> None:
     class Transaction:
         async def __aenter__(self):
             return self
@@ -274,7 +322,7 @@ def test_analysis_result_enqueues_validated_score_and_cluster_jobs_once() -> Non
         def __init__(self) -> None:
             self.jobs: dict[tuple[str, str], dict[str, Any]] = {}
             self.statements: list[tuple[str, dict[str, Any]]] = []
-            self.audit: dict[str, Any] | None = None
+            self.audit: dict[str, Any] = {}
 
         def begin(self):
             return Transaction()
@@ -288,7 +336,8 @@ def test_analysis_result_enqueues_validated_score_and_cluster_jobs_once() -> Non
             self.statements.append((query, values))
             lowered = query.lower()
             if "select after_json" in lowered:
-                return [] if self.audit is None else [{"after_json": self.audit}]
+                audit = self.audit.get(str(values.get("job_id")))
+                return [] if audit is None else [{"after_json": audit}]
             if "select id from model_aliases" in lowered:
                 return [{"id": "alias-1"}]
             if "select article_id from article_versions" in lowered:
@@ -297,7 +346,7 @@ def test_analysis_result_enqueues_validated_score_and_cluster_jobs_once() -> Non
                 key = (str(values["job_type"]), str(values["dedupe_key"]))
                 self.jobs.setdefault(key, {**values, "status": "PENDING"})
             if "insert into audit_logs" in lowered and "job_result_applied" in lowered:
-                self.audit = values["after_json"]
+                self.audit[str(values["target_id"])] = values["after_json"]
             return []
 
     async def scenario() -> None:
@@ -314,11 +363,22 @@ def test_analysis_result_enqueues_validated_score_and_cluster_jobs_once() -> Non
         }
         await applier.apply(job, result)
         await applier.apply(job, result)
+        await applier.apply(
+            Job(
+                id="01ANALYZE-FRESH",
+                job_type="analyze",
+                payload={"article_version_id": "version-1", "request_id": "request-2"},
+            ),
+            result,
+        )
 
         downstream = {
             key: value for key, value in session.jobs.items() if key[0] in {"calculate_score", "cluster"}
         }
-        assert {key[0] for key in downstream} == {"calculate_score", "cluster"}
+        assert {key[0] for key in downstream} == {"calculate_score"}
+        score_jobs = {key: value for key, value in downstream.items() if key[0] == "calculate_score"}
+        assert len(score_jobs) == 2
+        assert all("analysis_job_id" in value["payload_json"] for value in score_jobs.values())
         assert all(value["status"] == "PENDING" for value in downstream.values())
         assert all(value["payload_json"] for value in downstream.values())
         assert len(session.jobs) == 2

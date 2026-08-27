@@ -95,6 +95,41 @@ def test_issue_comparison_requires_multi_article_evidence_and_structured_frames(
     asyncio.run(scenario())
 
 
+def test_stale_issue_comparison_is_a_durable_skip_instead_of_a_failure():
+    async def scenario():
+        async def comparison_lookup(**_kwargs):
+            return {
+                "status": "SKIPPED",
+                "skip_reason": "STALE_ARTICLE_VERSIONS",
+                "expected_article_versions": 3,
+                "current_article_versions": 2,
+            }
+
+        handler = build_default_registry().require_async("build_issue_comparison")
+        result = await handler(
+            {
+                "issue_id": "issue-1",
+                "issue_version": 2,
+                "article_version_ids": ["version-1", "version-2", "version-3"],
+                "article_ids": ["article-1", "article-2", "article-3"],
+                "prompt_version": "issue-comparison-v1",
+            },
+            HandlerContext(services={"issue_comparison_analysis": comparison_lookup}),
+        )
+
+        assert result.value == {
+            "issue_id": "issue-1",
+            "issue_version": 2,
+            "prompt_version": "issue-comparison-v1",
+            "status": "SKIPPED",
+            "skip_reason": "STALE_ARTICLE_VERSIONS",
+            "expected_article_versions": 3,
+            "current_article_versions": 2,
+        }
+
+    asyncio.run(scenario())
+
+
 def test_analysis_uses_one_dynamically_configured_openai_model():
     async def scenario():
         provider = DeterministicStubProvider(
@@ -301,6 +336,33 @@ def test_cluster_empty_lookup_is_non_retryable() -> None:
         with pytest.raises(NonRetryableHandlerError) as empty_lookup:
             await cluster({"article_ids": ["missing-1"], "topic": "Ignored"}, context)
         assert empty_lookup.value.code == "INVALID_CLUSTER_PAYLOAD"
+
+    asyncio.run(scenario())
+
+
+def test_cluster_rejects_singletons_and_single_source_article_piles() -> None:
+    async def scenario() -> None:
+        cluster = build_default_registry().require_async("cluster")
+        single_source = await cluster(
+            {
+                "articles": [
+                    {"id": "a1", "title": "예산안 여야 협상 타결", "source_id": "s1"},
+                    {"id": "a2", "title": "예산안 여야 협상 타결", "source_id": "s1"},
+                ]
+            }
+        )
+        assert single_source.value["candidates"] == []
+
+        multi_source = await cluster(
+            {
+                "articles": [
+                    {"id": "a1", "title": "예산안 여야 협상 타결", "source_id": "s1"},
+                    {"id": "a2", "title": "예산안 여야 협상 타결", "source_id": "s2"},
+                ]
+            }
+        )
+        assert len(multi_source.value["candidates"]) == 1
+        assert multi_source.value["candidates"][0]["source_count"] == 2
 
     asyncio.run(scenario())
 

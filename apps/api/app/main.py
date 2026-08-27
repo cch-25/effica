@@ -16,7 +16,7 @@ from apps.api.app.core.logging import configure_logging
 from apps.api.app.state import new_id
 
 logger = configure_logging(logger_name="effica.api")
-EXPECTED_DB_REVISION = "0010_issue_comparison_snapshots"
+EXPECTED_DB_REVISION = "0012_share_card_recovery"
 
 
 @asynccontextmanager

@@ -808,6 +808,7 @@ async def list_issues(
     to: datetime | None = None,
     sort: Literal["recent", "oldest"] = "recent",
     cursor: str | None = None,
+    limit: int = Query(default=20, ge=1, le=250),
     platform: PlatformState = Depends(get_state),
     repository: MariaDBPlatformRepository | None = Depends(get_repository),
 ) -> dict[str, Any]:
@@ -818,18 +819,16 @@ async def list_issues(
             to_time=to,
             recent_first=sort == "recent",
         )
-        return _page(rows, cursor)
+        return _page(rows, cursor, limit)
     rows = list(platform.issues.values())
     if topic:
-        rows = [
-            row for row in rows if topic.casefold() in (row["title"] + row["summary"]).casefold()
-        ]
+        rows = [row for row in rows if row["topic"].casefold() == topic.casefold()]
     if from_:
         rows = [row for row in rows if row["last_activity_at"] >= from_]
     if to:
         rows = [row for row in rows if row["last_activity_at"] <= to]
     rows.sort(key=lambda row: row["last_activity_at"], reverse=sort == "recent")
-    return _page(rows, cursor)
+    return _page(rows, cursor, limit)
 
 
 @router.get("/issues/{issue_id}", response_model=IssueDetailView, operation_id="get_issue")
@@ -1934,6 +1933,72 @@ async def get_share_card(
     return {key: card[key] for key in ("id", "status", "public_token", "etag", "snapshot")}
 
 
+@router.post(
+    "/share-cards/{share_card_id}/retry",
+    response_model=ShareCardJobAccepted,
+    status_code=202,
+    dependencies=[Depends(require_csrf)],
+    operation_id="retry_share_card",
+)
+async def retry_share_card(
+    share_card_id: str,
+    principal: Principal = Depends(require_member),
+    platform: PlatformState = Depends(get_state),
+    repository: MariaDBPlatformRepository | None = Depends(get_repository),
+) -> dict[str, Any]:
+    if repository is not None:
+        try:
+            result = await repository.retry_share_card(
+                card_id=share_card_id, user_id=principal.user_id
+            )
+        except ProductConflictError as exc:
+            raise ApiError(
+                409,
+                "SHARE_CARD_NOT_RETRYABLE",
+                "Only a failed share card can be retried.",
+            ) from exc
+        if result is None:
+            raise _not_found("share_card")
+        return result
+
+    card = platform.share_cards.get(share_card_id)
+    if not card or card["user_id"] != principal.user_id:
+        raise _not_found("share_card")
+    job = next(
+        (
+            item
+            for item in platform.jobs.values()
+            if item["job_type"] == "render_share_card"
+            and item["dedupe_key"] == share_card_id
+        ),
+        None,
+    )
+    if (
+        card["status"] != "failed"
+        or job is None
+        or job["status"] not in {"FAILED", "DEAD", "CANCELLED"}
+    ):
+        raise ApiError(
+            409,
+            "SHARE_CARD_NOT_RETRYABLE",
+            "Only a failed share card can be retried.",
+        )
+    retry_at = utcnow()
+    job.update(
+        {
+            "status": "PENDING",
+            "attempts": 0,
+            "available_at": retry_at,
+            "lease_owner": None,
+            "lease_expires_at": None,
+            "last_error": None,
+            "updated_at": retry_at,
+        }
+    )
+    card["status"] = "queued"
+    return {"job_id": job["id"], "status": "PENDING", "share_card_id": card["id"]}
+
+
 def _public_card(public_token: str, platform: PlatformState) -> dict[str, Any]:
     card_id = platform.public_cards.get(stable_hash(public_token))
     card = platform.share_cards.get(card_id or "")
@@ -2393,7 +2458,7 @@ async def admin_patch_issue(
             {
                 key: value
                 for key, value in body.values.items()
-                if key in {"title", "summary", "status"}
+                if key in {"title", "summary", "topic", "status"}
             }
         )
         issue["version"] += 1

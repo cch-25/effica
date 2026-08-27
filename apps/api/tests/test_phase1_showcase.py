@@ -9,7 +9,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from apps.api.app.db.base import Base
-from apps.api.app.db.enums import ModelStatus
+from apps.api.app.db.enums import AdapterType, ModelStatus
 from apps.api.app.db.models import Issue, Job, ModelAlias, Source, SourceAdapter
 from apps.api.app.db.ulid import new_ulid
 from apps.api.app.domains.content.trust import (
@@ -57,12 +57,16 @@ def test_default_showcase_manifest_is_event_scoped_and_policy_gated() -> None:
         len({article.source_home_url for article in issue.articles}) >= 3
         for issue in manifest.issues
     )
+    assert all(
+        sum(article.publisher_kind == "MEDIA" for article in issue.articles) >= 2
+        for issue in manifest.issues
+    )
     assert REQUIRED_DB_REVISION == EXPECTED_DB_REVISION
     decisions = [article for issue in manifest.issues for article in issue.articles]
     assert all(issue.editorial_review_status == "APPROVED" for issue in manifest.issues)
     assert all(
         issue.reviewed_by
-        == "johnnybae (human operator approval in Codex thread, 2026-08-23)"
+        == "johnnybae (human operator request in Codex thread, 2026-08-27)"
         for issue in manifest.issues
     )
     assert all(
@@ -70,6 +74,16 @@ def test_default_showcase_manifest_is_event_scoped_and_policy_gated() -> None:
         for article in decisions
     )
     assert all("https://" in article.policy_reference for article in decisions)
+    assert sum(article.publisher_kind == "MEDIA" for article in decisions) == 6
+
+
+def test_showcase_manifest_rejects_government_centered_issue() -> None:
+    payload = _approved_manifest().model_dump(mode="json")
+    payload["issues"][0]["articles"][0]["publisher_kind"] = "GOVERNMENT"
+    payload["issues"][0]["articles"][1]["publisher_kind"] = "GOVERNMENT"
+
+    with pytest.raises(ValidationError, match="two media publishers"):
+        ShowcaseManifest.model_validate(payload)
 
 
 def test_showcase_manifest_rejects_approval_without_review_evidence() -> None:
@@ -122,9 +136,13 @@ def test_public_trust_filter_rejects_dummy_synthetic_and_unlinked_scores() -> No
         status="ACTIVE",
     )
     dummy_alias = SimpleNamespace(**{**vars(alias), "alias": "deterministic-stub"})
+    historical_alias = SimpleNamespace(**{**vars(alias), "status": "DEPRECATED"})
+    non_gpt_alias = SimpleNamespace(**{**vars(alias), "actual_model_id": "other-model"})
     synthetic = SimpleNamespace(**{**vars(assessment), "evidence_json": {"synthetic": True}})
 
     assert is_trusted_openai_assessment(assessment, alias)
+    assert is_trusted_openai_assessment(assessment, historical_alias)
+    assert not is_trusted_openai_assessment(assessment, non_gpt_alias)
     assert not is_trusted_openai_assessment(assessment, dummy_alias)
     assert not is_trusted_openai_assessment(synthetic, alias)
     assert score_matches_trusted_assessments(
@@ -190,8 +208,16 @@ async def test_showcase_refresh_is_idempotent_and_audit_fails_closed() -> None:
             for counts in preflight["manifest"]["decision_counts"].values()
         )
         assert preflight["manifest"]["editorial_review_counts"] == {"APPROVED": 3}
+        assert preflight["manifest"]["publisher_counts"] == {
+            "MEDIA": 6,
+            "GOVERNMENT": 3,
+        }
         incomplete_payload = manifest.model_dump(mode="json")
-        incomplete_payload["issues"][0]["articles"][1]["robots_status"] = "PENDING"
+        pending_source = incomplete_payload["issues"][0]["articles"][1]["source_home_url"]
+        for issue in incomplete_payload["issues"]:
+            for article in issue["articles"]:
+                if article["source_home_url"] == pending_source:
+                    article["robots_status"] = "PENDING"
         incomplete = await preflight_showcase(
             session, ShowcaseManifest.model_validate(incomplete_payload)
         )
@@ -211,6 +237,7 @@ async def test_showcase_refresh_is_idempotent_and_audit_fails_closed() -> None:
         dry_run = await refresh_showcase(session, manifest, apply=False)
         assert dry_run.issues_created == 3
         assert dry_run.sources_created == len(expected_sources)
+        assert dry_run.scheduled_rss_adapters_planned == 2
         assert dry_run.crawl_jobs_enqueued == 9
         assert await session.scalar(select(func.count()).select_from(Issue)) == 0
         assert await session.scalar(select(func.count()).select_from(Source)) == 0
@@ -231,14 +258,34 @@ async def test_showcase_refresh_is_idempotent_and_audit_fails_closed() -> None:
 
         assert first.issues_created == 3
         assert first.crawl_jobs_enqueued == 9
+        assert first.scheduled_rss_adapters_planned == 2
         assert second.issues_updated == 0
         assert second.crawl_jobs_enqueued == 0
+        assert second.scheduled_rss_adapters_planned == 0
         assert await session.scalar(select(func.count()).select_from(Issue)) == 3
         assert await session.scalar(select(func.count()).select_from(Source)) == len(
             expected_sources
         )
-        assert await session.scalar(select(func.count()).select_from(SourceAdapter)) == len(
-            expected_sources
+        assert await session.scalar(select(func.count()).select_from(SourceAdapter)) == (
+            len(expected_sources) + 2
+        )
+        scheduled_adapters = list(
+            (
+                await session.scalars(
+                    select(SourceAdapter).where(SourceAdapter.adapter_type == AdapterType.RSS)
+                )
+            ).all()
+        )
+        assert {adapter.config_json["feed_url"] for adapter in scheduled_adapters} == {
+            "https://nwww.newsis.com/RSS/sokbo.xml",
+            "https://rss.etoday.co.kr/eto/etoday_news_all.xml",
+        }
+        assert all(
+            adapter.config_json["scheduled"] is True
+            and adapter.config_json["hydrate_article_links"] is False
+            and adapter.config_json["metadata_only"] is True
+            and adapter.config_json["max_items"] == 80
+            for adapter in scheduled_adapters
         )
         assert await session.scalar(select(func.count()).select_from(Job)) == 9
 

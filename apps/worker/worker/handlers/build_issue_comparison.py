@@ -58,6 +58,29 @@ async def handle(
             "structured comparison analysis is required",
             code="COMPARISON_ANALYSIS_REQUIRED",
         )
+    if str(generated.get("status") or "").strip().upper() == "SKIPPED":
+        skip_reason = str(generated.get("skip_reason") or "").strip()
+        if not skip_reason:
+            raise NonRetryableHandlerError(
+                "skipped comparison requires a reason",
+                code="INVALID_COMPARISON_OUTPUT",
+            )
+        return HandlerResult(
+            value={
+                "issue_id": str(source["issue_id"]),
+                "issue_version": int(source["issue_version"]),
+                "prompt_version": str(source["prompt_version"]),
+                "status": "SKIPPED",
+                "skip_reason": skip_reason,
+                "expected_article_versions": int(
+                    generated.get("expected_article_versions") or 0
+                ),
+                "current_article_versions": int(
+                    generated.get("current_article_versions") or 0
+                ),
+            },
+            side_effect_key=(context.idempotency_key if context else None),
+        )
     common_facts = _objects(generated.get("common_facts"), "common_facts")
     dimensions = _objects(generated.get("dimensions"), "dimensions")
     frames = generated.get("article_frames")

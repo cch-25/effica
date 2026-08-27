@@ -13,8 +13,13 @@ def test_openai_runtime_defaults_to_luna_xhigh_and_one_key() -> None:
     assert settings.live_llm_enabled is True
     assert settings.llm_model == "gpt-5.6-luna"
     assert settings.llm_reasoning_effort == "xhigh"
-    assert settings.llm_timeout_seconds == 120.0
+    assert settings.llm_timeout_seconds == 180.0
+    assert settings.llm_max_retries == 0
     assert settings.openai_endpoint == "https://api.openai.com/v1/responses"
+    assert settings.worker_max_concurrency == 4
+    assert settings.worker_shutdown_grace_seconds == 195.0
+    assert settings.worker_crawl_scheduler_enabled is True
+    assert settings.worker_crawl_interval_seconds == 900.0
     settings.assert_safe_runtime()
 
 
@@ -37,6 +42,19 @@ def test_live_runtime_rejects_missing_key_and_non_openai_configuration() -> None
         Settings(_env_file=None, openai_api_key="test-key", llm_model="solar-pro")
     with pytest.raises(ValidationError):
         Settings(_env_file=None, llm_timeout_seconds=301)
+    with pytest.raises(RuntimeError, match="WORKER_SHUTDOWN_GRACE_SECONDS"):
+        Settings(
+            _env_file=None,
+            openai_api_key="test-key",
+            llm_timeout_seconds=200,
+            worker_shutdown_grace_seconds=100,
+        ).assert_safe_runtime()
+    with pytest.raises(RuntimeError, match="WORKER_HEARTBEAT_SECONDS"):
+        Settings(
+            _env_file=None,
+            worker_lease_seconds=60,
+            worker_heartbeat_seconds=30,
+        ).assert_safe_runtime()
 
 
 def test_production_requires_canonical_google_oauth_configuration() -> None:

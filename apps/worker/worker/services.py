@@ -14,21 +14,34 @@ import base64
 import hashlib
 import inspect
 import json
+import math
 import re
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from .handlers.base import HandlerContext, HandlerResult
 from .queue import Job
 
 try:
+    from apps.api.app.domains.issues.topics import (
+        PUBLIC_ISSUE_TOPICS,
+        canonical_topic_editorial_key,
+        canonical_topic_issue_id,
+        infer_issue_topic,
+    )
     from apps.api.app.jobs.payloads import JobPayloadError, validate_job_payload
     from apps.api.app.jobs.types import generate_job_id, utc_now
 except ImportError:  # pragma: no cover - supports PYTHONPATH=apps/worker.
+    from api.app.domains.issues.topics import (  # type: ignore
+        PUBLIC_ISSUE_TOPICS,
+        canonical_topic_editorial_key,
+        canonical_topic_issue_id,
+        infer_issue_topic,
+    )
     from api.app.jobs.payloads import JobPayloadError, validate_job_payload  # type: ignore
     from api.app.jobs.types import generate_job_id, utc_now  # type: ignore
 
@@ -68,6 +81,30 @@ def _result_mapping(result: HandlerResult | Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return dict(value)
     return {"value": value}
+
+
+def _json_mapping(value: Any) -> dict[str, Any]:
+    if isinstance(value, Mapping):
+        return dict(value)
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode("utf-8", errors="replace")
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return {}
+        return dict(parsed) if isinstance(parsed, Mapping) else {}
+    return {}
+
+
+def _audit_request_id(value: Any, *, fallback: str) -> str:
+    """Fit an audit correlation key into the schema without losing identity."""
+
+    candidate = str(value or fallback)
+    if len(candidate) <= 128:
+        return candidate
+    digest = hashlib.sha256(candidate.encode("utf-8")).hexdigest()[:16]
+    return f"{candidate[:111]}:{digest}"
 
 
 def _json(value: Any) -> str:
@@ -204,6 +241,37 @@ def _utc(value: datetime | None = None) -> datetime:
     return value.astimezone(UTC)
 
 
+def _database_timestamp(value: Any) -> datetime | None:
+    """Normalize queue timestamps for MariaDB ``DATETIME`` bindings."""
+
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ResultApplicationError("stored BLOB expiry is not a valid ISO timestamp") from exc
+    else:
+        raise ResultApplicationError("stored BLOB expiry must be a datetime or ISO timestamp")
+    # SQLAlchemy ORM columns apply UTCDateTime automatically. This worker path
+    # uses textual SQL, so perform the same conversion before asyncmy binds it.
+    return _utc(parsed).replace(tzinfo=None)
+
+
+def _database_confidence(value: Any) -> float:
+    """Fit externally produced confidence into MariaDB ``NUMERIC(5, 4)``."""
+
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(parsed):
+        return 0.0
+    return round(max(0.0, min(1.0, parsed)), 4)
+
+
 @dataclass
 class MemoryResultApplier:
     """Deterministic result sink for memory workers and unit tests."""
@@ -234,6 +302,245 @@ class MemoryResultApplier:
 
     # Naming aliases make this sink convenient for injected service maps.
     apply_result = apply
+
+
+class MariaDBCrawlScheduler:
+    """Periodically enqueue every eligible source without an external cron.
+
+    Leadership is connection-scoped and short lived.  The advisory lock keeps
+    a fleet of workers from scanning the same source set simultaneously, while
+    the durable ``(job_type, dedupe_key)`` constraint is the final authority if
+    processes start sequentially or a lock connection disappears.  Dedupe keys
+    include the configured interval bucket, so a completed crawl never blocks
+    the next scheduled refresh.
+    """
+
+    def __init__(
+        self,
+        session_factory: Callable[[], Any],
+        *,
+        interval_seconds: float = 900.0,
+        batch_size: int = 50,
+        max_attempts: int = 5,
+        clock: Callable[[], datetime] = utc_now,
+    ) -> None:
+        if interval_seconds < 1:
+            raise ValueError("crawl interval must be positive")
+        if not 1 <= batch_size <= 500:
+            raise ValueError("crawl scheduler batch size must be between 1 and 500")
+        if not 1 <= max_attempts <= 20:
+            raise ValueError("crawl scheduler max attempts must be between 1 and 20")
+        self.session_factory = session_factory
+        self.interval_seconds = float(interval_seconds)
+        self.batch_size = int(batch_size)
+        self.max_attempts = int(max_attempts)
+        self.clock = clock
+        self.lock_name = "effica:crawl-scheduler"
+
+    def candidate_source_statement(self) -> Any:
+        """Return the exact MariaDB query used to select the next source batch.
+
+        Keeping this query available as one statement lets the integration
+        suite run ``EXPLAIN`` against the production MariaDB dialect without
+        enqueueing work or duplicating SQL in a test.
+        """
+
+        return _sql(
+            f"""
+            SELECT s.id, s.canonical_url,
+                   a.adapter_type, a.config_json, a.rate_limit,
+                   a.raw_payload_retention_days,
+                   s.policy_status, s.robots_status, s.terms_status
+            FROM sources s
+            JOIN source_adapters a
+              ON a.id = (
+                   SELECT a2.id
+                   FROM source_adapters a2
+                   WHERE a2.source_id = s.id
+                     AND a2.active = 1
+                     AND LOWER(COALESCE(JSON_UNQUOTE(
+                       JSON_EXTRACT(a2.config_json, '$.scheduled')
+                     ), 'false')) = 'true'
+                   ORDER BY a2.id
+                   LIMIT 1
+                 )
+            LEFT JOIN jobs j
+              ON j.job_type = 'crawl'
+             AND j.dedupe_key = CONCAT(
+                   :dedupe_prefix, s.id, ':', :bucket
+                 )
+            LEFT JOIN (
+              SELECT JSON_UNQUOTE(JSON_EXTRACT(
+                       payload_json, '$.source_id'
+                     )) AS source_id,
+                     MAX(created_at) AS last_scheduled_at
+              FROM jobs
+              WHERE job_type = 'crawl'
+              GROUP BY JSON_UNQUOTE(JSON_EXTRACT(
+                payload_json, '$.source_id'
+              ))
+            ) history ON history.source_id = s.id
+            WHERE s.active = 1
+              AND s.policy_status = 'APPROVED'
+              AND s.robots_status = 'APPROVED'
+              AND s.terms_status = 'APPROVED'
+              AND j.id IS NULL
+            ORDER BY history.last_scheduled_at IS NOT NULL,
+                     history.last_scheduled_at, s.id
+            LIMIT {self.batch_size}
+            """.strip()
+        )
+
+    async def tick(self, worker_id: str) -> int:
+        """Enqueue one bounded interval batch, returning newly created jobs."""
+
+        del worker_id  # The DB lock owns leadership; worker IDs remain ephemeral.
+        now = _utc(self.clock())
+        database_now = _database_timestamp(now)
+        bucket = int(now.timestamp() // self.interval_seconds)
+        dedupe_prefix = "scheduled:"
+
+        # Keep the named lock on a dedicated checked-out connection.  The
+        # mutation transaction uses another session and is fully committed
+        # before leadership is released.
+        async with _session_scope(self.session_factory) as lock_session:
+            acquired_result = await _maybe_await(
+                lock_session.execute(
+                    _sql("SELECT GET_LOCK(:lock_name, 0) AS acquired"),
+                    {"lock_name": self.lock_name},
+                )
+            )
+            acquired_rows = _rows(acquired_result)
+            acquired = bool(
+                acquired_rows
+                and int(_row(acquired_rows[0], "acquired", 0) or 0) == 1
+            )
+            if not acquired:
+                return 0
+            try:
+                async with _session_scope(self.session_factory) as session:
+                    async with _transaction(session):
+                        result = await _maybe_await(
+                            session.execute(
+                                self.candidate_source_statement(),
+                                {"dedupe_prefix": dedupe_prefix, "bucket": str(bucket)},
+                            )
+                        )
+                        created = 0
+                        for source in _rows(result):
+                            source_id = str(_row(source, "id", "") or "")
+                            config = _json_mapping(_row(source, "config_json", {}))
+                            canonical_url = str(
+                                config.get("feed_url")
+                                or _row(source, "canonical_url", "")
+                                or ""
+                            )
+                            source_type = str(
+                                _row(source, "adapter_type", "") or ""
+                            ).upper()
+                            if not source_id or not canonical_url or source_type not in {
+                                "API",
+                                "RSS",
+                                "CRAWLER",
+                            }:
+                                continue
+                            dedupe_key = f"{dedupe_prefix}{source_id}:{bucket}"
+                            job_id = _stable_id(f"job:crawl:{dedupe_key}")
+                            payload_value: dict[str, Any] = {
+                                "source_id": source_id,
+                                "url": canonical_url,
+                                "source_type": source_type,
+                                "adapter_type": source_type,
+                                # Freeze the explicitly scheduled adapter at
+                                # enqueue time. A later lookup cannot silently
+                                # replace it with an unscheduled direct adapter.
+                                "config": config,
+                                "policy_status": str(
+                                    _row(source, "policy_status", "") or ""
+                                ).upper(),
+                                "robots_status": str(
+                                    _row(source, "robots_status", "") or ""
+                                ).upper(),
+                                "terms_status": str(
+                                    _row(source, "terms_status", "") or ""
+                                ).upper(),
+                                "reason": "scheduled source refresh",
+                                "mode": "live",
+                                "schedule_bucket": bucket,
+                            }
+                            rate_limit = _row(source, "rate_limit")
+                            retention_days = _row(source, "raw_payload_retention_days")
+                            if rate_limit is not None:
+                                payload_value["rate_limit"] = int(rate_limit)
+                            if retention_days is not None:
+                                payload_value["raw_payload_retention_days"] = int(
+                                    retention_days
+                                )
+                            payload = validate_job_payload(
+                                "crawl",
+                                payload_value,
+                            )
+                            inserted = await _maybe_await(
+                                session.execute(
+                                    _sql(
+                                        """
+                                        INSERT INTO jobs
+                                          (id, job_type, dedupe_key, status, priority,
+                                           available_at, lease_owner, lease_expires_at,
+                                           attempts, max_attempts, payload_json,
+                                           last_error_json, created_at, updated_at)
+                                        VALUES
+                                          (:id, 'crawl', :dedupe_key, 'PENDING', 10,
+                                           :available_at, NULL, NULL, 0, :max_attempts,
+                                           :payload_json, NULL, :created_at, :updated_at)
+                                        ON DUPLICATE KEY UPDATE id = id
+                                        """.strip()
+                                    ),
+                                    {
+                                        "id": job_id,
+                                        "dedupe_key": dedupe_key,
+                                        "available_at": database_now,
+                                        "max_attempts": self.max_attempts,
+                                        "payload_json": _json(payload),
+                                        "created_at": database_now,
+                                        "updated_at": database_now,
+                                    },
+                                )
+                            )
+                            # MariaDB reports 1 for an insert and 0 for the
+                            # deliberate duplicate no-op.  Affected-row modes
+                            # may differ, so the unique key remains authoritative
+                            # and crawl-run creation is idempotent as well.
+                            if _rowcount(inserted) == 1:
+                                created += 1
+                            await _maybe_await(
+                                session.execute(
+                                    _sql(
+                                        """
+                                        INSERT INTO crawl_runs
+                                          (id, source_id, status, started_at,
+                                           finished_at, stats_json, error_json)
+                                        VALUES
+                                          (:id, :source_id, 'PENDING', NULL, NULL,
+                                           NULL, NULL)
+                                        ON DUPLICATE KEY UPDATE id = id
+                                        """.strip()
+                                    ),
+                                    {"id": job_id, "source_id": source_id},
+                                )
+                            )
+                        return created
+            finally:
+                try:
+                    await _maybe_await(
+                        lock_session.execute(
+                            _sql("SELECT RELEASE_LOCK(:lock_name)"),
+                            {"lock_name": self.lock_name},
+                        )
+                    )
+                except Exception:
+                    # Closing the dedicated connection releases named locks.
+                    pass
 
 
 class MariaDBIdempotencyStore:
@@ -410,9 +717,10 @@ class MariaDBResultApplier:
                     "target_id": job.id,
                     "after_json": _json(record),
                     "reason": f"worker result applied: {job.job_type}",
-                    "request_id": request_id
-                    or job.payload.get("request_id")
-                    or f"{job.job_type}:{job.dedupe_key or job.id}",
+                    "request_id": _audit_request_id(
+                        request_id or job.payload.get("request_id"),
+                        fallback=f"{job.job_type}:{job.id}",
+                    ),
                     "created_at": now,
                 },
             )
@@ -479,6 +787,10 @@ class MariaDBResultApplier:
         )
         if not issue_id or issue_version < 1 or not prompt_version:
             raise ResultApplicationError("comparison result is missing version identity")
+        if str(result.get("status") or "").strip().upper() == "SKIPPED":
+            # Keep the durable job-result audit written by ``apply`` while
+            # leaving the last successful comparison snapshot untouched.
+            return
         await self._execute(
             session,
             """
@@ -528,7 +840,7 @@ class MariaDBResultApplier:
                         "article_version_ids": result.get("article_version_ids", {}),
                     }
                 ),
-                "confidence": float(result.get("confidence", 0)),
+                "confidence": _database_confidence(result.get("confidence", 0)),
                 "created_at": now,
             },
         )
@@ -604,6 +916,39 @@ class MariaDBResultApplier:
     def _request_id(job: Job, result: Mapping[str, Any]) -> Any:
         return result.get("request_id") or job.payload.get("request_id")
 
+    async def _rolling_cluster_ids(
+        self,
+        session: Any,
+        seed_article_ids: list[str],
+        *,
+        now: datetime,
+        window_hours: int = 72,
+        limit: int = 500,
+    ) -> list[str]:
+        """Return a bounded recent, approved, cross-source clustering pool."""
+
+        result = await self._execute(
+            session,
+            """
+            SELECT a.id
+            FROM articles AS a
+            JOIN sources AS s ON s.id = a.source_id
+            WHERE a.current_version_id IS NOT NULL
+              AND a.status NOT IN ('removed', 'blocked')
+              AND s.active = 1
+              AND s.policy_status = 'APPROVED'
+              AND COALESCE(a.published_at, a.updated_at) >= :cutoff
+            ORDER BY COALESCE(a.published_at, a.updated_at) DESC, a.id DESC
+            LIMIT :limit
+            """,
+            {
+                "cutoff": now - timedelta(hours=max(1, min(window_hours, 168))),
+                "limit": max(2, min(limit, 1000)),
+            },
+        )
+        recent = [str(_row(row, "id")) for row in _rows(result) if _row(row, "id")]
+        return sorted({*recent, *(str(value) for value in seed_article_ids if value)})
+
     async def _store_blob(
         self,
         session: Any,
@@ -630,7 +975,7 @@ class MariaDBResultApplier:
                 "mime_type": mime_type,
                 "byte_size": len(payload),
                 "payload": payload,
-                "expires_at": expires_at,
+                "expires_at": _database_timestamp(expires_at),
                 "created_at": _utc(self.clock()),
             },
         )
@@ -713,6 +1058,13 @@ class MariaDBResultApplier:
                 article_id = str(_row(article_rows[0], "id", article_id))
             persisted_article_ids.append(article_id)
             content = article.get("content") or article.get("text")
+            await self._upsert_topic_membership(
+                session,
+                article_id=article_id,
+                title=title,
+                summary=str(content or article.get("summary") or "")[:1000],
+                now=now,
+            )
             if (
                 content is None
                 and article.get("raw_payload_ref") is None
@@ -792,23 +1144,64 @@ class MariaDBResultApplier:
 
         request_id = self._request_id(job, result)
         for version_id in sorted(set(analyzable_version_ids)):
-            analyze_payload: dict[str, Any] = {"article_version_id": version_id}
+            trusted_assessment = await self._execute(
+                session,
+                """
+                SELECT assessments.id
+                FROM model_assessments AS assessments
+                JOIN model_aliases AS aliases
+                  ON aliases.id = assessments.model_alias_id
+                WHERE assessments.article_version_id = :version_id
+                  AND assessments.status = 'SUCCEEDED'
+                  AND LOWER(aliases.provider) = 'openai'
+                  AND aliases.actual_model_id LIKE 'gpt-%'
+                LIMIT 1
+                """,
+                {"version_id": version_id},
+            )
+            if _rows(trusted_assessment):
+                continue
+            active_analysis = await self._execute(
+                session,
+                """
+                SELECT id
+                FROM jobs
+                WHERE job_type = 'analyze'
+                  AND status IN ('PENDING', 'LEASED')
+                  AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.article_version_id')) = :version_id
+                LIMIT 1
+                """,
+                {"version_id": version_id},
+            )
+            if _rows(active_analysis):
+                continue
+            analyze_payload: dict[str, Any] = {
+                "article_version_id": version_id,
+                "crawl_job_id": job.id,
+            }
             if request_id is not None:
                 analyze_payload["request_id"] = request_id
             await self._enqueue_job(
                 session,
                 "analyze",
                 analyze_payload,
-                dedupe_key=f"article-version:{version_id}",
+                # Recrawling unchanged content must not spend another provider
+                # call. Explicit admin/recovery reanalysis uses its own
+                # generation key when a model or prompt intentionally changes.
+                dedupe_key=f"article-version:{version_id}:crawl-analysis",
                 now=now,
             )
 
         # Clustering consumes article identifiers and resolves their current
-        # bodies through the worker lookup service.  One job covers a crawl
-        # batch, preserving cross-article similarity instead of clustering
-        # each article in isolation.
-        cluster_ids = sorted(set(persisted_article_ids))
-        if cluster_ids:
+        # bodies through the worker lookup service. One rolling job spans
+        # sources so one publisher can never manufacture an issue by itself.
+        cluster_ids = await self._rolling_cluster_ids(
+            session,
+            persisted_article_ids,
+            now=now,
+            window_hours=int(job.payload.get("cluster_window_hours", 72)),
+        )
+        if len(cluster_ids) >= 2:
             cluster_payload: dict[str, Any] = {"article_ids": cluster_ids}
             threshold = job.payload.get("threshold", result.get("threshold"))
             if threshold is not None:
@@ -823,6 +1216,54 @@ class MariaDBResultApplier:
                 now=now,
             )
 
+    async def _upsert_topic_membership(
+        self,
+        session: Any,
+        *,
+        article_id: str,
+        title: str,
+        summary: str,
+        now: datetime,
+    ) -> None:
+        """Keep every new article in one durable, navigable broad-topic bucket."""
+
+        topic = infer_issue_topic(title, summary)
+        if topic not in PUBLIC_ISSUE_TOPICS:
+            return
+        issue_id = canonical_topic_issue_id(topic)
+        await self._execute(
+            session,
+            """
+            INSERT INTO issues
+              (id, title, summary, topic, status, issue_kind, editorial_key,
+               opened_at, last_activity_at, version)
+            VALUES
+              (:id, :title, :summary, :topic, 'active', 'TOPIC', :editorial_key,
+               :opened_at, :last_activity_at, 1)
+            ON DUPLICATE KEY UPDATE
+              status = 'active', issue_kind = 'TOPIC',
+              last_activity_at = GREATEST(last_activity_at, VALUES(last_activity_at))
+            """,
+            {
+                "id": issue_id,
+                "title": topic,
+                "summary": f"{topic} 분야의 최신 기사",
+                "topic": topic,
+                "editorial_key": canonical_topic_editorial_key(topic),
+                "opened_at": now,
+                "last_activity_at": now,
+            },
+        )
+        await self._execute(
+            session,
+            """
+            INSERT INTO issue_memberships (issue_id, article_id, confidence, created_at)
+            VALUES (:issue_id, :article_id, 1.0, :created_at)
+            ON DUPLICATE KEY UPDATE confidence = GREATEST(confidence, VALUES(confidence))
+            """,
+            {"issue_id": issue_id, "article_id": article_id, "created_at": now},
+        )
+
     async def _apply_cluster(self, session: Any, job: Job, result: Mapping[str, Any], now: datetime) -> None:
         candidates = result.get("candidates") or result.get("groups") or []
         if isinstance(candidates, Mapping):
@@ -830,27 +1271,80 @@ class MariaDBResultApplier:
         for candidate in candidates if isinstance(candidates, (list, tuple)) else ():
             if not isinstance(candidate, Mapping):
                 continue
-            issue_id = str(
-                candidate.get("issue_id")
-                or _stable_id(f"cluster:{candidate.get('candidate_id', _json(candidate))}")
-            )
+            articles = candidate.get("article_ids") or candidate.get("articles") or []
+            candidate_article_ids = [
+                str(item.get("article_id") if isinstance(item, Mapping) else item)
+                for item in (articles if isinstance(articles, (list, tuple)) else ())
+                if str(item.get("article_id") if isinstance(item, Mapping) else item)
+            ]
+            source_count = int(candidate.get("source_count", 0) or 0)
+            if len(candidate_article_ids) < 2 or source_count < 2:
+                continue
+            issue_id = str(candidate.get("issue_id") or "")
+            if not issue_id:
+                # Article-set hashes change when a later crawl adds one more
+                # report. Reuse an overlapping automatic EVENT candidate so
+                # a developing story gains membership instead of duplicating.
+                for article_id in candidate_article_ids:
+                    existing = await self._execute(
+                        session,
+                        """
+                        SELECT issues.id
+                        FROM issue_memberships AS memberships
+                        JOIN issues ON issues.id = memberships.issue_id
+                        WHERE memberships.article_id = :article_id
+                          AND issues.status = 'candidate'
+                          AND issues.issue_kind = 'EVENT'
+                        ORDER BY issues.last_activity_at DESC, issues.id
+                        LIMIT 1
+                        """,
+                        {"article_id": article_id},
+                    )
+                    rows = _rows(existing)
+                    if rows:
+                        issue_id = str(_row(rows[0], "id"))
+                        break
+            if not issue_id:
+                issue_id = _stable_id(
+                    f"cluster:{candidate.get('candidate_id', _json(candidate))}"
+                )
             title = str(candidate.get("title") or "Untitled issue")[:500]
+            issue_status = (
+                "active"
+                if len(candidate_article_ids) >= 3 and source_count >= 3
+                else "candidate"
+            )
             await self._execute(
                 session,
                 """
                 INSERT INTO issues
-                  (id, title, summary, status, opened_at, last_activity_at, version)
-                VALUES (:id, :title, :summary, 'candidate', :opened_at, :last_activity_at, 1)
-                ON DUPLICATE KEY UPDATE title = VALUES(title), last_activity_at = VALUES(last_activity_at), version = version + 1
+                  (id, title, summary, topic, status, issue_kind,
+                   opened_at, last_activity_at, version)
+                VALUES (:id, :title, :summary, :topic, :status, 'EVENT',
+                        :opened_at, :last_activity_at, 1)
+                ON DUPLICATE KEY UPDATE
+                  title = VALUES(title), summary = VALUES(summary), topic = VALUES(topic),
+                  status = IF(status = 'active', 'active', VALUES(status)),
+                  issue_kind = 'EVENT', last_activity_at = VALUES(last_activity_at),
+                  version = version + 1
                 """,
-                {"id": issue_id, "title": title, "summary": candidate.get("summary"), "opened_at": now, "last_activity_at": now},
+                {
+                    "id": issue_id,
+                    "title": title,
+                    "summary": candidate.get("summary"),
+                    "topic": str(candidate.get("topic") or "일반")[:40],
+                    "status": issue_status,
+                    "opened_at": now,
+                    "last_activity_at": now,
+                },
             )
-            articles = candidate.get("article_ids") or candidate.get("articles") or []
-            candidate_article_ids: list[str] = []
             for item in articles if isinstance(articles, (list, tuple)) else ():
                 article_id = str(item.get("article_id") if isinstance(item, Mapping) else item)
-                candidate_article_ids.append(article_id)
-                confidence = float(item.get("confidence", 0.0) if isinstance(item, Mapping) else candidate.get("confidence", 0.0))
+                confidence = _database_confidence(
+                    item.get("confidence", 0.0)
+                    if isinstance(item, Mapping)
+                    else candidate.get("confidence", 0.0)
+                )
                 await self._execute(
                     session,
                     """
@@ -858,7 +1352,7 @@ class MariaDBResultApplier:
                     VALUES (:issue_id, :article_id, :confidence, :created_at)
                     ON DUPLICATE KEY UPDATE confidence = VALUES(confidence)
                     """,
-                    {"issue_id": issue_id, "article_id": article_id, "confidence": max(0.0, min(1.0, confidence)), "created_at": now},
+                    {"issue_id": issue_id, "article_id": article_id, "confidence": confidence, "created_at": now},
                 )
             if candidate_article_ids:
                 await self._enqueue_issue_comparisons_for_article(
@@ -1045,7 +1539,8 @@ class MariaDBResultApplier:
         raw_response = result.get("raw_response")
         if raw_response is not None:
             raw_ref = await self._store_blob(session, _bytes(_json(raw_response)), mime_type="application/json")
-        for item in assessments:
+        assessment_ids: list[str] = []
+        for assessment_index, item in enumerate(assessments):
             if not isinstance(item, Mapping):
                 continue
             alias = str(item.get("model_alias") or item.get("alias") or "unknown")
@@ -1076,7 +1571,17 @@ class MariaDBResultApplier:
             if not alias_id:
                 raise ResultApplicationError("model alias canonical ID is empty")
             evidence = item.get("evidence", item.get("evidence_json", []))
-            assessment_id = str(item.get("id") or item.get("assessment_id") or _new_id())
+            assessment_id = str(
+                item.get("id")
+                or item.get("assessment_id")
+                or _stable_id(
+                    "assessment:"
+                    f"{job.id}:{version_id}:{alias}:"
+                    f"{item.get('prompt_version') or result.get('prompt_version', 'unknown')}:"
+                    f"{assessment_index}"
+                )
+            )
+            assessment_ids.append(assessment_id)
             await self._execute(
                 session,
                 """
@@ -1102,7 +1607,7 @@ class MariaDBResultApplier:
                     "y": int(item.get("y", 0)),
                     "z": int(item.get("z", 0)),
                     "sensationalism": int(item.get("sensationalism", 0)),
-                    "confidence": float(item.get("confidence", 0)),
+                    "confidence": _database_confidence(item.get("confidence", 0)),
                     "evidence_json": _json(evidence),
                     "raw_ref": str(item.get("raw_response_ref") or raw_ref) if (item.get("raw_response_ref") or raw_ref) else None,
                     "token_usage": int(item.get("token_usage", 0)),
@@ -1113,7 +1618,14 @@ class MariaDBResultApplier:
             )
 
         request_id = self._request_id(job, result)
-        score_payload: dict[str, Any] = {"article_version_id": version_id}
+        score_payload: dict[str, Any] = {
+            "article_version_id": version_id,
+            # The analysis queue row is the stable generation identity: it is
+            # unchanged by lease replay, but changes for an explicit reanalysis.
+            # Assessment IDs make the exact inputs visible to score provenance.
+            "analysis_job_id": job.id,
+            "assessment_ids": sorted(assessment_ids),
+        }
         for key in ("weight_revision_id", "weight_id", "fact_check"):
             value = result.get(key, job.payload.get(key))
             if value is not None:
@@ -1121,7 +1633,15 @@ class MariaDBResultApplier:
         if request_id is not None:
             score_payload["request_id"] = request_id
         weight_id = score_payload.get("weight_revision_id") or score_payload.get("weight_id")
-        score_dedupe = f"article-version:{version_id}"
+        score_generation = hashlib.sha256(
+            _json(
+                {
+                    "analysis_job_id": job.id,
+                    "assessment_ids": sorted(assessment_ids),
+                }
+            ).encode("utf-8")
+        ).hexdigest()[:24]
+        score_dedupe = f"article-version:{version_id}:analysis:{score_generation}"
         if weight_id is not None:
             score_dedupe = f"{score_dedupe}:weight:{weight_id}"
         await self._enqueue_job(
@@ -1157,28 +1677,15 @@ class MariaDBResultApplier:
                 article_id = _row(article_rows[0], "article_id")
                 if article_id:
                     article_ids.append(str(article_id))
-        cluster_ids = sorted(set(article_ids))
-        if cluster_ids:
-            cluster_payload: dict[str, Any] = {"article_ids": cluster_ids}
-            threshold = job.payload.get("threshold", result.get("threshold"))
-            if threshold is not None:
-                cluster_payload["threshold"] = threshold
-            if request_id is not None:
-                cluster_payload["request_id"] = request_id
-            await self._enqueue_job(
+        # Crawls enqueue one rolling cross-source sweep for the full recent
+        # window. Analysis completion must not create singleton issue jobs.
+        for article_id in sorted(set(article_ids)):
+            await self._enqueue_issue_comparisons_for_article(
                 session,
-                "cluster",
-                cluster_payload,
-                dedupe_key=self._article_set_dedupe(cluster_ids, threshold),
+                article_id=article_id,
+                request_id=request_id,
                 now=now,
             )
-            for article_id in cluster_ids:
-                await self._enqueue_issue_comparisons_for_article(
-                    session,
-                    article_id=article_id,
-                    request_id=request_id,
-                    now=now,
-                )
 
     async def _enqueue_issue_comparisons_for_article(
         self,
@@ -1305,6 +1812,20 @@ class MariaDBResultApplier:
         weight_id = str(result.get("weight_revision_id") or job.payload.get("weight_revision_id") or job.payload.get("weight_id") or "")
         if not version_id or not weight_id:
             raise ResultApplicationError("score result requires article_version_id and weight_revision_id")
+        # Serialize all score promotions for an article version, including the
+        # first one.  Locking an empty score range is not sufficient under every
+        # isolation/proxy configuration; the durable article-version row is.
+        version_lock = await self._execute(
+            session,
+            "SELECT id FROM article_versions WHERE id = :version_id LIMIT 1 FOR UPDATE",
+            {"version_id": version_id},
+        )
+        if not _rows(version_lock):
+            raise ResultApplicationError("score article version was not found")
+        requested_score_id = str(
+            result.get("score_version_id")
+            or _stable_id(f"score:{version_id}:{weight_id}:job:{job.id}")
+        )
         await self._execute(
             session,
             """
@@ -1315,10 +1836,75 @@ class MariaDBResultApplier:
                     :confidence, :components_json, 'draft', :created_at)
             ON DUPLICATE KEY UPDATE x = VALUES(x), y = VALUES(y), z = VALUES(z),
               sensationalism = VALUES(sensationalism), confidence = VALUES(confidence),
-              components_json = VALUES(components_json), status = VALUES(status)
+              components_json = VALUES(components_json)
             """,
-            {"id": str(result.get("score_version_id") or _new_id()), "version_id": version_id, "weight_id": weight_id, "x": int(result.get("x", 0)), "y": int(result.get("y", 0)), "z": int(result.get("z", 0)), "sensationalism": int(result.get("sensationalism", 0)), "confidence": float(result.get("confidence", 0)), "components_json": _json(result.get("components", {})), "created_at": now},
+            {"id": requested_score_id, "version_id": version_id, "weight_id": weight_id, "x": int(result.get("x", 0)), "y": int(result.get("y", 0)), "z": int(result.get("z", 0)), "sensationalism": int(result.get("sensationalism", 0)), "confidence": _database_confidence(result.get("confidence", 0)), "components_json": _json(result.get("components", {})), "created_at": now},
         )
+        canonical_result = await self._execute(
+            session,
+            """
+            SELECT id FROM score_versions
+            WHERE id = :score_id
+              AND article_version_id = :version_id
+              AND weight_revision_id = :weight_id
+            LIMIT 1 FOR UPDATE
+            """,
+            {
+                "score_id": requested_score_id,
+                "version_id": version_id,
+                "weight_id": weight_id,
+            },
+        )
+        canonical_rows = _rows(canonical_result)
+        if not canonical_rows:
+            raise ResultApplicationError("score upsert did not return a canonical row")
+        canonical_score_id = str(_row(canonical_rows[0], "id", "") or "")
+        if not canonical_score_id:
+            raise ResultApplicationError("score canonical ID is empty")
+        # Promotion and demotion are in the outer result-application
+        # transaction.  Any failure rolls both back, preserving the previous
+        # ACTIVE score instead of leaving an article temporarily scoreless.
+        await self._execute(
+            session,
+            """
+            UPDATE score_versions
+            SET status = 'superseded'
+            WHERE article_version_id = :version_id
+              AND status = 'active'
+              AND id <> :score_id
+            """,
+            {"version_id": version_id, "score_id": canonical_score_id},
+        )
+        promoted = await self._execute(
+            session,
+            """
+            UPDATE score_versions
+            SET status = 'active'
+            WHERE id = :score_id
+              AND article_version_id = :version_id
+              AND weight_revision_id = :weight_id
+            """,
+            {
+                "score_id": canonical_score_id,
+                "version_id": version_id,
+                "weight_id": weight_id,
+            },
+        )
+        # MySQL may report zero affected rows when an idempotent replay targets
+        # an already-active row, so verify canonical state before declaring a
+        # conflict rather than relying solely on rowcount.
+        if _rowcount(promoted) != 1:
+            active_result = await self._execute(
+                session,
+                """
+                SELECT id FROM score_versions
+                WHERE id = :score_id AND status = 'active'
+                LIMIT 1
+                """,
+                {"score_id": canonical_score_id},
+            )
+            if not _rows(active_result):
+                raise ResultApplicationError("score activation failed")
 
     async def _apply_recommendation(self, session: Any, job: Job, result: Mapping[str, Any], now: datetime) -> None:
         recommendation_id = str(result.get("recommendation_id") or job.payload.get("recommendation_id") or "")

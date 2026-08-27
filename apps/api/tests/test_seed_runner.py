@@ -8,7 +8,12 @@ from db.seeds.seed import (
     MINIMUM_ARTICLE_COUNT,
     REAL_SEED_ID_PREFIX,
     _load_articles,
+    _score_components,
     _stable_ulid,
+)
+from db.seeds.source_feeds import (
+    bootstrap_scheduled_rss_sources,
+    scheduled_rss_config,
 )
 
 
@@ -46,3 +51,33 @@ def test_article_body_and_url_hashes_are_not_placeholder_values() -> None:
     assert len(url_hashes) == len(articles)
     assert not any("synthetic" in row["body_text"].lower() for row in articles)
     assert not any("mock" in row["title"].lower() for row in articles)
+
+
+def test_seed_scores_name_the_trusted_openai_assessment_they_use() -> None:
+    components = _score_components(
+        assessment={
+            "actual_model_id": "gpt-5.6-luna",
+            "rationale_summary": "공개 가능한 근거",
+            "model_alias": "openai-bias-v1",
+            "prompt_version": "bias-sensationalism-v1",
+        },
+        assessment_id="01K00000000000000000000001",
+        category="경제",
+        bias_label="중립적",
+    )
+
+    assert components["analysis_provider"] == "openai"
+    assert components["assessment_ids"] == ["01K00000000000000000000001"]
+    assert components["actual_model_ids"] == ["gpt-5.6-luna"]
+
+
+def test_scheduled_news_feeds_are_broad_metadata_only_and_source_diverse() -> None:
+    newsis = scheduled_rss_config("https://www.newsis.com")
+    etoday = scheduled_rss_config("https://www.etoday.co.kr/")
+
+    assert newsis is not None and newsis["feed_url"].endswith("/sokbo.xml")
+    assert etoday is not None and etoday["feed_url"].endswith("/etoday_news_all.xml")
+    assert newsis["hydrate_article_links"] is False
+    assert etoday["metadata_only"] is True
+    assert newsis["allow_empty_result"] is False
+    assert len(bootstrap_scheduled_rss_sources()) >= 5

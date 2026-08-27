@@ -44,7 +44,7 @@ AI 분석과 독자의 판단을 함께 보여주는 **정치 뉴스 큐레이�
 
 | 기능 | 경험 |
 | --- | --- |
-| **이슈 중심 뉴스 탐색** | 여러 언론사의 기사를 동일 이슈로 묶어 프레이밍과 강조점의 차이를 한눈에 비교합니다. |
+| **이슈 중심 뉴스 탐색** | 여러 출처의 기사를 동일 이슈로 묶어 프레이밍과 강조점의 차이를 한눈에 비교합니다. |
 | **설명 가능한 AI 분석** | 기사별 편향성·과장성뿐 아니라 분석 근거와 신뢰도, 버전 정보를 함께 보여줍니다. |
 | **다양성 보정 피드** | 사용자가 덜 본 출처와 보완 관점을 우선하며, 각 기사의 추천 이유를 표시합니다. |
 | **독자 참여 평가** | 독자의 투표와 읽기 행동을 분석 결과에 연결해 일방적인 AI 판정을 보완합니다. |
@@ -125,7 +125,12 @@ chmod 600 .env
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google OAuth 자격 증명 |
 | `LLM_PROVIDER_MODE` | `auto`, `stub`, `live` 중 선택 |
 | `OPENAI_API_KEY` | live 분석에 사용하는 OpenAI API 키 |
-| `LLM_TIMEOUT_SECONDS` | OpenAI 분석 요청 제한 시간(초). 기본값 `120`, 최대 `300` |
+| `LLM_TIMEOUT_SECONDS` | OpenAI 분석 요청 제한 시간(초). 기본값 `180`, 최대 `300` |
+| `LLM_MAX_RETRIES` | provider 내부 재시도 수. durable queue가 재시도하므로 기본값 `0` |
+| `WORKER_MAX_CONCURRENCY` | 동시에 처리할 비동기 작업 수. 기본값 `4` |
+| `WORKER_SHUTDOWN_GRACE_SECONDS` | 배포 종료 시 진행 중 호출을 마칠 유예 시간. 실 LLM에서는 `LLM_TIMEOUT_SECONDS + 10` 이상이어야 하며 기본값 `195`초 |
+| `WORKER_CRAWL_INTERVAL_SECONDS` | 승인된 활성 출처를 다시 수집하는 주기. 기본값 `900`초 |
+| `WORKER_CRAWL_BATCH_SIZE` | 수집 주기마다 예약할 최대 출처 수. 기본값 `50` |
 | `DB_TUNNEL_PORT` | 기본값 `13306`; 포트 충돌 시 변경 |
 
 ### 2. 통합 개발 서버 실행
@@ -157,7 +162,7 @@ chmod 600 .env
 ./.agents/scripts/run.sh seed
 ```
 
-`LLM_PROVIDER_MODE=stub`은 네트워크 없이 결정론적인 분석을 수행합니다. 기본값인 `auto`는 `OPENAI_API_KEY`가 있으면 live 분석을, 없으면 offline 분석을 사용합니다. live 모드의 활성 모델과 reasoning effort는 관리자 API에서 변경할 수 있습니다.
+`LLM_PROVIDER_MODE=stub`은 네트워크 없이 결정론적인 분석을 수행합니다. 기본값인 `auto`는 `OPENAI_API_KEY`가 있으면 live 분석을, 없으면 offline 분석을 사용합니다. live 모드의 활성 모델과 reasoning effort는 관리자 API에서 변경할 수 있습니다. 워커는 MariaDB advisory lock과 수집 주기별 dedupe key를 사용해 여러 프로세스가 실행되어도 승인된 출처를 한 번씩만 예약합니다. 예약 RSS는 메타데이터 우선으로 수집하고 최근 72시간의 승인 출처 기사를 함께 비교해 출처 간 사건 후보를 만들며, 단일 기사·단일 출처 묶음은 이슈로 저장하지 않습니다.
 
 ## 프로젝트 구조
 

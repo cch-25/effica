@@ -12,11 +12,13 @@ from apps.api.app.db.enums import (
     ArticleStatus,
     AssessmentStatus,
     IssueStatus,
+    JobStatus,
     ModelStatus,
     ProfileKind,
     QuestionnaireKind,
     RevisionStatus,
     ScoreStatus,
+    ShareCardStatus,
     SourcePolicyStatus,
     SourceType,
     UserRole,
@@ -27,10 +29,12 @@ from apps.api.app.db.models import (
     ArticleVersion,
     Issue,
     IssueMembership,
+    Job,
     ModelAlias,
     ModelAssessment,
     QuestionnaireVersion,
     ScoreVersion,
+    ShareCard,
     Source,
     User,
     UserProfile,
@@ -205,6 +209,9 @@ async def test_db_product_engagement_vertical_slice() -> None:
         assert personalized is True
         assert feed[0]["article_id"] == article_id
         assert (await repository.issue_view(issue_id))["distribution"]["count"] == 1
+        issue_articles = await repository.issue_article_rows(issue_id)
+        assert issue_articles is not None
+        assert issue_articles[0]["summary"] == "검증된 OpenAI 분석"
 
         read_id = new_ulid()
         assert await repository.create_read_session_row(
@@ -257,6 +264,25 @@ async def test_db_product_engagement_vertical_slice() -> None:
         assert card["snapshot"]["coordinate"]["sensationalism"] is None
         assert card["snapshot"]["activity"] == card["snapshot"]["credit_total"] == 0
         assert (await repository.public_share_card(card["public_token"])) is not None
+        persisted_job = await session.get(Job, job["id"])
+        assert persisted_job is not None
+        persisted_job.status = JobStatus.DEAD
+        await session.commit()
+        failed_card = await repository.owner_share_card(card_id=card["id"], user_id=user_id)
+        assert failed_card is not None
+        assert failed_card["status"] == "failed"
+        retried = await repository.retry_share_card(card_id=card["id"], user_id=user_id)
+        assert retried == {
+            "job_id": job["id"],
+            "status": "PENDING",
+            "share_card_id": card["id"],
+        }
+        await session.refresh(persisted_job)
+        assert persisted_job.status == JobStatus.PENDING
+        assert persisted_job.attempts == 0
+        persisted_card = await session.get(ShareCard, card["id"])
+        assert persisted_card is not None
+        assert persisted_card.status == ShareCardStatus.QUEUED
         assert await repository.revoke_share_card(card_id=card["id"], user_id=user_id)
         assert (await repository.public_share_card(card["public_token"])) is None
     await engine.dispose()

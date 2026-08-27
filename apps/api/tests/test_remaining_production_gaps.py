@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import timedelta
 
 import pytest
@@ -7,16 +8,22 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from apps.api.app.db.base import Base
 from apps.api.app.db.enums import (
+    ArticleStatus,
     IssueStatus,
     QuestionnaireKind,
     RevisionStatus,
+    SourcePolicyStatus,
+    SourceType,
     UserRole,
     UserStatus,
 )
 from apps.api.app.db.models import (
+    Article,
     EfficacyResponse,
     Issue,
+    IssueMembership,
     QuestionnaireVersion,
+    Source,
     User,
     WeightProfileRevision,
 )
@@ -100,6 +107,113 @@ async def test_d04_durable_efficacy_metrics_use_latest_distinct_user(
     assert metrics["cohorts"] == [
         {"cohort_key": "all", "count": 3, "mean": 35.0}
     ]
+
+
+@pytest.mark.asyncio
+async def test_issue_topics_and_pending_articles_remain_public(repository_session) -> None:
+    session = repository_session
+    now = utc_now()
+    issue_id, source_id, article_id, blocked_source_id, blocked_article_id = (
+        new_ulid() for _ in range(5)
+    )
+    session.add_all(
+        [
+            Issue(
+                id=issue_id,
+                title="공공 AI 산업 정책",
+                summary="인공지능 산업의 새로운 기준을 다룹니다.",
+                topic="일반",
+                status=IssueStatus.ACTIVE,
+                opened_at=now,
+                last_activity_at=now,
+                version=1,
+            ),
+            Source(
+                id=source_id,
+                name="테스트 언론사",
+                source_type=SourceType.RSS,
+                canonical_url="https://source.example.test",
+                policy_status=SourcePolicyStatus.APPROVED,
+                robots_status=SourcePolicyStatus.APPROVED,
+                terms_status=SourcePolicyStatus.APPROVED,
+                active=True,
+            ),
+            Source(
+                id=blocked_source_id,
+                name="비공개 언론사",
+                source_type=SourceType.RSS,
+                canonical_url="https://blocked-source.example.test",
+                policy_status=SourcePolicyStatus.REJECTED,
+                robots_status=SourcePolicyStatus.REJECTED,
+                terms_status=SourcePolicyStatus.REJECTED,
+                active=False,
+            ),
+        ]
+    )
+    await session.flush()
+    session.add(
+        Article(
+            id=article_id,
+            source_id=source_id,
+            canonical_url="https://source.example.test/pending",
+            canonical_url_hash=hashlib.sha256(b"https://source.example.test/pending").digest(),
+            title="분석을 기다리는 기사",
+            author=None,
+            published_at=now,
+            current_version_id=None,
+            status=ArticleStatus.ACTIVE,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    session.add(
+        Article(
+            id=blocked_article_id,
+            source_id=blocked_source_id,
+            canonical_url="https://blocked-source.example.test/removed",
+            canonical_url_hash=hashlib.sha256(
+                b"https://blocked-source.example.test/removed"
+            ).digest(),
+            title="공개하면 안 되는 기사",
+            author=None,
+            published_at=now,
+            current_version_id=None,
+            status=ArticleStatus.BLOCKED,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await session.flush()
+    session.add(
+        IssueMembership(
+            issue_id=issue_id,
+            article_id=article_id,
+            confidence=0.7,
+            created_at=now,
+        )
+    )
+    session.add(
+        IssueMembership(
+            issue_id=issue_id,
+            article_id=blocked_article_id,
+            confidence=0.9,
+            created_at=now,
+        )
+    )
+    await session.commit()
+
+    repository = MariaDBPlatformRepository(session, encryption_secret="x" * 40)
+    issues = await repository.list_issue_rows(topic="산업")
+    articles = await repository.issue_article_rows(issue_id)
+
+    assert issues[0]["topic"] == "산업"
+    assert issues[0]["article_ids"] == [article_id]
+    assert issues[0]["source_count"] == 1
+    assert articles is not None
+    assert len(articles) == 1
+    assert articles[0]["canonical_url"] == "https://source.example.test/pending"
+    assert articles[0]["analysis_status"] == "PROCESSING"
+    assert "coordinate" not in articles[0]
 
 
 @pytest.mark.asyncio
