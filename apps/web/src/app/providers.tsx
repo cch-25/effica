@@ -3,6 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
+import { NavigationScrollReset } from "@/components/layout/navigation-scroll-reset";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { isMockMode } from "@/lib/api/mode";
 
@@ -27,5 +28,10 @@ export function Providers({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("api-auth-redirect", handleRedirect);
   }, [router]);
 
-  return <QueryClientProvider client={client}><ErrorBoundary>{children}</ErrorBoundary></QueryClientProvider>;
+  return (
+    <QueryClientProvider client={client}>
+      <NavigationScrollReset />
+      <ErrorBoundary>{children}</ErrorBoundary>
+    </QueryClientProvider>
+  );
 }

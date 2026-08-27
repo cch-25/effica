@@ -40,6 +40,7 @@ const apiIssues = issues.map((issue) => ({
   id: issue.id,
   title: issue.title,
   summary: issue.summary,
+  topic: issue.topic,
   status: issue.status === "balanced" ? "active" : "candidate",
   version: 1,
   article_ids: issue.articleIds,
@@ -247,6 +248,7 @@ export const handlers = [
   http.delete(`${prefix}/articles/:articleId/vote`, () => new HttpResponse(null, { status: 204 })),
   http.post(`${prefix}/share-cards`, () => { mockCard = { ...mockCard, status: "ready" }; return HttpResponse.json(mockResponse("ShareCardJobAccepted", { job_id: "01H0000000000000000000000A", share_card_id: mockCard.id, status: "PENDING" }), { status: 202 }); }),
   http.get(`${prefix}/share-cards/:shareCardId`, ({ params }) => params.shareCardId === mockCard.id ? HttpResponse.json(mockResponse("ShareCardView", mockCard)) : HttpResponse.json(errorEnvelope("NOT_FOUND", "공유 카드를 찾을 수 없습니다."), { status: 404 })),
+  http.post(`${prefix}/share-cards/:shareCardId/retry`, ({ params }) => { mockCard = { ...mockCard, status: "queued", etag: null }; return HttpResponse.json(mockResponse("ShareCardJobAccepted", { job_id: "01H0000000000000000000000A", share_card_id: String(params.shareCardId), status: "PENDING" }), { status: 202 }); }),
   http.delete(`${prefix}/share-cards/:shareCardId`, () => { mockCard = { ...mockCard, status: "revoked", public_token: null }; return new HttpResponse(null, { status: 204 }); }),
   http.get(`${prefix}/public/share/:publicToken`, ({ params }) => (
     params.publicToken === mockCard.public_token

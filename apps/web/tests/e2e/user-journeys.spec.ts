@@ -20,7 +20,8 @@ test("Google login facade, separate consent, questionnaire, demographics, home",
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole("heading", { name: "Political efficacy" })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(/데모 데이터 기준 8월 16일/)).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "주요 메뉴" }).getByRole("link", { name: "이슈" })).toHaveCount(0);
+  const primaryNav = page.getByRole("navigation", { name: /빠른 이동|모바일 주요 메뉴/ });
+  await expect(primaryNav.getByRole("link", { name: /^(오늘의 )?이슈$/ })).toBeVisible();
 });
 
 test("issue, article analysis, and passive dwell tracking", async ({ page }) => {
@@ -37,6 +38,18 @@ test("issue, article analysis, and passive dwell tracking", async ({ page }) => 
   const returnResponse = await returned;
   await expect(returnResponse.status()).toBe(200);
   expect(returnResponse.request().postDataJSON()).toEqual({ client_elapsed_ms: expect.any(Number) });
+});
+
+test("today's issues keeps top stories above broad topic sections without horizontal overflow", async ({ page }) => {
+  await page.goto("/issues");
+  await expect(page.getByRole("heading", { name: "주요 이슈 TOP 10" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "대주제별 이슈" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "경제" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "국제" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "산업" })).toBeVisible();
+  await expect(page.locator(".issue-rank-list > li")).toHaveCount(1);
+  await expect(page.locator(".issue-rank-list")).not.toContainText("AI 기본법 시행 준비");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
 test("vote can be submitted, revised and deleted", async ({ page }) => {
@@ -84,3 +97,35 @@ test("mock analysis is labelled, complete and a populated topic remains usable",
 });
 
 test("guest vote lookup 401 keeps the public article visible", async ({ page }) => { await page.goto("/articles/article-05"); await expect(page.getByRole("heading", { name: "주택 공급 대책에서 세입자 보호가 빠지지 않으려면" })).toBeVisible(); await expect(page.getByRole("link", { name: "로그인 후 평가하기" })).toBeVisible(); await expect(page).toHaveURL(/\/articles\/article-05$/); });
+
+test("page transitions and browser history always start at the top", async ({ page }) => {
+  const viewport = page.viewportSize();
+  await page.setViewportSize({ width: viewport?.width ?? 1280, height: 320 });
+  const scrollAwayFromTop = async () => expect.poll(() => page.evaluate(() => {
+    let spacer = document.querySelector<HTMLElement>("[data-test-scroll-spacer]");
+    if (!spacer) {
+      spacer = document.createElement("div");
+      spacer.dataset.testScrollSpacer = "";
+      spacer.style.height = "1200px";
+      spacer.setAttribute("aria-hidden", "true");
+      document.body.append(spacer);
+    }
+    const root = document.documentElement;
+    root.style.scrollBehavior = "auto";
+    window.scrollTo(0, root.scrollHeight);
+    root.style.scrollBehavior = "";
+    return window.scrollY;
+  })).toBeGreaterThan(0);
+  await page.goto("/issues");
+  await expect.poll(() => page.evaluate(() => window.history.scrollRestoration)).toBe("manual");
+  await scrollAwayFromTop();
+
+  await page.getByRole("link", { name: "홈", exact: true }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+
+  await scrollAwayFromTop();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/issues$/);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+});

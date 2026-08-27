@@ -10,6 +10,7 @@ import { HeadlineBand } from "./headline-band";
 
 const userNav = [
   { href: "/", label: "홈", icon: Home, index: "01" },
+  { href: "/issues", label: "이슈", icon: Newspaper, index: "02" },
   { href: "/visualization", label: "관점 지도", icon: Compass, index: "03" },
   { href: "/progress", label: "나의 기록", icon: CircleGauge, index: "04" },
 ];
@@ -59,6 +60,7 @@ export function AppShell({ children, user }: { children: ReactNode; user: UserVi
       {!admin && (
         <nav className="corner-nav" aria-label="빠른 이동">
           <Link href="/" className="corner-nav__link" aria-label="홈" aria-current={pathname === "/" ? "page" : undefined}><Home size={20} aria-hidden="true" /></Link>
+          <Link href="/issues" className="corner-nav__link" aria-label="오늘의 이슈" aria-current={pathname.startsWith("/issues") ? "page" : undefined}><Newspaper size={20} aria-hidden="true" /></Link>
           <Link href={user ? "/progress" : "/login"} className="corner-nav__link member-entry" aria-label={user ? `${user.display_name}의 나의 기록` : "로그인"} aria-current={pathname.startsWith("/progress") ? "page" : undefined}><UserRound size={20} aria-hidden="true" /></Link>
         </nav>
       )}

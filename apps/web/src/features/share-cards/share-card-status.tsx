@@ -1,9 +1,9 @@
 "use client";
 
-import { Download, Share2, Trash2 } from "lucide-react";
+import { Download, RefreshCw, Share2, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api/client";
-import type { ShareCardView } from "@/lib/api/contracts";
+import type { ShareCardJobAccepted, ShareCardView } from "@/lib/api/contracts";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { StatePanel } from "@/components/ui/state-panel";
@@ -42,11 +42,20 @@ export function ShareCardStatus({ initialCard }: { initialCard: ShareCardView })
     catch { setError("공유 카드를 폐기하지 못했습니다."); }
     finally { setBusy(false); }
   };
+  const retry = async () => {
+    setBusy(true); setError("");
+    try {
+      await apiRequest<ShareCardJobAccepted>(`/share-cards/${encodeURIComponent(card.id)}/retry`, { method: "POST" });
+      setCard((current) => ({ ...current, status: "queued", etag: null }));
+      setToast("공유 카드 생성을 다시 시작했습니다.");
+    } catch { setError("공유 카드 생성을 다시 시작하지 못했습니다."); }
+    finally { setBusy(false); }
+  };
   const tone = card.status === "ready" ? "positive" : card.status === "failed" || card.status === "revoked" ? "danger" : "warning";
   return <>
     <section className="card card--padded share-status-card">
       <div className="issue-card__top"><Badge tone={tone}>{statusLabels[card.status]}</Badge><span>{card.id}</span></div>
-      {card.status === "queued" || card.status === "rendering" ? <StatePanel state="processing" /> : card.status === "failed" ? <StatePanel state="error" /> : card.status === "revoked" ? <StatePanel state="unauthorized" /> : <><Snapshot snapshot={card.snapshot} /><div className="page-header__actions">{card.public_token && <><ButtonLinkDownload token={card.public_token} /><Button variant="secondary" onClick={share}><Share2 size={16} /> 공유</Button></>}<Button variant="danger" disabled={busy} onClick={revoke}><Trash2 size={16} /> 즉시 폐기</Button></div></>}
+      {card.status === "queued" || card.status === "rendering" ? <StatePanel state="processing" /> : card.status === "failed" ? <><StatePanel state="error" /><div className="page-header__actions"><Button disabled={busy} onClick={retry}><RefreshCw size={16} aria-hidden="true" /> 다시 생성</Button><Button variant="danger" disabled={busy} onClick={revoke}><Trash2 size={16} aria-hidden="true" /> 폐기</Button></div></> : card.status === "revoked" ? <StatePanel state="unauthorized" /> : <><Snapshot snapshot={card.snapshot} /><div className="page-header__actions">{card.public_token && <><ButtonLinkDownload token={card.public_token} /><Button variant="secondary" onClick={share}><Share2 size={16} /> 공유</Button></>}<Button variant="danger" disabled={busy} onClick={revoke}><Trash2 size={16} /> 즉시 폐기</Button></div></>}
       {error && <p role="alert" style={{ color: "var(--danger)" }}>{error}</p>}
     </section>
     {toast && <Toast message={toast} />}

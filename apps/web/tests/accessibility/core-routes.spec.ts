@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
-const routes = ["/login", "/onboarding/consent", "/", "/issues", "/articles/article-01", "/visualization?webgl-off=1", "/admin/weights"];
+const routes = ["/login", "/onboarding/consent", "/", "/issues", "/articles/article-01", "/visualization", "/admin/weights"];
 
 for (const route of routes) {
   test(`${route} has no serious or critical accessibility violations`, async ({ page }) => {
@@ -15,11 +15,11 @@ for (const route of routes) {
   });
 }
 
-test("vote controls and fallback are keyboard accessible", async ({ page }) => {
+test("vote controls and the coordinate plot are keyboard accessible", async ({ page }) => {
   await page.goto("/articles/article-01");
   const perspectiveChoice = page.getByRole("button", { name: "약간 우편향 +33" });
   await perspectiveChoice.focus(); await page.keyboard.press("Enter"); await expect(perspectiveChoice).toHaveAttribute("aria-pressed", "true");
-  await page.goto("/visualization?webgl-off=1");
-  await expect(page.getByRole("region", { name: "나의 기준으로 읽는 기사 지형" })).toBeVisible();
-  await expect(page.getByRole("img", { name: /나의 관점과 기사 분포의 편향성과 과장성/ })).toBeVisible();
+  await page.goto("/visualization");
+  await expect(page.getByRole("region", { name: "나의 편향 기준으로 읽는 기사 좌표" })).toBeVisible();
+  await expect(page.getByRole("img", { name: /나의 편향 기준과 기사 편향성·과장성 좌표 분포/ })).toBeVisible();
 });

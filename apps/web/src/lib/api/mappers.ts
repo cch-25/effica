@@ -93,7 +93,7 @@ export function mapArticle(dto: ArticleDto, score: ScoreDto | null): Article {
 }
 
 export function mapArticleWithCoordinate(dto: ArticleWithCoordinateDto): Article {
-  return articleBase(dto, dto.coordinate, "ISSUE_BALANCE", dto.current_version_id ?? "current");
+  return articleBase(dto, dto.coordinate ?? null, "ISSUE_BALANCE", dto.current_version_id ?? "분석 준비 중");
 }
 
 export function mapArticlePage(dto: ArticlePageDto): CursorPage<Article> {
@@ -106,8 +106,13 @@ export function mapIssue(dto: IssueDto | IssueDetailDto): Issue {
     id: dto.id,
     title: decodeHtmlEntities(dto.title),
     summary: decodeHtmlEntities(dto.summary),
-    topic: "일반",
-    status: ["active", "open"].includes(status) && dto.article_ids.length >= 2 ? "balanced" : "preparing",
+    topic: dto.topic,
+    status: ["active", "open"].includes(status)
+      && dto.analysis_status === "READY"
+      && dto.article_ids.length >= 2
+      && (dto.source_count ?? 0) >= 2
+      ? "balanced"
+      : "preparing",
     kind: dto.kind ?? "TOPIC",
     sourceCount: dto.source_count ?? 0,
     analysisStatus: dto.analysis_status ?? "PROCESSING",

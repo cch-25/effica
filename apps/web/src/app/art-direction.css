@@ -152,7 +152,7 @@
   position: relative;
   min-height: 0;
   overflow: visible;
-  margin: 0 0 clamp(1.75rem, 4vw, 3rem);
+  margin: 0 auto clamp(1.75rem, 4vw, 3rem);
   padding: clamp(1rem, 2.5vw, 1.75rem) clamp(7rem, 10vw, 9rem) clamp(1rem, 2.5vw, 1.75rem) 0;
   border-bottom: 1px solid var(--peer-color-ink);
   background: transparent;
@@ -475,17 +475,19 @@
   border-bottom: 1px solid var(--peer-color-ink);
 }
 
-.home-section--feed .news-card:nth-child(odd) {
+.home-section--feed .news-card:nth-child(5n + 1),
+.home-section--feed .news-card:nth-child(5n + 3) {
   border-right: 1px solid var(--peer-color-ink);
 }
 
-.home-section--feed .news-card:nth-child(1) { grid-column: span 7; background: var(--effica-butter); }
-.home-section--feed .news-card:nth-child(2) { grid-column: span 5; background: var(--effica-mint); }
-.home-section--feed .news-card:nth-child(3) { grid-column: span 5; background: var(--effica-lilac); }
-.home-section--feed .news-card:nth-child(4) { grid-column: span 7; background: var(--effica-sky); }
-.home-section--feed .news-card:nth-child(5) { grid-column: 1 / -1; background: var(--effica-coral); }
+.home-section--feed .news-card:nth-child(5n + 1) { grid-column: span 7; background: var(--effica-butter); }
+.home-section--feed .news-card:nth-child(5n + 2) { grid-column: span 5; background: var(--effica-mint); }
+.home-section--feed .news-card:nth-child(5n + 3) { grid-column: span 5; background: var(--effica-lilac); }
+.home-section--feed .news-card:nth-child(5n + 4) { grid-column: span 7; background: var(--effica-sky); }
+.home-section--feed .news-card:nth-child(5n) { grid-column: 1 / -1; background: var(--effica-coral); }
 
-.home-section--feed .news-card:last-child:nth-child(odd) {
+.home-section--feed .news-card:last-child:nth-child(5n + 1),
+.home-section--feed .news-card:last-child:nth-child(5n + 3) {
   grid-column: 1 / -1;
   min-height: 15.5rem;
   border-right: 0;
@@ -709,8 +711,8 @@
   color: var(--peer-color-ink);
 }
 
-.shell:not(.shell--admin) .issue-filter-status + .grid .issue-card {
-  padding: 1.5rem;
+.shell:not(.shell--admin) .issue-groups .issue-card {
+  padding: clamp(1.25rem, 2.4vw, 1.75rem);
 }
 
 .tabs__indicator {

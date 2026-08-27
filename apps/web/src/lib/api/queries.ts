@@ -1,6 +1,6 @@
 "use client";
 
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "./client";
 import { ApiError } from "./client";
 import {
@@ -19,7 +19,7 @@ import {
   type ScoreDto,
   type VisualizationPointPageDto,
 } from "./mappers";
-import type { IssueComparison, Vote, VoteAggregate } from "./types";
+import type { Article, IssueComparison, Vote, VoteAggregate } from "./types";
 
 function flattenPages<T>(pages: Array<{ items: T[]; next_cursor: string | null }> | undefined) {
   if (!pages) return undefined;
@@ -51,12 +51,13 @@ export function useFeedQuery() {
   return { ...query, data: flattenPages(query.data?.pages) };
 }
 
-export function useIssuesQuery() {
+export function useIssuesQuery(limit = 20) {
   const query = useInfiniteQuery({
-    queryKey: ["issues"],
+    queryKey: ["issues", limit],
     queryFn: async ({ pageParam }) => {
-      const suffix = pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : "";
-      return mapIssuePage(await apiRequest<IssuePageDto>(`/issues${suffix}`));
+      const params = new URLSearchParams({ limit: String(limit) });
+      if (pageParam) params.set("cursor", pageParam);
+      return mapIssuePage(await apiRequest<IssuePageDto>(`/issues?${params}`));
     },
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.next_cursor,
@@ -84,6 +85,30 @@ export function useIssueArticlesQuery(issueId: string) {
     queryKey: ["issue", issueId, "articles"],
     queryFn: async () => mapArticlePage(await apiRequest<ArticlePageDto>(`/issues/${encodeURIComponent(issueId)}/articles`)),
   });
+}
+
+export function useIssueArticleCollectionsQuery(issueIds: string[]) {
+  const normalizedIds = [...new Set(issueIds)].sort();
+  const queries = useQueries({
+    queries: normalizedIds.map((issueId) => ({
+      queryKey: ["issue", issueId, "articles"],
+      queryFn: async () => mapArticlePage(await apiRequest<ArticlePageDto>(`/issues/${encodeURIComponent(issueId)}/articles`)),
+      staleTime: 60_000,
+    })),
+  });
+  const byId = new Map<string, Article>();
+  for (const query of queries) {
+    for (const article of query.data?.items ?? []) byId.set(article.id, article);
+  }
+  const items = [...byId.values()].sort((left, right) => (
+    new Date(right.publishedAt).getTime() - new Date(left.publishedAt).getTime()
+      || left.id.localeCompare(right.id)
+  ));
+  return {
+    items,
+    isPending: queries.some((query) => query.isPending),
+    isError: queries.length > 0 && queries.every((query) => query.isError),
+  };
 }
 
 export function useIssueComparisonQuery(issueId: string, articleIds: string[]) {

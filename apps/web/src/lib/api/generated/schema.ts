@@ -1203,7 +1203,7 @@ export interface components {
             author?: string | null;
             /** Canonical Url */
             canonical_url: string;
-            coordinate: components["schemas"]["Coordinate"];
+            coordinate?: components["schemas"]["Coordinate"] | null;
             /** Current Version Id */
             current_version_id?: string | null;
             /** Id */
@@ -1580,6 +1580,8 @@ export interface components {
             status: string;
             /** Summary */
             summary: string;
+            /** Topic */
+            topic: string;
             /** Title */
             title: string;
             /** Version */
@@ -1641,6 +1643,8 @@ export interface components {
             status: string;
             /** Summary */
             summary: string;
+            /** Topic */
+            topic: string;
             /** Title */
             title: string;
             /** Version */

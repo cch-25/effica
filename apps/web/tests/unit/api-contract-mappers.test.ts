@@ -18,7 +18,7 @@ it("maps the generated feed contract and normalizes backend reason codes", () =>
 
 it("maps generated issue and visualization contracts to camelCase screen models", () => {
   const issues: IssuePageDto = {
-    items: [{ id: "i1", title: "이슈", summary: "요약", status: "active", kind: "EVENT", source_count: 3, analysis_status: "READY", data_as_of: "2026-08-23T00:00:00Z", freshness_status: "CURRENT", editorial_priority: 1, version: 1, article_ids: ["a1", "a2"], opened_at: "2026-08-16T00:00:00Z", last_activity_at: "2026-08-16T01:00:00Z" }],
+    items: [{ id: "i1", title: "이슈", summary: "요약", topic: "정치", status: "active", kind: "EVENT", source_count: 3, analysis_status: "READY", data_as_of: "2026-08-23T00:00:00Z", freshness_status: "CURRENT", editorial_priority: 1, version: 1, article_ids: ["a1", "a2"], opened_at: "2026-08-16T00:00:00Z", last_activity_at: "2026-08-16T01:00:00Z" }],
   };
   const points: VisualizationPointPageDto = {
     items: [{ entity_type: "article", entity_id: "a1", label: "기사", x: 4, y: 5, z: 6, confidence: 0.7 }],

@@ -1,7 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import * as THREE from "three";
+import { useId } from "react";
 import type { VisualizationPoint } from "@/lib/api/types";
 
 type PerspectiveFieldProps = {
@@ -11,404 +10,193 @@ type PerspectiveFieldProps = {
   title: string;
 };
 
-type GraphDomain = {
-  biasExtent: number;
-  sensationalismMax: number;
-};
+export const GRAPH_BOUNDS = {
+  width: 640,
+  height: 500,
+  left: 76,
+  right: 616,
+  top: 72,
+  bottom: 418,
+} as const;
 
-const subscribeStatic = () => () => undefined;
-const getForcedFallback = () => new URLSearchParams(window.location.search).has("webgl-off");
-const getServerFallback = () => false;
+const BIAS_EXTENT = 100;
+const SENSATIONALISM_MAX = 100;
+const BIAS_BANDWIDTH = 24;
+const SENSATIONALISM_BANDWIDTH = 18;
+const X_TICKS = [-100, -50, 0, 50, 100];
+const Y_TICKS = [0, 25, 50, 75, 100];
 
-function useReducedMotion() {
-  const [reduced, setReduced] = useState(false);
-
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const update = () => setReduced(media.matches);
-    update();
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
-
-  return reduced;
+function clamp(value: number, minimum: number, maximum: number) {
+  return Math.min(maximum, Math.max(minimum, value));
 }
 
-function sensationalism(point: VisualizationPoint) {
-  return point.type === "user" ? 0 : point.sensationalism ?? 0;
+function articleSensationalism(point: VisualizationPoint) {
+  return point.type === "user" ? 0 : clamp(point.sensationalism ?? 0, 0, SENSATIONALISM_MAX);
 }
 
-function getGraphDomain(points: VisualizationPoint[]): GraphDomain {
-  const biasMaximum = Math.max(0, ...points.map((point) => Math.abs(point.x)));
-  const sensationalismMaximum = Math.max(0, ...points.map(sensationalism));
+function xPosition(value: number) {
+  const ratio = (clamp(value, -BIAS_EXTENT, BIAS_EXTENT) + BIAS_EXTENT) / (BIAS_EXTENT * 2);
+  return GRAPH_BOUNDS.left + ratio * (GRAPH_BOUNDS.right - GRAPH_BOUNDS.left);
+}
+
+function yPosition(value: number) {
+  const ratio = clamp(value, 0, SENSATIONALISM_MAX) / SENSATIONALISM_MAX;
+  return GRAPH_BOUNDS.bottom - ratio * (GRAPH_BOUNDS.bottom - GRAPH_BOUNDS.top);
+}
+
+export function getGraphCoordinates(point: VisualizationPoint) {
   return {
-    biasExtent: Math.min(100, Math.max(40, Math.ceil(biasMaximum / 10) * 10)),
-    sensationalismMax: Math.min(100, Math.max(40, Math.ceil(sensationalismMaximum / 10) * 10)),
+    x: xPosition(point.x),
+    y: yPosition(articleSensationalism(point)),
   };
 }
 
-function terrainPoints(points: VisualizationPoint[]) {
-  const articles = points.filter((point) => point.type === "article");
-  return articles.length ? articles : points.filter((point) => point.type !== "user");
-}
-
-function densityAt(
-  bias: number,
-  exaggeration: number,
-  articles: VisualizationPoint[],
-  domain: GraphDomain,
-) {
-  const biasBandwidth = domain.biasExtent * 0.24;
-  const exaggerationBandwidth = domain.sensationalismMax * 0.22;
-  return articles.reduce((sum, point) => {
-    const biasDistance = (bias - point.x) / biasBandwidth;
-    const exaggerationDistance = (exaggeration - sensationalism(point)) / exaggerationBandwidth;
-    return sum + Math.exp(-0.5 * (biasDistance ** 2 + exaggerationDistance ** 2));
+function densityAt(bias: number, sensationalism: number, articles: VisualizationPoint[]) {
+  return articles.reduce((sum, article) => {
+    const biasDistance = (bias - article.x) / BIAS_BANDWIDTH;
+    const sensationalismDistance = (sensationalism - articleSensationalism(article)) / SENSATIONALISM_BANDWIDTH;
+    return sum + Math.exp(-0.5 * (biasDistance ** 2 + sensationalismDistance ** 2));
   }, 0);
 }
 
-function surfaceColor(normalizedDensity: number) {
-  const blue = new THREE.Color("#7893e5");
-  const mint = new THREE.Color("#9cc9aa");
-  const butter = new THREE.Color("#f3d36f");
-  const coral = new THREE.Color("#f08a73");
-  if (normalizedDensity < 0.36) return blue.lerp(mint, normalizedDensity / 0.36);
-  if (normalizedDensity < 0.72) return mint.lerp(butter, (normalizedDensity - 0.36) / 0.36);
-  return butter.lerp(coral, (normalizedDensity - 0.72) / 0.28);
+function signed(value: number) {
+  if (value > 0) return `+${Math.round(value)}`;
+  return `${Math.round(value)}`;
 }
 
-function surfaceHeight(density: number, maximum: number) {
-  return 0.08 + (maximum > 0 ? density / maximum : 0) * 2.45;
+function pointValue(point: VisualizationPoint) {
+  if (point.type === "user") return `나의 편향 기준 ${signed(point.x)}`;
+  const sensationalism = point.sensationalism === null ? "미측정" : Math.round(point.sensationalism);
+  return `편향 ${signed(point.x)} · 과장 ${sensationalism}`;
 }
 
-function graphPosition(point: VisualizationPoint, domain: GraphDomain) {
-  return new THREE.Vector3(
-    THREE.MathUtils.clamp(point.x / domain.biasExtent, -1, 1) * 3.6,
-    0,
-    2.7 - (THREE.MathUtils.clamp(sensationalism(point), 0, domain.sensationalismMax) / domain.sensationalismMax) * 5.4,
-  );
+function selectedLabelPosition(x: number, y: number) {
+  const width = 174;
+  const height = 48;
+  const placeLeft = x > (GRAPH_BOUNDS.left + GRAPH_BOUNDS.right) / 2;
+  return {
+    x: clamp(placeLeft ? x - width - 18 : x + 18, GRAPH_BOUNDS.left + 5, GRAPH_BOUNDS.right - width - 5),
+    y: clamp(y - height - 18, GRAPH_BOUNDS.top + 5, GRAPH_BOUNDS.bottom - height - 8),
+    width,
+    height,
+  };
 }
 
-function disposeScene(scene: THREE.Scene) {
-  scene.traverse((object) => {
-    const renderable = object as THREE.Object3D & {
-      geometry?: THREE.BufferGeometry;
-      material?: THREE.Material | THREE.Material[];
-    };
-    renderable.geometry?.dispose();
-    if (!renderable.material) return;
-    (Array.isArray(renderable.material) ? renderable.material : [renderable.material]).forEach((item) => {
-      const mapped = item as THREE.Material & { map?: THREE.Texture | null };
-      mapped.map?.dispose();
-      item.dispose();
-    });
-  });
-}
-
-function createSelectionLabel(label: string) {
-  const labelCanvas = document.createElement("canvas");
-  labelCanvas.width = 256;
-  labelCanvas.height = 84;
-  const context = labelCanvas.getContext("2d");
-  if (!context) return null;
-  context.fillStyle = "#11110f";
-  context.fillRect(10, 10, 236, 64);
-  context.fillStyle = "#ffffff";
-  context.font = "700 30px ui-monospace, SFMono-Regular, Menlo, monospace";
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.fillText(label, 128, 43);
-  const texture = new THREE.CanvasTexture(labelCanvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }));
-  sprite.scale.set(1.15, 0.38, 1);
-  sprite.renderOrder = 10;
-  return sprite;
-}
-
-function addLine(
-  parent: THREE.Object3D,
-  points: THREE.Vector3[],
-  color = "#555550",
-  opacity = 0.75,
-) {
-  const line = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(points),
-    new THREE.LineBasicMaterial({ color, transparent: opacity < 1, opacity }),
-  );
-  parent.add(line);
-}
-
-function TerrainCanvas({
-  points,
-  selectedId,
-  anchorId,
-  onUnavailable,
-  reducedMotion,
-}: Pick<PerspectiveFieldProps, "points" | "selectedId" | "anchorId"> & {
-  onUnavailable: () => void;
-  reducedMotion: boolean;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    if (navigator.userAgent.toLowerCase().includes("jsdom")) {
-      onUnavailable();
-      return;
-    }
-
-    let renderer: THREE.WebGLRenderer;
-    try {
-      renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: "high-performance" });
-    } catch {
-      onUnavailable();
-      return;
-    }
-
-    renderer.setClearColor("#f5f5f1", 1);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.8));
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.08;
-
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
-    camera.position.set(6.15, 5.25, 7.7);
-    camera.lookAt(0, 0.75, 0);
-
-    const world = new THREE.Group();
-    world.scale.setScalar(reducedMotion ? 1 : 0.92);
-    scene.add(world);
-
-    scene.add(new THREE.HemisphereLight("#ffffff", "#9a9a90", 3.2));
-    const keyLight = new THREE.DirectionalLight("#ffffff", 4.2);
-    keyLight.position.set(-4, 8, 6);
-    scene.add(keyLight);
-
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(7.65, 5.75),
-      new THREE.MeshStandardMaterial({ color: "#e9e9e4", roughness: 0.92, metalness: 0 }),
-    );
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -0.035;
-    world.add(floor);
-
-    const domain = getGraphDomain(points);
-    const articles = terrainPoints(points);
-    const xSegments = 42;
-    const zSegments = 32;
-    const surfaceGeometry = new THREE.PlaneGeometry(7.2, 5.4, xSegments, zSegments);
-    const positions = surfaceGeometry.attributes.position;
-    const densities: number[] = [];
-
-    for (let index = 0; index < positions.count; index += 1) {
-      const worldX = positions.getX(index);
-      const worldZ = -positions.getY(index);
-      const bias = (worldX / 3.6) * domain.biasExtent;
-      const exaggeration = ((2.7 - worldZ) / 5.4) * domain.sensationalismMax;
-      densities.push(densityAt(bias, exaggeration, articles, domain));
-    }
-
-    const maximumDensity = Math.max(0, ...densities);
-    const colors: number[] = [];
-    densities.forEach((density, index) => {
-      const normalized = maximumDensity > 0 ? density / maximumDensity : 0;
-      positions.setZ(index, surfaceHeight(density, maximumDensity));
-      const color = surfaceColor(normalized);
-      colors.push(color.r, color.g, color.b);
-    });
-    surfaceGeometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-    surfaceGeometry.computeVertexNormals();
-
-    const surface = new THREE.Mesh(
-      surfaceGeometry,
-      new THREE.MeshPhysicalMaterial({
-        vertexColors: true,
-        roughness: 0.46,
-        metalness: 0.02,
-        clearcoat: 0.2,
-        side: THREE.DoubleSide,
-      }),
-    );
-    surface.rotation.x = -Math.PI / 2;
-    world.add(surface);
-
-    const wireframe = new THREE.Mesh(
-      surfaceGeometry.clone(),
-      new THREE.MeshBasicMaterial({ color: "#171714", wireframe: true, transparent: true, opacity: 0.42 }),
-    );
-    wireframe.rotation.x = -Math.PI / 2;
-    wireframe.position.y = 0.012;
-    world.add(wireframe);
-
-    addLine(world, [new THREE.Vector3(-3.82, 0.01, 2.88), new THREE.Vector3(3.82, 0.01, 2.88)], "#11110f", 0.9);
-    addLine(world, [new THREE.Vector3(-3.82, 0.01, 2.88), new THREE.Vector3(-3.82, 0.01, -2.88)], "#11110f", 0.9);
-    addLine(world, [new THREE.Vector3(0, 0.015, 2.88), new THREE.Vector3(0, 0.015, -2.88)], "#555550", 0.6);
-
-    const selected = points.find((point) => point.id === selectedId) ?? points[0];
-    const selectedIndex = points.findIndex((point) => point.id === selected.id);
-    const selectedPosition = graphPosition(selected, domain);
-    const selectedDensity = densityAt(selected.x, sensationalism(selected), articles, domain);
-    const selectedHeight = surfaceHeight(selectedDensity, maximumDensity);
-    const anchor = points.find((point) => point.id === anchorId);
-    const anchorPosition = anchor ? graphPosition(anchor, domain) : null;
-    const anchorDensity = anchor ? densityAt(anchor.x, sensationalism(anchor), articles, domain) : 0;
-    const anchorHeight = anchor ? surfaceHeight(anchorDensity, maximumDensity) : 0;
-
-    if (anchor && anchorPosition && anchor.id !== selected.id) {
-      addLine(world, [
-        new THREE.Vector3(anchorPosition.x, anchorHeight + 0.08, anchorPosition.z),
-        new THREE.Vector3(selectedPosition.x, selectedHeight + 0.08, selectedPosition.z),
-      ], "#d84235", 0.9);
-      const anchorMarker = new THREE.Mesh(
-        new THREE.SphereGeometry(0.14, 24, 16),
-        new THREE.MeshPhysicalMaterial({ color: "#d84235", roughness: 0.35, clearcoat: 0.45 }),
-      );
-      anchorMarker.position.set(anchorPosition.x, anchorHeight + 0.14, anchorPosition.z);
-      world.add(anchorMarker);
-    }
-
-    const marker = new THREE.Mesh(
-      new THREE.SphereGeometry(0.17, 28, 18),
-      new THREE.MeshPhysicalMaterial({ color: "#11110f", roughness: 0.28, clearcoat: 0.65 }),
-    );
-    marker.position.set(selectedPosition.x, selectedHeight + 0.15, selectedPosition.z);
-    world.add(marker);
-
-    addLine(world, [
-      new THREE.Vector3(selectedPosition.x, selectedHeight + 0.18, selectedPosition.z),
-      new THREE.Vector3(selectedPosition.x, selectedHeight + 0.68, selectedPosition.z),
-    ], "#11110f", 1);
-
-    const selectedLabel = createSelectionLabel(`선택 ${String(selectedIndex + 1).padStart(2, "0")}`);
-    if (selectedLabel) {
-      selectedLabel.position.set(selectedPosition.x, selectedHeight + 0.88, selectedPosition.z);
-      world.add(selectedLabel);
-    }
-
-    const resize = () => {
-      const width = Math.max(1, canvas.clientWidth);
-      const height = Math.max(1, canvas.clientHeight);
-      renderer.setSize(width, height, false);
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
-      renderer.render(scene, camera);
-    };
-    const resizeObserver = new ResizeObserver(resize);
-    resizeObserver.observe(canvas);
-    resize();
-
-    const timer = new THREE.Timer();
-    timer.connect(document);
-    let animationFrame = 0;
-    const renderFrame = (timestamp: number) => {
-      timer.update(timestamp);
-      const elapsed = timer.getElapsed();
-      const entrance = Math.min(1, elapsed / 0.9);
-      const entranceEase = 1 - Math.pow(1 - entrance, 3);
-      world.scale.setScalar(0.92 + entranceEase * 0.08);
-      marker.scale.setScalar(1 + Math.sin(elapsed * 2.2) * 0.045);
-      renderer.render(scene, camera);
-      animationFrame = window.requestAnimationFrame(renderFrame);
-    };
-
-    if (reducedMotion) renderer.render(scene, camera);
-    else animationFrame = window.requestAnimationFrame(renderFrame);
-
-    return () => {
-      window.cancelAnimationFrame(animationFrame);
-      resizeObserver.disconnect();
-      timer.dispose();
-      disposeScene(scene);
-      renderer.dispose();
-    };
-  }, [anchorId, onUnavailable, points, reducedMotion, selectedId]);
-
-  return <canvas ref={canvasRef} className="perspective-field__canvas" aria-hidden="true" />;
-}
-
-function fallbackColor(normalizedDensity: number) {
-  if (normalizedDensity > 0.74) return "#f08a73";
-  if (normalizedDensity > 0.48) return "#f3d36f";
-  if (normalizedDensity > 0.22) return "#9cc9aa";
-  return "#7893e5";
-}
-
-function PerspectiveFallback({ points, title, selectedId, anchorId }: Pick<PerspectiveFieldProps, "points" | "title" | "selectedId" | "anchorId">) {
-  const domain = getGraphDomain(points);
-  const articles = terrainPoints(points);
-  const columns = 16;
-  const rows = 10;
-  const samples = Array.from({ length: columns * rows }, (_, index) => {
-    const column = index % columns;
-    const row = Math.floor(index / columns);
-    const bias = -domain.biasExtent + (column / (columns - 1)) * domain.biasExtent * 2;
-    const exaggeration = domain.sensationalismMax - (row / (rows - 1)) * domain.sensationalismMax;
-    return { column, row, density: densityAt(bias, exaggeration, articles, domain) };
-  });
-  const maximumDensity = Math.max(0, ...samples.map((sample) => sample.density));
+export function PerspectiveField({ points, selectedId, anchorId, title }: PerspectiveFieldProps) {
+  const gradientPrefix = useId().replaceAll(":", "");
+  const articles = points.filter((point) => point.type === "article");
+  const sources = points.filter((point) => point.type === "source");
   const selected = points.find((point) => point.id === selectedId) ?? points[0];
   const selectedIndex = points.findIndex((point) => point.id === selected.id);
-  const selectedX = 76 + ((selected.x + domain.biasExtent) / (domain.biasExtent * 2)) * 568;
-  const selectedY = 424 - (sensationalism(selected) / domain.sensationalismMax) * 350;
-  const anchor = points.find((point) => point.id === anchorId);
-  const anchorX = anchor ? 76 + ((anchor.x + domain.biasExtent) / (domain.biasExtent * 2)) * 568 : 0;
-  const anchorY = anchor ? 424 - (sensationalism(anchor) / domain.sensationalismMax) * 350 : 0;
-
-  return (
-    <svg className="perspective-field__fallback" viewBox="0 0 720 520" role="img" aria-label={title}>
-      <title>{title}</title>
-      <desc>가로축은 편향성, 세로축은 과장성이며 색이 따뜻할수록 해당 구간에 분석된 기사가 많이 모여 있습니다.</desc>
-      <rect width="720" height="520" fill="#f5f5f1" />
-      {samples.map(({ column, row, density }) => (
-        <rect
-          key={`${column}-${row}`}
-          x={76 + column * (568 / columns)}
-          y={74 + row * (350 / rows)}
-          width={568 / columns + 1}
-          height={350 / rows + 1}
-          fill={fallbackColor(maximumDensity ? density / maximumDensity : 0)}
-          stroke="#11110f"
-          strokeOpacity=".28"
-        />
-      ))}
-      <line x1="360" y1="74" x2="360" y2="424" stroke="#11110f" strokeWidth="2" />
-      {anchor && anchor.id !== selected.id ? <><line x1={anchorX} y1={anchorY} x2={selectedX} y2={selectedY} stroke="#d84235" strokeWidth="3" /><circle cx={anchorX} cy={anchorY} r="9" fill="#d84235" stroke="#ffffff" strokeWidth="3" /></> : null}
-      <circle cx={selectedX} cy={selectedY} r="10" fill="#11110f" stroke="#ffffff" strokeWidth="4" />
-      <rect x={selectedX - 34} y={selectedY - 46} width="68" height="28" fill="#11110f" />
-      <text x={selectedX} y={selectedY - 27} fill="#ffffff" fontSize="12" fontWeight="700" textAnchor="middle">선택 {String(selectedIndex + 1).padStart(2, "0")}</text>
-    </svg>
-  );
-}
-
-export function PerspectiveField(props: PerspectiveFieldProps) {
-  const reducedMotion = useReducedMotion();
-  const [webglUnavailable, setWebglUnavailable] = useState(false);
-  const forcedFallback = useSyncExternalStore(subscribeStatic, getForcedFallback, getServerFallback);
-  const handleUnavailable = useCallback(() => setWebglUnavailable(true), []);
-  const domain = getGraphDomain(props.points);
-  const articleCount = terrainPoints(props.points).length;
+  const selectedPosition = getGraphCoordinates(selected);
+  const label = selectedLabelPosition(selectedPosition.x, selectedPosition.y);
+  const anchor = points.find((point) => point.id === anchorId && point.type === "user");
+  const anchorX = anchor ? xPosition(anchor.x) : null;
+  const densityMaximum = Math.max(0, ...articles.map((article) => densityAt(article.x, articleSensationalism(article), articles)));
+  const densityRadiusX = ((GRAPH_BOUNDS.right - GRAPH_BOUNDS.left) * BIAS_BANDWIDTH) / (BIAS_EXTENT * 2) * 1.65;
+  const densityRadiusY = ((GRAPH_BOUNDS.bottom - GRAPH_BOUNDS.top) * SENSATIONALISM_BANDWIDTH) / SENSATIONALISM_MAX * 1.65;
 
   return (
     <div className="perspective-field">
-      <div className="perspective-field__hud" aria-hidden="true">
-        <span className="perspective-field__title"><strong>{props.anchorId ? "나의 기준 기사 지형" : "기사 분포 지형"}</strong><small>가로 = 편향 · 안쪽 = 과장성 · 언덕 = 기사 밀집도</small></span>
-        <span>기사 {articleCount}개 기준</span>
+      <div className="perspective-field__header">
+        <div>
+          <strong>기사 좌표 분포</strong>
+          <p>점 하나는 기사 한 건입니다. 가까이 모인 곳일수록 배경이 진해집니다.</p>
+        </div>
+        <span>기사 {articles.length}건</span>
       </div>
-      {webglUnavailable || forcedFallback ? (
-        <PerspectiveFallback points={props.points} title={props.title} selectedId={props.selectedId} anchorId={props.anchorId} />
-      ) : (
-        <TerrainCanvas points={props.points} selectedId={props.selectedId} anchorId={props.anchorId} reducedMotion={reducedMotion} onUnavailable={handleUnavailable} />
-      )}
-      <div className="perspective-field__axes" aria-hidden="true">
-        <span>← 좌편향 −{domain.biasExtent}</span>
-        <span>중립 0</span>
-        <span>+{domain.biasExtent} 우편향 →</span>
+
+      <svg className="perspective-field__chart" viewBox={`0 0 ${GRAPH_BOUNDS.width} ${GRAPH_BOUNDS.height}`} role="img" aria-label={title}>
+        <title>{title}</title>
+        <desc>가로축은 마이너스 100 좌편향부터 플러스 100 우편향, 세로축은 0부터 100까지의 기사 과장성입니다. 모든 기사 점은 실제 분석 좌표에 놓이고 배경의 진하기는 기사 밀도를 나타냅니다.</desc>
+        <defs>
+          <clipPath id={`${gradientPrefix}-plot`}>
+            <rect x={GRAPH_BOUNDS.left} y={GRAPH_BOUNDS.top} width={GRAPH_BOUNDS.right - GRAPH_BOUNDS.left} height={GRAPH_BOUNDS.bottom - GRAPH_BOUNDS.top} />
+          </clipPath>
+          {articles.map((article, index) => {
+            const density = densityAt(article.x, articleSensationalism(article), articles);
+            const strength = densityMaximum > 0 ? density / densityMaximum : 0;
+            return (
+              <radialGradient key={article.id} id={`${gradientPrefix}-density-${index}`}>
+                <stop offset="0" stopColor="#16867f" stopOpacity={0.3 + strength * 0.28} />
+                <stop offset="0.62" stopColor="#5baaa5" stopOpacity={0.13 + strength * 0.12} />
+                <stop offset="1" stopColor="#5baaa5" stopOpacity="0" />
+              </radialGradient>
+            );
+          })}
+        </defs>
+
+        <rect className="perspective-field__plot-background" x={GRAPH_BOUNDS.left} y={GRAPH_BOUNDS.top} width={GRAPH_BOUNDS.right - GRAPH_BOUNDS.left} height={GRAPH_BOUNDS.bottom - GRAPH_BOUNDS.top} />
+        <rect className="perspective-field__neutral-zone" x={xPosition(-10)} y={GRAPH_BOUNDS.top} width={xPosition(10) - xPosition(-10)} height={GRAPH_BOUNDS.bottom - GRAPH_BOUNDS.top} />
+
+        {Y_TICKS.map((tick) => {
+          const y = yPosition(tick);
+          return (
+            <g key={`y-${tick}`}>
+              <line className="perspective-field__grid-line" x1={GRAPH_BOUNDS.left} y1={y} x2={GRAPH_BOUNDS.right} y2={y} />
+              <text className="perspective-field__tick" x={GRAPH_BOUNDS.left - 14} y={y + 5} textAnchor="end">{tick}</text>
+            </g>
+          );
+        })}
+        {X_TICKS.map((tick) => {
+          const x = xPosition(tick);
+          return (
+            <g key={`x-${tick}`}>
+              <line className={tick === 0 ? "perspective-field__zero-line" : "perspective-field__grid-line"} x1={x} y1={GRAPH_BOUNDS.top} x2={x} y2={GRAPH_BOUNDS.bottom} />
+              <text className="perspective-field__tick" x={x} y={GRAPH_BOUNDS.bottom + 25} textAnchor="middle">{signed(tick)}</text>
+            </g>
+          );
+        })}
+
+        <g clipPath={`url(#${gradientPrefix}-plot)`}>
+          {articles.map((article, index) => {
+            const position = getGraphCoordinates(article);
+            return <ellipse key={article.id} cx={position.x} cy={position.y} rx={densityRadiusX} ry={densityRadiusY} fill={`url(#${gradientPrefix}-density-${index})`} />;
+          })}
+        </g>
+
+        {anchorX !== null ? (
+          <g className="perspective-field__personal-marker">
+            <line x1={anchorX} y1={GRAPH_BOUNDS.top} x2={anchorX} y2={GRAPH_BOUNDS.bottom} />
+            <path d={`M ${anchorX} ${GRAPH_BOUNDS.bottom - 3} l -8 -13 h 16 z`} />
+            <text x={anchorX} y={GRAPH_BOUNDS.top - 15} textAnchor="middle">나 {signed(anchor?.x ?? 0)}</text>
+          </g>
+        ) : null}
+
+        {articles.map((article) => {
+          const position = getGraphCoordinates(article);
+          return <circle key={article.id} className="perspective-field__article-point" cx={position.x} cy={position.y} r="5.5" />;
+        })}
+        {sources.map((source) => {
+          const position = getGraphCoordinates(source);
+          return <rect key={source.id} className="perspective-field__source-point" x={position.x - 5} y={position.y - 5} width="10" height="10" transform={`rotate(45 ${position.x} ${position.y})`} />;
+        })}
+
+        {selected.type === "user" ? (
+          <circle className="perspective-field__selection-ring" cx={selectedPosition.x} cy={GRAPH_BOUNDS.bottom - 10} r="14" />
+        ) : (
+          <circle className="perspective-field__selection-ring" cx={selectedPosition.x} cy={selectedPosition.y} r="13" />
+        )}
+        <g className="perspective-field__selected-label">
+          <line x1={selectedPosition.x} y1={selected.type === "user" ? GRAPH_BOUNDS.bottom - 10 : selectedPosition.y} x2={label.x + (selectedPosition.x > label.x ? label.width : 0)} y2={label.y + label.height / 2} />
+          <rect x={label.x} y={label.y} width={label.width} height={label.height} />
+          <text x={label.x + 12} y={label.y + 19}>선택 {String(selectedIndex + 1).padStart(2, "0")}</text>
+          <text className="perspective-field__selected-value" x={label.x + 12} y={label.y + 38}>{pointValue(selected)}</text>
+        </g>
+
+        <line className="perspective-field__axis-line" x1={GRAPH_BOUNDS.left} y1={GRAPH_BOUNDS.bottom} x2={GRAPH_BOUNDS.right} y2={GRAPH_BOUNDS.bottom} />
+        <line className="perspective-field__axis-line" x1={GRAPH_BOUNDS.left} y1={GRAPH_BOUNDS.top} x2={GRAPH_BOUNDS.left} y2={GRAPH_BOUNDS.bottom} />
+        <text className="perspective-field__axis-title" x={(GRAPH_BOUNDS.left + GRAPH_BOUNDS.right) / 2} y={GRAPH_BOUNDS.height - 18} textAnchor="middle">기사의 편향성 · 좌편향 ← 0 → 우편향</text>
+        <text className="perspective-field__axis-title" x="18" y={(GRAPH_BOUNDS.top + GRAPH_BOUNDS.bottom) / 2} textAnchor="middle" transform={`rotate(-90 18 ${(GRAPH_BOUNDS.top + GRAPH_BOUNDS.bottom) / 2})`}>기사의 과장성 · 높을수록 자극적</text>
+        <text className="perspective-field__neutral-label" x={xPosition(0)} y={GRAPH_BOUNDS.top + 21} textAnchor="middle">중립 구간</text>
+      </svg>
+
+      <div className="perspective-field__key" aria-hidden="true">
+        <span><i className="perspective-field__key-article" />기사</span>
+        <span><i className="perspective-field__key-source" />출처 평균</span>
+        {anchor ? <span><i className="perspective-field__key-personal" />나의 편향 기준</span> : null}
+        <span><i className="perspective-field__key-density" />기사 밀집 영역</span>
       </div>
-      <div className="perspective-field__depth" aria-hidden="true">과장성 · 낮음 0 → 높음 {domain.sensationalismMax}</div>
     </div>
   );
 }

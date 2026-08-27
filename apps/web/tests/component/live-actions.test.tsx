@@ -30,3 +30,21 @@ it("공유 카드 폐기는 DELETE 성공 응답 뒤 실제 상태를 갱신한�
   await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith("/share-cards/card-1", { method: "DELETE" }));
   expect(screen.getByText("폐기됨")).toBeVisible();
 });
+
+it("실패한 공유 카드는 같은 카드에서 재생성하거나 폐기할 수 있다", async () => {
+  mocks.apiRequest.mockResolvedValue({
+    job_id: "job-1",
+    share_card_id: "card-1",
+    status: "PENDING",
+  });
+  render(<ShareCardStatus initialCard={{ id: "card-1", status: "failed", public_token: null, snapshot: { x: 2 } }} />);
+
+  expect(screen.getByRole("button", { name: "폐기" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "다시 생성" }));
+
+  await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith(
+    "/share-cards/card-1/retry",
+    { method: "POST" },
+  ));
+  expect(screen.getByText("생성 대기")).toBeVisible();
+});

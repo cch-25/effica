@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/client";
 import type { VisualizationPoint } from "@/lib/api/types";
 import { PerspectiveField } from "./perspective-field";
+import { DefinitionTooltip } from "@/components/ui/definition-tooltip";
+import { analysisTerms } from "@/lib/content/analysis-terms";
 
 export function VisualizationExplorer() {
   const pointsQuery = useVisualizationPointsQuery();
@@ -44,7 +46,7 @@ export function VisualizationExplorer() {
 
 export function perspectiveDistance(point: VisualizationPoint, personalPoint: VisualizationPoint) {
   const biasGap = point.x - personalPoint.x;
-  if (personalPoint.sensationalism === null) return Math.abs(biasGap);
+  if (personalPoint.type === "user" || personalPoint.sensationalism === null) return Math.abs(biasGap);
   const sensationalismGap = (point.sensationalism ?? 0) - personalPoint.sensationalism;
   return Math.sqrt(biasGap ** 2 + (sensationalismGap * .65) ** 2);
 }
@@ -79,7 +81,7 @@ function VisualizationFieldContent({ points, initialPointId, personalPointId }: 
     };
   }, [points]);
 
-  const graphTitle = `${personalPoint ? "나의 관점과 기사 분포의" : "기사 분포 표본의"} 편향성과 과장성`;
+  const graphTitle = `${personalPoint ? "나의 편향 기준과 " : ""}기사 편향성·과장성 좌표 분포`;
 
   return (
     <section className="perspective-solid" aria-labelledby="perspective-solid-title">
@@ -88,44 +90,44 @@ function VisualizationFieldContent({ points, initialPointId, personalPointId }: 
       </div>
 
       <div className="perspective-solid__summary">
-        <p className="eyebrow">{personal ? "자기보고 기준점" : current.type === "source" ? "언론사 집계" : "선택한 기사"}</p>
-        <h2 id="perspective-solid-title">{personalPoint ? "나의 기준으로 읽는 기사 지형" : "두 기준으로 읽는 기사 지형"}</h2>
+        <p className="eyebrow">{personal ? "자기보고 기준점" : current.type === "source" ? "출처 집계" : "선택한 기사"}</p>
+        <h2 id="perspective-solid-title">{personalPoint ? "나의 편향 기준으로 읽는 기사 좌표" : "두 기준으로 읽는 기사 좌표"}</h2>
         <p className="perspective-solid__selection">{current.label}</p>
         {personalPoint && currentDistance !== null ? (
           <div className="perspective-solid__personal">
             <strong>{distanceLabel(currentDistance)}</strong>
-            <span>{personalPoint.label}과의 좌표 거리 {Math.round(currentDistance)} · 붉은 점은 나, 검은 점은 선택 기사</span>
+            <span>{personalPoint.label}과의 편향 거리 {Math.round(currentDistance)} · 붉은 선은 나의 편향 기준, 검은 테두리는 선택 자료</span>
           </div>
         ) : null}
-        <p className="perspective-solid__intro">표면은 전체 기사 분포이며, 개인화는 지형을 왜곡하지 않고 나의 좌표에서 가까운 순서와 두 점 사이 거리로 표시합니다.</p>
+        <p className="perspective-solid__intro">모든 점은 실제 분석 수치에 놓입니다. 배경 형태는 전체 기사 좌표로 계산하며, 기사를 선택해도 분포 자체를 왜곡하지 않습니다.</p>
 
         <dl className="perspective-solid__readout">
           <div>
-            <dt>편향성</dt>
+            <dt><DefinitionTooltip {...analysisTerms.bias} /></dt>
             <dd>{formatBiasScore(current.x)}</dd>
           </div>
           <div>
-            <dt>과장성</dt>
+            <dt><DefinitionTooltip {...analysisTerms.sensationalism} /></dt>
             <dd>{sensationalismLabel}</dd>
           </div>
           <div>
-            <dt>분석 신뢰도</dt>
+            <dt><DefinitionTooltip {...analysisTerms.confidence} /></dt>
             <dd>{Math.round(current.confidence * 100)}%</dd>
           </div>
         </dl>
 
         <dl className="perspective-solid__distribution" aria-label="기사 분석 분포 요약">
-          <div><dt>편향 범위</dt><dd>{formatBiasScore(distribution.biasMin)} — {formatBiasScore(distribution.biasMax)}</dd></div>
-          <div><dt>평균 과장성</dt><dd>{distribution.averageSensationalism === null ? "미측정" : Math.round(distribution.averageSensationalism)}</dd></div>
-          <div><dt>평균 신뢰도</dt><dd>{Math.round(distribution.averageConfidence * 100)}%</dd></div>
+          <div><dt><DefinitionTooltip {...analysisTerms.biasRange} /></dt><dd>{formatBiasScore(distribution.biasMin)} — {formatBiasScore(distribution.biasMax)}</dd></div>
+          <div><dt><DefinitionTooltip {...analysisTerms.averageSensationalism} /></dt><dd>{distribution.averageSensationalism === null ? "미측정" : Math.round(distribution.averageSensationalism)}</dd></div>
+          <div><dt><DefinitionTooltip {...analysisTerms.averageConfidence} /></dt><dd>{Math.round(distribution.averageConfidence * 100)}%</dd></div>
         </dl>
       </div>
 
       <div className="perspective-solid__scope" aria-label="시각화에 포함된 자료">
         <span>기사 <strong>{counts.article}</strong></span>
-        <span>언론사 <strong>{counts.source}</strong></span>
+        <span>출처 <strong>{counts.source}</strong></span>
         <span>자기보고 <strong>{counts.user}</strong></span>
-        <span className="perspective-solid__legend"><i /> 낮은 밀도 <i /> 중간 <i /> 높은 밀도</span>
+        <span className="perspective-solid__legend">분포 배경이 진할수록 기사가 많이 모인 구간</span>
       </div>
 
       <div className="perspective-solid__index" role="group" aria-label="그래프에서 확인할 자료">

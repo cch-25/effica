@@ -7,10 +7,15 @@ import { Radio } from "@base-ui/react/radio";
 import { RadioGroup } from "@base-ui/react/radio-group";
 import { Select } from "@base-ui/react/select";
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
-import type { ComponentProps, ReactNode } from "react";
+import { useId, type ComponentProps, type ReactNode } from "react";
 
 export function CheckboxField({ label, description, className = "", ...props }: Omit<Checkbox.Root.Props, "children"> & { label: ReactNode; description?: ReactNode; className?: string }) {
-  return <label className={`check-row ${className}`}><Checkbox.Root className="base-checkbox" {...props}><Checkbox.Indicator className="base-checkbox__indicator"><Check size={12} strokeWidth={3} /></Checkbox.Indicator></Checkbox.Root><span><strong>{label}</strong>{description && <small>{description}</small>}</span></label>;
+  const generatedId = useId();
+  const labelId = `${generatedId}-label`;
+  const descriptionId = `${generatedId}-description`;
+  const labelledBy = props["aria-label"] || props["aria-labelledby"] ? props["aria-labelledby"] : labelId;
+  const describedBy = props["aria-describedby"] ?? (description ? descriptionId : undefined);
+  return <label className={`check-row ${className}`}><Checkbox.Root className="base-checkbox" aria-labelledby={labelledBy} aria-describedby={describedBy} {...props}><Checkbox.Indicator className="base-checkbox__indicator"><Check size={12} strokeWidth={3} /></Checkbox.Indicator></Checkbox.Root><span><strong id={labelId}>{label}</strong>{description && <small id={descriptionId}>{description}</small>}</span></label>;
 }
 
 export function RadioScale({ name, values, required }: { name: string; values: number[]; required?: boolean }) {

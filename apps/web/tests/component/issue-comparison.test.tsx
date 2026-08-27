@@ -59,7 +59,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-it("shows an honest processing state when the reviewed comparison is not ready", () => {
+it("shows public article-level analysis while the cross-article review is pending", () => {
   mocks.useIssueComparisonQuery.mockReturnValue({
     data: undefined,
     isPending: false,
@@ -78,6 +78,62 @@ it("shows an honest processing state when the reviewed comparison is not ready",
 
   render(<IssueComparison issue={issue} articles={[article("a", "출처 A"), article("b", "출처 B")]} initialArticles="a,b" />);
 
-  expect(screen.getByRole("heading", { name: "준비 중입니다" })).toBeVisible();
+  expect(screen.getByRole("status", { name: "이슈 비교 준비 상태" })).toBeVisible();
+  expect(screen.getByText("현재 기사 2개 · 출처 2곳")).toBeVisible();
+  expect(screen.getByRole("heading", { name: "기사별 AI 분석 비교" })).toBeVisible();
+  expect(screen.getByText("공통 사실과 보도 프레임은 편집 검수 후 공개됩니다.")).toBeVisible();
+  expect(screen.getAllByRole("button", { name: /편향성:/ })).toHaveLength(2);
+  expect(screen.getAllByRole("link", { name: /기사 원문 보기, 새 창/ })).toHaveLength(4);
+  expect(screen.queryByRole("heading", { name: "공통으로 확인된 사실" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "잠시 연결이 불안정합니다" })).not.toBeInTheDocument();
+});
+
+it("keeps the comparison focused on shared facts, framing, and the two scores", () => {
+  mocks.useIssueComparisonQuery.mockReturnValue({
+    data: {
+      issue: {
+        id: "issue-1",
+        article_count: 2,
+        source_count: 2,
+        data_as_of: "2026-08-26T00:00:00Z",
+      },
+      common_facts: [{ id: "fact-1", text: "두 기사는 같은 정책 발표를 다룹니다." }],
+      articles: [
+        {
+          article: { id: "a", source: "출처 A", title: "출처 A 기사", published_at: "2026-08-26T00:00:00Z", canonical_url: "https://a.example.test" },
+          score: { x: -24, sensationalism: 31, confidence: .91, created_at: "2026-08-26T00:10:00Z" },
+          assessment: { summary: "정책 수혜 범위를 중심으로 설명합니다.", model_alias: "analysis", actual_model_id: "gpt-5", prompt_version: "v1" },
+          frame: { headline_frame: "수혜 대상을 중심으로 봅니다.", emphasis: ["수혜 대상"], omissions_note: "집행 일정은 확인되지 않았습니다.", evidence_refs: ["문단 2"] },
+          vote_aggregate: { status: "ready", qualified_count: 3, qualified: { x: -10, sensationalism: 28 }, small_segments_suppressed: false },
+        },
+        {
+          article: { id: "b", source: "출처 B", title: "출처 B 기사", published_at: "2026-08-26T00:00:00Z", canonical_url: "https://b.example.test" },
+          score: { x: 38, sensationalism: 52, confidence: .86, created_at: "2026-08-26T00:11:00Z" },
+          assessment: { summary: "정책 집행 조건을 중심으로 설명합니다.", model_alias: "analysis", actual_model_id: "gpt-5", prompt_version: "v1" },
+          frame: { headline_frame: "집행 조건을 중심으로 봅니다.", emphasis: ["집행 조건"], omissions_note: null, evidence_refs: ["문단 1"] },
+          vote_aggregate: { status: "ready", qualified_count: 0, qualified: { x: null, sensationalism: null }, small_segments_suppressed: true },
+        },
+      ],
+      comparison_version: "comparison-v1",
+      model_alias: "comparison",
+      actual_model_id: "gpt-5",
+      prompt_version: "v1",
+      reviewed_at: "2026-08-26T01:00:00Z",
+    },
+    isPending: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  });
+
+  render(<IssueComparison issue={issue} articles={[article("a", "출처 A"), article("b", "출처 B")]} initialArticles="a,b" />);
+
+  expect(screen.getByRole("heading", { name: "공통으로 확인된 사실" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "보도별 관점" })).toBeVisible();
+  expect(screen.getAllByText("핵심 관점")).toHaveLength(2);
+  expect(screen.getAllByRole("link", { name: /기사 원문 보기, 새 창/ })).toHaveLength(2);
+  expect(screen.getAllByRole("button", { name: /편향성:/ })).toHaveLength(2);
+  expect(screen.getAllByText(/분석 신뢰도/)).toHaveLength(2);
+  expect(screen.getAllByText("독자 평가 · AI 평가와 별도")).toHaveLength(2);
+  expect(screen.getAllByRole("link", { name: "상세 분석" })).toHaveLength(2);
 });

@@ -9,7 +9,7 @@ test("public issue comparison is accessible and does not overflow on mobile", as
   const issueId = ((await issues.json()) as { items: Array<{ id: string }> }).items[0].id;
 
   await page.goto(`/issues/${issueId}`);
-  await expect(page.getByRole("heading", { name: "보도들이 함께 확인한 사건의 바탕" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "공통으로 확인된 사실" })).toBeVisible();
   const desktop = await new AxeBuilder({ page }).analyze();
   expect(desktop.violations.filter(({ impact }) => impact === "critical" || impact === "serious")).toEqual([]);
 

@@ -36,6 +36,9 @@ describe("두 기준 화면", () => {
     expect(screen.getByRole("heading", { name: /두 기준으로 읽는/ })).toBeVisible();
     expect(screen.getAllByText("편향성").length).toBeGreaterThan(0);
     expect(screen.getAllByText("과장성").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /편향성: 기사의 주장과 강조점/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /분석 신뢰도: 현재 근거로/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /평균 신뢰도: 현재 표시된 기사들의/ })).toBeVisible();
     expect(screen.queryByText(/경제|사회문화|국가·대외/)).not.toBeInTheDocument();
     expect(screen.queryByText(/세 가지 핵심 값|3축/)).not.toBeInTheDocument();
   });

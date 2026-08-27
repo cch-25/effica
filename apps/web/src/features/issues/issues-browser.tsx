@@ -1,14 +1,14 @@
 "use client";
 
-import { Filter, RotateCcw } from "lucide-react";
+import { ChevronDown, ChevronUp, Filter, RotateCcw } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Drawer } from "@/components/ui/drawer";
 import { CheckboxField, SelectField } from "@/components/ui/form-controls";
-import { useIssuesQuery } from "@/lib/api/queries";
-import type { Issue } from "@/lib/api/types";
-import { IssueCard } from "./issue-card";
+import { useIssueArticleCollectionsQuery, useIssuesQuery } from "@/lib/api/queries";
+import type { Article, Issue } from "@/lib/api/types";
 import { isMockMode } from "@/lib/api/mode";
 import { StatePanel } from "@/components/ui/state-panel";
 
@@ -27,12 +27,133 @@ const periodInMilliseconds: Record<Exclude<Period, "all">, number> = {
   month: 30 * 24 * 60 * 60 * 1000,
 };
 
+const preferredTopicOrder = ["정치", "사회", "경제", "국제", "산업", "문화", "스포츠", "기타"];
+const collapsedTopicLength = 6;
+const genericTopicTitles = new Set(["정치", "사회", "경제", "국제", "산업", "문화", "스포츠", "기타", "과학", "기술"]);
+const genericTopicSummary = /분야의 최신 한국어 원문 기사 모음/;
+
+function isSubstantiveEventIssue(issue: Issue): boolean {
+  return issue.kind === "EVENT"
+    && issue.analysisStatus === "READY"
+    && issue.freshnessStatus === "CURRENT"
+    && issue.articleIds.length >= 3
+    && issue.sourceCount >= 3
+    && issue.summary.trim().length > 0
+    && !genericTopicTitles.has(issue.title.trim())
+    && !genericTopicSummary.test(issue.summary);
+}
+
+function compareIssueImportance(left: Issue, right: Issue): number {
+  const leftReady = left.analysisStatus === "READY" ? 1 : 0;
+  const rightReady = right.analysisStatus === "READY" ? 1 : 0;
+  const leftCurrent = left.freshnessStatus === "CURRENT" ? 1 : 0;
+  const rightCurrent = right.freshnessStatus === "CURRENT" ? 1 : 0;
+  const leftPriority = left.editorialPriority ?? Number.MAX_SAFE_INTEGER;
+  const rightPriority = right.editorialPriority ?? Number.MAX_SAFE_INTEGER;
+
+  return rightReady - leftReady
+    || leftPriority - rightPriority
+    || right.sourceCount - left.sourceCount
+    || right.articleIds.length - left.articleIds.length
+    || rightCurrent - leftCurrent
+    || new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+    || left.id.localeCompare(right.id);
+}
+
+function topicOrder(left: string, right: string): number {
+  const leftIndex = preferredTopicOrder.indexOf(left);
+  const rightIndex = preferredTopicOrder.indexOf(right);
+  if (leftIndex >= 0 || rightIndex >= 0) {
+    return (leftIndex < 0 ? preferredTopicOrder.length : leftIndex)
+      - (rightIndex < 0 ? preferredTopicOrder.length : rightIndex);
+  }
+  return left.localeCompare(right, "ko");
+}
+
+function IssueCounts({ issue }: { issue: Issue }) {
+  return <span>{issue.articleIds.length}개 기사 · {issue.sourceCount}개 출처</span>;
+}
+
+function ArticleDate({ article }: { article: Article }) {
+  const value = new Date(article.publishedAt);
+  const label = Number.isFinite(value.getTime())
+    ? new Intl.DateTimeFormat("ko-KR", { month: "2-digit", day: "2-digit" }).format(value)
+    : "날짜 확인 중";
+  return <span>{article.source} · {label}</span>;
+}
+
+function TopicSection({
+  id,
+  topic,
+  issues,
+  collectionIssueIds,
+  expanded,
+  onToggle,
+}: {
+  id: string;
+  topic: string;
+  issues: Issue[];
+  collectionIssueIds: string[];
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const collection = useIssueArticleCollectionsQuery(collectionIssueIds);
+  const rows = [
+    ...issues.map((issue) => ({ kind: "issue" as const, id: issue.id, issue })),
+    ...collection.items.map((article) => ({ kind: "article" as const, id: article.id, article })),
+  ];
+  const displayedRows = expanded ? rows : rows.slice(0, collapsedTopicLength);
+
+  return (
+    <section className="topic-section" id={id} aria-labelledby={`${id}-title`}>
+      <header className="topic-section__head">
+        <h3 id={`${id}-title`}>{topic}</h3>
+        <span>{issues.length}개 이슈 · {collection.items.length}개 기사</span>
+      </header>
+      <ul className="topic-issue-list">
+        {displayedRows.map((row) => (
+          <li key={`${row.kind}-${row.id}`}>
+            {row.kind === "issue" ? (
+              <Link className="topic-issue-row" href={`/issues/${row.issue.id}`}>
+                <span className="topic-issue-row__copy">
+                  <small>이슈</small>
+                  <strong>{row.issue.title}</strong>
+                  {row.issue.summary ? <span>{row.issue.summary}</span> : null}
+                </span>
+                <IssueCounts issue={row.issue} />
+              </Link>
+            ) : (
+              <Link className="topic-issue-row topic-article-row" href={`/articles/${row.article.id}`}>
+                <span className="topic-issue-row__copy">
+                  <small>기사</small>
+                  <strong>{row.article.title}</strong>
+                  {row.article.dek ? <span>{row.article.dek}</span> : null}
+                </span>
+                <ArticleDate article={row.article} />
+              </Link>
+            )}
+          </li>
+        ))}
+      </ul>
+      {collection.isPending ? <p className="topic-section__state">최신 기사를 불러오고 있습니다.</p> : null}
+      {collection.isError ? <p className="topic-section__state">최신 기사 목록을 불러오지 못했습니다.</p> : null}
+      {!collection.isPending && rows.length === 0 ? <p className="topic-section__state">현재 검증 중인 기사와 이슈가 없습니다.</p> : null}
+      {rows.length > collapsedTopicLength ? (
+        <Button className="topic-section__toggle" variant="ghost" aria-expanded={expanded} onClick={onToggle}>
+          {expanded ? <><ChevronUp size={15} /> 접기</> : <><ChevronDown size={15} /> {rows.length - collapsedTopicLength}개 더 보기</>}
+        </Button>
+      ) : null}
+    </section>
+  );
+}
+
 export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
-  const query = useIssuesQuery();
+  const query = useIssuesQuery(250);
   const [filterReferenceTime] = useState(Date.now);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [topics, setTopics] = useState<string[]>([]);
   const [period, setPeriod] = useState<Period>("all");
+  const [expandedTopics, setExpandedTopics] = useState<string[]>([]);
 
   const issues = useMemo(() => {
     const fallbackById = new Map((isMockMode() ? fallback : []).map((issue) => [issue.id, issue]));
@@ -43,7 +164,7 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
     }));
   }, [fallback, query.data?.items]);
 
-  const availableTopics = useMemo(() => [...new Set(issues.map((issue) => issue.topic))].sort((a, b) => a.localeCompare(b, "ko")), [issues]);
+  const availableTopics = useMemo(() => [...new Set(issues.map((issue) => issue.topic))].sort(topicOrder), [issues]);
   const visibleIssues = useMemo(() => {
     const cutoff = period === "all" ? null : filterReferenceTime - periodInMilliseconds[period];
     return issues.filter((issue) => {
@@ -55,9 +176,35 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
   }, [filterReferenceTime, issues, period, topics]);
 
   const activeFilterCount = topics.length + (period === "all" ? 0 : 1);
+  const visibleEventCount = visibleIssues.filter((issue) => issue.kind === "EVENT").length;
+  const featuredIssues = useMemo(
+    () => visibleIssues.filter(isSubstantiveEventIssue).sort(compareIssueImportance).slice(0, 10),
+    [visibleIssues],
+  );
+  const topicGroups = useMemo(() => {
+    const grouped = new Map<string, Issue[]>();
+    for (const issue of visibleIssues) {
+      const group = grouped.get(issue.topic) ?? [];
+      group.push(issue);
+      grouped.set(issue.topic, group);
+    }
+    return [...grouped.entries()]
+      .sort(([left], [right]) => topicOrder(left, right))
+      .map(([topic, groupedIssues], index) => ({
+        id: `issue-topic-${index}`,
+        topic,
+        issues: groupedIssues.filter((issue) => issue.kind === "EVENT").sort(compareIssueImportance),
+        collectionIssueIds: groupedIssues.filter((issue) => issue.kind === "TOPIC").map((issue) => issue.id),
+      }));
+  }, [visibleIssues]);
   const resetFilters = () => {
     setTopics([]);
     setPeriod("all");
+  };
+  const toggleTopic = (topic: string) => {
+    setExpandedTopics((current) => current.includes(topic)
+      ? current.filter((value) => value !== topic)
+      : [...current, topic]);
   };
 
   if (query.isPending && !isMockMode()) return <StatePanel state="loading" />;
@@ -67,20 +214,78 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
     <>
       <PageHeader
         eyebrow="Issues / 02"
-        title="오늘의 이슈를 관점별로"
-        description="기사가 충분히 모인 이슈만 균형 묶음으로 표시합니다. 조건을 충족하지 못한 이슈는 준비 중 상태를 숨기지 않습니다."
+        title="오늘의 이슈"
+        description="검증된 주요 이슈를 최대 10개 먼저 보고, 정치·사회·경제·국제·산업 대주제별로 최신 기사를 이어서 살펴봅니다."
         actions={<Button variant="secondary" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)}><Filter size={16} /> 주제·기간{activeFilterCount > 0 ? ` ${activeFilterCount}` : ""}</Button>}
       />
 
       <div className="issue-filter-status" aria-live="polite">
-        <span><strong>{visibleIssues.length}</strong>개 이슈</span>
+        <span><strong>{visibleEventCount}</strong>개 이슈</span>
+        {topicGroups.length > 0 ? <span><strong>{topicGroups.length}</strong>개 대주제</span> : null}
         <span>{topics.length ? topics.join(" · ") : "모든 주제"}</span>
         <span>{periodOptions.find((option) => option.value === period)?.label}</span>
         {activeFilterCount > 0 && <Button variant="ghost" onClick={resetFilters}><RotateCcw size={14} /> 필터 초기화</Button>}
       </div>
 
       {visibleIssues.length > 0 ? (
-        <div className="grid grid--2">{visibleIssues.map((issue) => <IssueCard key={issue.id} issue={issue} />)}</div>
+        <div className="issue-groups">
+          <section className="issue-group issue-ranking" aria-labelledby="featured-issues-title">
+              <header className="issue-group__head">
+                <div>
+                  <p className="eyebrow">Now</p>
+                  <h2 id="featured-issues-title">주요 이슈 TOP 10</h2>
+                </div>
+                <span>{featuredIssues.length}/10 검증 완료</span>
+              </header>
+              <p className="issue-group__description">3개 이상 기사와 서로 다른 3개 이상 출처, 최신 AI 분석을 모두 충족한 실제 사건만 표시합니다. 분류명이나 기사 모음으로 빈자리를 채우지 않습니다.</p>
+              {featuredIssues.length > 0 ? <ol className="issue-rank-list">
+                {featuredIssues.map((issue, index) => (
+                  <li key={issue.id}>
+                    <Link className="issue-rank-row" href={`/issues/${issue.id}`}>
+                      <span className="issue-rank-row__number" aria-label={`${index + 1}위`}>{String(index + 1).padStart(2, "0")}</span>
+                      <span className="issue-rank-row__copy">
+                        <small>{issue.topic}</small>
+                        <strong>{issue.title}</strong>
+                        {issue.summary ? <span>{issue.summary}</span> : null}
+                      </span>
+                      <span className="issue-rank-row__meta"><IssueCounts issue={issue} /></span>
+                    </Link>
+                  </li>
+                ))}
+              </ol> : <p className="issue-ranking__empty">현재 기준을 충족한 주요 이슈를 검증하고 있습니다.</p>}
+            </section>
+          {topicGroups.length > 0 ? (
+            <section className="issue-group topic-directory" aria-labelledby="topic-issues-title">
+              <header className="issue-group__head">
+                <div>
+                  <p className="eyebrow">By topic</p>
+                  <h2 id="topic-issues-title">대주제별 이슈</h2>
+                </div>
+                <span>{topicGroups.length}개 주제</span>
+              </header>
+              <p className="issue-group__description">검증된 사건 이슈와 각 대주제의 최신 기사를 한곳에 모았습니다.</p>
+              <nav className="topic-directory__nav" aria-label="대주제 바로가기">
+                {topicGroups.map((group) => <a key={group.topic} href={`#${group.id}`}><strong>{group.topic}</strong><span>{group.issues.length ? `${group.issues.length} 이슈` : "최신 기사"}</span></a>)}
+              </nav>
+              <div className="topic-directory__groups">
+                {topicGroups.map((group) => {
+                  const expanded = expandedTopics.includes(group.topic);
+                  return (
+                    <TopicSection
+                      key={group.topic}
+                      id={group.id}
+                      topic={group.topic}
+                      issues={group.issues}
+                      collectionIssueIds={group.collectionIssueIds}
+                      expanded={expanded}
+                      onToggle={() => toggleTopic(group.topic)}
+                    />
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
+        </div>
       ) : (
         <section className="issue-filter-empty">
           <p className="eyebrow">No matched issue</p>
@@ -111,7 +316,9 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
         </div>
         <div className="issue-filter-actions">
           <Button variant="ghost" onClick={resetFilters}><RotateCcw size={14} /> 초기화</Button>
-          <Button onClick={() => setDrawerOpen(false)}>{visibleIssues.length}개 이슈 보기</Button>
+          <Button onClick={() => setDrawerOpen(false)}>
+            {visibleEventCount}개 이슈{topicGroups.length > 0 ? ` · ${topicGroups.length}개 대주제` : ""} 보기
+          </Button>
         </div>
       </Drawer>
     </>
