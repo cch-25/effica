@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api/client";
@@ -94,9 +95,10 @@ export function HeadlineBand() {
   const text = <span key={`${active.id}-${activeIndex}`} className="headline-band__story-text">{active.title}</span>;
 
   return (
-    <header className="headline-band" aria-label="최신 헤드라인">
+    <header className="headline-band" aria-label="최신 기사">
+      <span className="headline-band__label">최신 기사</span>
       {active.href.startsWith("http") ? (
-        <a className="headline-band__story" href={active.href} target="_blank" rel="noreferrer">{text}</a>
+        <a className="headline-band__story" href={active.href} target="_blank" rel="noreferrer">{text}<span className="headline-band__destination">외부 기사</span><ExternalLink size={13} aria-hidden="true" /><span className="sr-only">새 창에서 열림</span></a>
       ) : (
         <Link className="headline-band__story" href={active.href}>{text}</Link>
       )}

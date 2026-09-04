@@ -10,7 +10,7 @@ import type { UserView } from "@/lib/api/contracts";
 import { isMockMode } from "@/lib/api/mode";
 
 export const metadata: Metadata = {
-  title: { default: "EFFICA — 관점 사이를 읽다", template: "%s | EFFICA" },
+  title: { default: "EFFICA | 관점 사이를 읽다", template: "%s | EFFICA" },
   description: "같은 이슈를 여러 관점에서 읽고, 근거를 비교하는 뉴스 플랫폼",
 };
 

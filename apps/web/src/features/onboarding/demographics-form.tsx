@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { SelectField } from "@/components/ui/form-controls";
 import { apiRequest } from "@/lib/api/client";
 import type { DemographicsPatch } from "@/lib/api/contracts";
+import { withReturnTo } from "@/lib/navigation/return-to";
 
 const ageOptions = [
   { value: "18-24", label: "18-24" },
@@ -18,7 +19,7 @@ const ageOptions = [
 const genderOptions = [
   { value: "FEMALE", label: "여성" },
   { value: "MALE", label: "남성" },
-  { value: "NONBINARY", label: "논바이너리·기타" },
+  { value: "NONBINARY", label: "논바이너리 또는 기타" },
   { value: "PREFER_NOT_TO_SAY", label: "응답하지 않음" },
 ];
 
@@ -44,7 +45,7 @@ export function DemographicsForm({ returnTo }: { returnTo: string }) {
       <SelectField className="field--spaced" id="age-band" label="연령대" value={age} options={ageOptions} placeholder="응답하지 않음" onValueChange={setAge} />
       <SelectField id="gender-response" label="성별 응답" value={gender} options={genderOptions} placeholder="응답하지 않음" onValueChange={setGender} />
       {error && <p role="alert" style={{ color: "var(--danger)" }}>{error}</p>}
-      <div className="form-actions"><Button type="button" variant="secondary" onClick={() => router.back()}>이전</Button><Button type="submit" disabled={busy}>{busy ? "저장 중…" : age || gender ? (returnTo === "/" ? "저장하고 홈으로" : "저장하고 계속하기") : (returnTo === "/" ? "건너뛰고 홈으로" : "건너뛰고 계속하기")}</Button></div>
+      <div className="form-actions"><Button type="button" variant="secondary" onClick={() => router.push(withReturnTo("/onboarding/questionnaire", returnTo))}>관점 설문으로 돌아가기</Button><Button type="submit" disabled={busy}>{busy ? "저장 중..." : age || gender ? (returnTo === "/" ? "저장하고 홈으로" : "저장하고 이전 화면으로") : (returnTo === "/" ? "건너뛰고 홈으로" : "건너뛰고 이전 화면으로")}</Button></div>
     </form>
   );
 }

@@ -287,7 +287,7 @@ export function PerspectiveOrb() {
       ) : (
         <PerspectiveCanvas reducedMotion={reducedMotion} onUnavailable={handleUnavailable} />
       )}
-      <div className="perspective-orb__coordinates">X +0.34 · Y −0.12 · Δ 0.46</div>
+      <div className="perspective-orb__coordinates">X +0.34 / Y −0.12 / Δ 0.46</div>
     </div>
   );
 }

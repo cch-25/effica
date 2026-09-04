@@ -76,7 +76,7 @@ export function QuestionnaireForm({ returnTo }: { returnTo: string }) {
     <form action={withReturnTo("/onboarding/demographics", returnTo)} method="get" onSubmit={submit}>
       <div className="choice-grid">{questions.map((question, questionIndex) => <fieldset className="field card card--padded" key={question.id}><legend>{questionIndex + 1}. {question.label}</legend><RadioScale name={question.id} values={[1, 2, 3, 4, 5]} required /><small className="scale-labels"><span>{question.left}</span><span>{question.right}</span></small></fieldset>)}</div>
       {error && <p role="alert" style={{ color: "var(--danger)" }}>{error}</p>}
-      <div className="form-actions"><Button type="button" variant="secondary" onClick={() => router.back()}>이전</Button><Button type="submit" disabled={busy || !version}>{busy ? "응답 저장 중…" : "응답 결과 확인"}</Button></div>
+      <div className="form-actions"><Button type="button" variant="secondary" onClick={() => router.push(withReturnTo("/onboarding/consent", returnTo))}>동의 단계로 돌아가기</Button><Button type="submit" disabled={busy || !version}>{busy ? "응답 저장 중..." : "응답 저장하고 선택 정보로"}</Button></div>
     </form>
   );
 }
