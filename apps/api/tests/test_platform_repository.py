@@ -21,7 +21,13 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from apps.api.app.db.base import Base
-from apps.api.app.db.enums import JobStatus, ProfileKind, QuestionnaireKind, ShareCardStatus
+from apps.api.app.db.enums import (
+    JobStatus,
+    ProfileKind,
+    QuestionnaireKind,
+    ShareCardStatus,
+    UserRole,
+)
 from apps.api.app.db.models import (
     ConsentVersion,
     Job,
@@ -199,6 +205,26 @@ async def test_oauth_user_session_csrf_lookup_rotation_and_revocation(
     assert await repo.revoke_session(replacement)
     assert await repo.find_session(replacement) is None
     assert not await repo.revoke_session(replacement)
+
+
+async def test_admin_session_provisioning_is_idempotent(
+    session: AsyncSQLiteSession,
+) -> None:
+    repo = repository(session)
+
+    admin = await repo.get_or_create_admin_user()
+    same_admin = await repo.get_or_create_admin_user()
+    assert same_admin["id"] == admin["id"]
+    assert same_admin["role"] == UserRole.ADMIN.value
+    assert await session.scalar(
+        select(func.count()).select_from(User).where(User.role == UserRole.ADMIN)
+    ) == 1
+
+    token, _ = await repo.rotate_session(admin["id"])
+    found = await repo.find_session(token)
+    assert found is not None
+    assert found["user_id"] == admin["id"]
+    assert found["role"] == UserRole.ADMIN.value
 
 
 async def test_consent_withdrawal_disables_behavioral_profile_and_blocks_sensitive_submit(

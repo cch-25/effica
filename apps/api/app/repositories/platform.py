@@ -368,6 +368,28 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
                 raise RuntimeError("OAuth account references a missing user") from None
         return self.user_view(user)
 
+    async def get_or_create_admin_user(self) -> dict[str, Any]:
+        """Return the active administrator used by credential sign-in."""
+
+        user = await self.session.scalar(
+            select(User)
+            .where(User.role == UserRole.ADMIN, User.status == UserStatus.ACTIVE)
+            .order_by(User.created_at.asc(), User.id.asc())
+            .limit(1)
+        )
+        if user is None:
+            user = User(
+                id=new_ulid(),
+                role=UserRole.ADMIN,
+                status=UserStatus.ACTIVE,
+                display_name="EFFICA 관리자",
+                created_at=utc_now(),
+                deleted_at=None,
+            )
+            self.session.add(user)
+            await self.session.flush()
+        return self.user_view(user)
+
     async def rotate_session(
         self, user_id: str, *, current_token: str | None = None
     ) -> tuple[str, str]:

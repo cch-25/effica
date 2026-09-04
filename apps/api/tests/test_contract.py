@@ -22,6 +22,30 @@ def test_error_envelope_and_role_matrix() -> None:
     assert unknown.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
 
+def test_admin_credentials_issue_an_admin_session() -> None:
+    invalid_client = TestClient(app)
+    invalid = invalid_client.post(
+        "/api/v1/auth/admin/login",
+        json={"username": "dev", "password": "wrong"},
+    )
+    assert invalid.status_code == 401
+    assert invalid.json()["error"]["code"] == "ADMIN_CREDENTIALS_INVALID"
+    assert invalid.cookies.get("session") is None
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/auth/admin/login",
+        json={"username": "dev", "password": "1234"},
+    )
+    assert response.status_code == 204
+    assert response.cookies.get("session")
+    assert response.cookies.get("csrf")
+
+    current_user = client.get("/api/v1/me")
+    assert current_user.status_code == 200
+    assert current_user.json()["role"] == "ADMIN"
+
+
 def test_admin_concurrency_headers_are_required() -> None:
     client = TestClient(app)
     source_id = next(iter(__import__("apps.api.app.state", fromlist=["STATE"]).STATE.sources))

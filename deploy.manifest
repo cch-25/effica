@@ -104,6 +104,7 @@ db/alembic/versions/0009_issue_editorial_metadata.py
 db/alembic/versions/0010_issue_comparison_snapshots.py
 db/alembic/versions/0011_issue_topics.py
 db/alembic/versions/0012_share_card_recovery.py
+db/alembic/versions/0013_runtime_llm_control.py
 db/seeds/__init__.py
 db/seeds/analyze_articles.py
 db/seeds/articles.json

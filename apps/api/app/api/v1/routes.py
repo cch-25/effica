@@ -26,6 +26,7 @@ from apps.api.app.api.v1.dependencies import (
     require_reviewer,
 )
 from apps.api.app.api.v1.schemas import (
+    AdminLoginRequest,
     ArticlePage,
     ArticleView,
     AssessmentPage,
@@ -45,6 +46,8 @@ from apps.api.app.api.v1.schemas import (
     IssueDetailView,
     IssuePage,
     JobAccepted,
+    LLMUsagePut,
+    LLMUsageView,
     MergeIssueRequest,
     ModelCreate,
     Page,
@@ -426,6 +429,55 @@ async def auth_callback(
     response.delete_cookie("oauth_state")
     response.delete_cookie("oauth_nonce")
     return response
+
+
+@router.post(
+    "/auth/admin/login",
+    status_code=204,
+    operation_id="admin_credentials_login",
+)
+async def admin_credentials_login(
+    body: AdminLoginRequest,
+    response: Response,
+    settings: Settings = Depends(get_settings),
+    platform: PlatformState = Depends(get_state),
+    repository: MariaDBPlatformRepository | None = Depends(get_repository),
+) -> None:
+    username_matches = secrets.compare_digest(
+        body.username.encode("utf-8"), settings.admin_username.encode("utf-8")
+    )
+    password_matches = secrets.compare_digest(
+        body.password.encode("utf-8"), settings.admin_password.encode("utf-8")
+    )
+    if not username_matches or not password_matches:
+        raise ApiError(
+            401,
+            "ADMIN_CREDENTIALS_INVALID",
+            "The administrator credentials are invalid.",
+        )
+
+    if repository is not None:
+        user = await repository.get_or_create_admin_user()
+        token, csrf = await repository.rotate_session(user["id"])
+    else:
+        user_id = platform.default_users["ADMIN"]
+        token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+        platform.sessions[stable_hash(token)] = {
+            "user_id": user_id,
+            "csrf_hash": stable_hash(csrf),
+            "expires_at": utcnow() + timedelta(hours=12),
+            "revoked_at": None,
+            "provider": "admin_credentials",
+        }
+
+    cookie_options = {
+        "secure": settings.app_env == "production",
+        "samesite": "lax",
+        "max_age": 43_200,
+        "path": "/",
+    }
+    response.set_cookie("session", token, httponly=True, **cookie_options)
+    response.set_cookie("csrf", csrf, httponly=False, **cookie_options)
 
 
 @router.post(
@@ -3412,6 +3464,95 @@ async def admin_put_autopilot_settings(
         return platform.autopilot
 
     return _idempotent(platform, "admin:autopilot-settings", key, body.model_dump(), update)
+
+
+@router.get(
+    "/admin/runtime/llm-usage",
+    response_model=LLMUsageView,
+    operation_id="admin_get_llm_usage",
+)
+async def admin_get_llm_usage(
+    _: Principal = Depends(require_analyst),
+    platform: PlatformState = Depends(get_state),
+    repository: MariaDBPlatformRepository | None = Depends(get_repository),
+) -> dict[str, Any]:
+    if repository is not None:
+        return await _admin_repo(repository.get_llm_usage())
+    return deepcopy(platform.llm_usage)
+
+
+@router.put(
+    "/admin/runtime/llm-usage",
+    response_model=LLMUsageView,
+    dependencies=[Depends(require_csrf)],
+    operation_id="admin_put_llm_usage",
+)
+async def admin_put_llm_usage(
+    body: LLMUsagePut,
+    request: Request,
+    principal: Principal = Depends(require_admin),
+    key: str = Depends(require_idempotency_key),
+    if_match: str = Depends(require_if_match),
+    platform: PlatformState = Depends(get_state),
+    repository: MariaDBPlatformRepository | None = Depends(get_repository),
+) -> dict[str, Any]:
+    if repository is not None:
+        return await _admin_repo(
+            repository.update_llm_usage(
+                body.enabled,
+                if_match=if_match,
+                actor_id=principal.user_id,
+                idempotency_key=key,
+                reason=body.reason,
+                request_id=request.state.request_id,
+            )
+        )
+    if str(platform.llm_usage["version"]) != if_match:
+        raise ApiError(409, "VERSION_CONFLICT", "If-Match does not match LLM usage settings.")
+
+    def update() -> dict[str, Any]:
+        before = deepcopy(platform.llm_usage)
+        cancelled_jobs = 0
+        if not body.enabled:
+            for job in platform.jobs.values():
+                if job.get("status") in {"PENDING", "LEASED"}:
+                    job.update(
+                        {
+                            "status": "CANCELLED",
+                            "lease_owner": None,
+                            "lease_expires_at": None,
+                            "last_error": {
+                                "code": "LLM_USAGE_DISABLED",
+                                "message": "Background processing was stopped by the runtime control.",
+                                "retryable": False,
+                            },
+                            "updated_at": utcnow(),
+                        }
+                    )
+                    cancelled_jobs += 1
+        platform.llm_usage.update(
+            {
+                "enabled": body.enabled,
+                "status": "RUNNING" if body.enabled else "STOPPED",
+                "version": int(platform.llm_usage["version"]) + 1,
+                "cancelled_jobs": cancelled_jobs,
+                "updated_by": principal.user_id,
+                "updated_at": utcnow(),
+            }
+        )
+        platform.audit_action(
+            principal.user_id,
+            "LLM_USAGE_UPDATED",
+            "runtime_control",
+            "singleton",
+            before,
+            platform.llm_usage,
+            body.reason,
+            request.state.request_id,
+        )
+        return deepcopy(platform.llm_usage)
+
+    return _idempotent(platform, "admin:runtime-llm-usage", key, body.model_dump(), update)
 
 
 @router.get("/admin/jobs", response_model=Page, operation_id="admin_list_jobs")

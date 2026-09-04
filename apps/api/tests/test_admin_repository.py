@@ -5,8 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from apps.api.app.db.base import Base
-from apps.api.app.db.enums import UserRole, UserStatus
-from apps.api.app.db.models import SourceAdapter, User, WeightRecommendation
+from apps.api.app.db.enums import JobStatus, UserRole, UserStatus
+from apps.api.app.db.models import Job, SourceAdapter, User, WeightRecommendation
 from apps.api.app.db.ulid import new_ulid
 from apps.api.app.db.utc import utc_now
 from apps.api.app.repositories.admin import (
@@ -15,6 +15,73 @@ from apps.api.app.repositories.admin import (
     IdempotencyConflictError,
 )
 from apps.api.app.repositories.platform import MariaDBPlatformRepository
+
+
+@pytest.mark.asyncio
+async def test_llm_usage_control_is_durable_and_cancels_active_queue_rows() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        actor_id = new_ulid()
+        session.add(
+            User(
+                id=actor_id,
+                role=UserRole.ADMIN,
+                status=UserStatus.ACTIVE,
+                display_name="Runtime Admin",
+                created_at=utc_now(),
+                deleted_at=None,
+            )
+        )
+        await session.commit()
+        repository = MariaDBPlatformRepository(session, encryption_secret="a" * 40)
+
+        initial = await repository.get_llm_usage()
+        assert initial["status"] == "STOPPED"
+        started = await repository.update_llm_usage(
+            True,
+            if_match="1",
+            actor_id=actor_id,
+            idempotency_key="runtime-start",
+            reason="start runtime",
+        )
+        assert started["status"] == "RUNNING"
+
+        now = utc_now()
+        job = Job(
+            id=new_ulid(),
+            job_type="analyze",
+            dedupe_key="runtime-stop-analysis",
+            status=JobStatus.PENDING,
+            priority=0,
+            available_at=now,
+            lease_owner=None,
+            lease_expires_at=None,
+            attempts=0,
+            max_attempts=3,
+            payload_json={"article_version_id": new_ulid()},
+            last_error_json=None,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(job)
+        await session.commit()
+
+        stopped = await repository.update_llm_usage(
+            False,
+            if_match="2",
+            actor_id=actor_id,
+            idempotency_key="runtime-stop",
+            reason="stop runtime",
+        )
+        await session.refresh(job)
+        assert stopped["status"] == "STOPPED"
+        assert stopped["cancelled_jobs"] == 1
+        assert job.status == JobStatus.CANCELLED
+        assert job.last_error_json["code"] == "LLM_USAGE_DISABLED"
+    await engine.dispose()
 
 
 @pytest.mark.asyncio

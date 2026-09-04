@@ -157,6 +157,63 @@ def test_admin_autopilot_settings_is_authenticated_and_authoritative() -> None:
         app.dependency_overrides.clear()
 
 
+def test_admin_llm_usage_is_fail_closed_and_cancels_queued_work() -> None:
+    state = PlatformState()
+    app.dependency_overrides[get_state] = lambda: state
+    try:
+        with TestClient(app) as client:
+            assert client.get("/api/v1/admin/runtime/llm-usage").status_code == 401
+            initial = client.get(
+                "/api/v1/admin/runtime/llm-usage",
+                headers={"X-Debug-Role": "ANALYST"},
+            )
+            assert initial.status_code == 200
+            assert initial.json()["status"] == "STOPPED"
+
+            forbidden = client.put(
+                "/api/v1/admin/runtime/llm-usage",
+                json={"enabled": True, "reason": "analyst cannot start processing"},
+                headers={
+                    "X-Debug-Role": "ANALYST",
+                    "X-CSRF-Token": "local-csrf",
+                    "Idempotency-Key": "llm-analyst-forbidden",
+                    "If-Match": "1",
+                },
+            )
+            assert forbidden.status_code == 403
+
+            started = client.put(
+                "/api/v1/admin/runtime/llm-usage",
+                json={"enabled": True, "reason": "operator start"},
+                headers={
+                    "X-Debug-Role": "ADMIN",
+                    "X-CSRF-Token": "local-csrf",
+                    "Idempotency-Key": "llm-admin-start",
+                    "If-Match": "1",
+                },
+            )
+            assert started.status_code == 200
+            assert started.json()["status"] == "RUNNING"
+
+            job = state.enqueue("export_user", "runtime-stop-job", {"user_id": "runtime-user"})
+            stopped = client.put(
+                "/api/v1/admin/runtime/llm-usage",
+                json={"enabled": False, "reason": "operator stop"},
+                headers={
+                    "X-Debug-Role": "ADMIN",
+                    "X-CSRF-Token": "local-csrf",
+                    "Idempotency-Key": "llm-admin-stop",
+                    "If-Match": "2",
+                },
+            )
+            assert stopped.status_code == 200
+            assert stopped.json()["status"] == "STOPPED"
+            assert stopped.json()["cancelled_jobs"] == 1
+            assert state.jobs[job["id"]]["status"] == "CANCELLED"
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_memory_enqueue_contract_and_retry_reset_attempt_budget() -> None:
     state = PlatformState()
     with pytest.raises(JobPayloadError):

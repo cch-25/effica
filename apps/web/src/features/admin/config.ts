@@ -13,10 +13,11 @@ export type AdminAction = {
   body: (reason: string, values: Record<string, unknown>) => Record<string, unknown>;
 };
 
-export type AdminConfig = { eyebrow: string; title: string; description: string; listPath: string; actions: AdminAction[]; minimumRole: Role };
+type AdminConfig = { eyebrow: string; title: string; description: string; listPath: string; actions: AdminAction[]; minimumRole: Role };
 const reasonBody = (reason: string) => ({ reason });
 
 export const adminConfigs: Record<string, AdminConfig> = {
+  runtime: { eyebrow: "Runtime control", title: "LLM 사용", description: "수집과 백그라운드 분석의 전체 실행 상태를 제어합니다.", listPath: "/admin/runtime/llm-usage", minimumRole: "analyst", actions: [] },
   sources: { eyebrow: "Collection policy", title: "출처와 수집 정책", description: "서버에 저장된 수집 정책과 실행 상태입니다.", listPath: "/admin/sources", minimumRole: "analyst", actions: [
     { label: "수집 실행", level: "operate", method: "POST", path: (id) => `/admin/sources/${id}/crawl`, body: reasonBody },
     { label: "정책 수정", level: "publish", method: "PATCH", path: (id) => `/admin/sources/${id}`, needsValues: true, ifMatch: true, body: (reason, values) => ({ reason, values }) },

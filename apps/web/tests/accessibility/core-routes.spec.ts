@@ -1,11 +1,21 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
-const routes = ["/login", "/onboarding/consent", "/", "/issues", "/articles/article-01", "/visualization", "/admin/weights"];
+const routes = [
+  "/login",
+  "/admin",
+  "/onboarding/consent",
+  "/",
+  "/issues",
+  "/articles/article-01",
+  "/visualization",
+  "/admin/runtime",
+  "/admin/weights",
+];
 
 for (const route of routes) {
   test(`${route} has no serious or critical accessibility violations`, async ({ page }) => {
-    if (route.startsWith("/admin")) {
+    if (route.startsWith("/admin/")) {
       await page.context().addCookies([{ name: "mock-role", value: "admin", domain: "127.0.0.1", path: "/" }]);
     }
     await page.goto(route);

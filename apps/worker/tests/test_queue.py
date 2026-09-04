@@ -50,6 +50,33 @@ def test_concurrent_workers_execute_one_side_effect():
     _run(scenario())
 
 
+def test_runtime_control_blocks_claims_while_stopped():
+    async def scenario():
+        class StoppedControl:
+            async def is_enabled(self) -> bool:
+                return False
+
+        repo = MemoryQueueRepository([Job(id="01STOPPED", job_type="side_effect")])
+        calls: list[str] = []
+
+        async def side_effect(payload, context):
+            calls.append(context.job_id)
+            return {"ok": True}
+
+        from apps.worker.worker.handlers.registry import HandlerRegistry
+
+        runtime = WorkerRuntime(
+            repo,
+            registry=HandlerRegistry({"side_effect": side_effect}),
+            runtime_control=StoppedControl(),
+        )
+        assert await runtime.process_one() is False
+        assert calls == []
+        assert (await repo.get("01STOPPED")).status == JobStatus.PENDING
+
+    _run(scenario())
+
+
 def test_retry_backoff_and_dead_after_max_attempts():
     async def scenario():
         repo = MemoryQueueRepository([Job(id="01RETRY", job_type="missing", max_attempts=2)])

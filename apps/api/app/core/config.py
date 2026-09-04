@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     worker_crawl_max_attempts: int = Field(default=5, ge=1, le=20)
     google_client_id: str | None = None
     google_client_secret: str | None = None
+    admin_username: str = "dev"
+    admin_password: str = "1234"
     cohort_minimum: int = Field(default=5, ge=3)
 
     @field_validator("app_env")

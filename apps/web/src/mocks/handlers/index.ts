@@ -19,6 +19,8 @@ const mockConsents: ConsentView[] = [
   { id: "01H00000000000000000000002", purpose: "POLITICAL_PROFILE", version: "1.0", body_hash: "political-v1", sensitive: true, granted: false },
 ];
 let mockCard: ShareCardView = { id: "01H00000000000000000000006", status: "ready", public_token: "mock-public-token", etag: '"mock"', snapshot: { x: 4, sensationalism: 18, confidence: 0.68 } };
+type MockLlmUsage = { enabled: boolean; status: "RUNNING" | "STOPPED"; version: number; cancelled_jobs: number; updated_by: string | null; updated_at: string | null };
+let mockLlmUsage: MockLlmUsage = { enabled: false, status: "STOPPED", version: 1, cancelled_jobs: 0, updated_by: null, updated_at: null };
 const errorEnvelope = (code: string, message: string): ErrorEnvelope => mockResponse("ErrorEnvelope", { error: { code, message, request_id: "mock-request", retryable: false, details: {} } });
 
 const apiArticles = articles.map((article): ArticleDto => ({
@@ -56,6 +58,16 @@ const apiIssues = issues.map((issue) => ({
 
 export const handlers = [
   http.get(`${prefix}/auth/providers`, () => HttpResponse.json(["google"])),
+  http.post(`${prefix}/auth/admin/login`, async ({ request }) => {
+    const body = await request.json() as { username?: string; password?: string };
+    if (body.username !== "dev" || body.password !== "1234") {
+      return HttpResponse.json(
+        errorEnvelope("ADMIN_CREDENTIALS_INVALID", "관리자 계정 정보가 올바르지 않습니다."),
+        { status: 401 },
+      );
+    }
+    return new HttpResponse(null, { status: 204 });
+  }),
   http.get(`${prefix}/auth/:provider/start`, ({ request }) => {
     const returnTo = new URL(request.url).searchParams.get("returnTo") || "/";
     const location = returnTo.startsWith("/") && !returnTo.startsWith("//") && returnTo !== "/"
@@ -265,6 +277,12 @@ export const handlers = [
   http.get(`${prefix}/admin/:resource`, ({ params }) => HttpResponse.json({ items: [{ id: `${params.resource}-01`, title: `${params.resource} fixture`, status: "ACTIVE", version: 1, etag: '"v1"' }], next_cursor: null })),
   http.get(`${prefix}/admin/autopilot/recommendations`, () => HttpResponse.json({ items: [{ id: "recommendation-01", title: "추천", status: "PENDING_REVIEW" }], next_cursor: null })),
   http.get(`${prefix}/admin/autopilot/settings`, () => HttpResponse.json({ mode: "RECOMMEND", guardrails: {}, manual_locks: [], version: 1 })),
+  http.get(`${prefix}/admin/runtime/llm-usage`, () => HttpResponse.json(mockLlmUsage)),
+  http.put(`${prefix}/admin/runtime/llm-usage`, async ({ request }) => {
+    const body = await request.json() as { enabled: boolean };
+    mockLlmUsage = { enabled: body.enabled, status: body.enabled ? "RUNNING" : "STOPPED", version: mockLlmUsage.version + 1, cancelled_jobs: body.enabled ? 0 : 7, updated_by: "mock-admin", updated_at: new Date().toISOString() };
+    return HttpResponse.json(mockLlmUsage);
+  }),
   http.post(`${prefix}/admin/autopilot/recommendations/:itemId/:action`, () => HttpResponse.json({ status: "PENDING" })),
   http.get(`${prefix}/admin/metrics/efficacy`, () => HttpResponse.json({ cohort: "all", status: "VISIBLE", count: 100 })),
   http.post(`${prefix}/admin/:resource/:itemId/:action`, () => HttpResponse.json({ status: "PENDING" })),

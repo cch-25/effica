@@ -75,6 +75,11 @@ class AuthStartResponse(ContractModel):
     state: str
 
 
+class AdminLoginRequest(ContractModel):
+    username: str = Field(min_length=1, max_length=120)
+    password: str = Field(min_length=1, max_length=256)
+
+
 class UserView(ContractModel):
     id: str = Field(pattern=ULID_PATTERN)
     display_name: str
@@ -520,6 +525,20 @@ class AutopilotSettingsView(ContractModel):
     guardrails: dict[str, float]
     manual_locks: list[str] = Field(default_factory=list)
     version: int
+    updated_by: str | None = None
+    updated_at: datetime | None = None
+
+
+class LLMUsagePut(ContractModel):
+    enabled: bool
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class LLMUsageView(ContractModel):
+    enabled: bool
+    status: Literal["RUNNING", "STOPPED"]
+    version: int
+    cancelled_jobs: int = 0
     updated_by: str | None = None
     updated_at: datetime | None = None
 

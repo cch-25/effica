@@ -26,7 +26,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any, TypeVar
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.app.core.logging import redact
@@ -56,6 +56,7 @@ from apps.api.app.db.models import (
     Job,
     ModelAlias,
     ModelAssessment,
+    RuntimeControl,
     ShareCard,
     Source,
     SourceAdapter,
@@ -408,6 +409,30 @@ class AdminRepositoryMixin:
         await self.session.flush()
         return row
 
+    async def _runtime_control_row(self, *, lock: bool = False) -> RuntimeControl | None:
+        query = select(RuntimeControl).where(RuntimeControl.singleton_key == "global")
+        if lock:
+            query = query.with_for_update()
+        return await self.session.scalar(query)
+
+    async def _ensure_runtime_control_row(
+        self, *, actor_id: str | None = None
+    ) -> RuntimeControl:
+        row = await self._runtime_control_row(lock=True)
+        if row is not None:
+            return row
+        row = RuntimeControl(
+            id=new_ulid(),
+            singleton_key="global",
+            llm_enabled=False,
+            version=1,
+            updated_by=actor_id,
+            updated_at=utc_now(),
+        )
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
     # ------------------------------------------------------------------
     # Row views
     # ------------------------------------------------------------------
@@ -503,6 +528,20 @@ class AdminRepositoryMixin:
             "guardrails": guardrails,
             "manual_locks": list(locks),
             "version": row.version,
+            "updated_by": row.updated_by,
+            "updated_at": _row_datetime(row.updated_at),
+        }
+
+    @staticmethod
+    def _llm_usage_view(
+        row: RuntimeControl, *, cancelled_jobs: int = 0
+    ) -> dict[str, Any]:
+        enabled = bool(row.llm_enabled)
+        return {
+            "enabled": enabled,
+            "status": "RUNNING" if enabled else "STOPPED",
+            "version": row.version,
+            "cancelled_jobs": cancelled_jobs,
             "updated_by": row.updated_by,
             "updated_at": _row_datetime(row.updated_at),
         }
@@ -2340,6 +2379,98 @@ class AdminRepositoryMixin:
 
     put_autopilot_settings = update_autopilot_settings
 
+    async def get_llm_usage(self) -> dict[str, Any]:
+        row = await self._runtime_control_row()
+        if row is None:
+            return {
+                "enabled": False,
+                "status": "STOPPED",
+                "version": 1,
+                "cancelled_jobs": 0,
+                "updated_by": None,
+                "updated_at": None,
+            }
+        return self._llm_usage_view(row)
+
+    async def update_llm_usage(
+        self,
+        enabled: bool,
+        *,
+        if_match: str | int | None,
+        actor_id: str | None = None,
+        idempotency_key: str | None = None,
+        reason: str | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        expected = _if_match_version(if_match, resource="LLM usage settings")
+        payload = {"enabled": bool(enabled)}
+
+        async def operation() -> tuple[dict[str, Any], Any, Any]:
+            row = await self._ensure_runtime_control_row(actor_id=actor_id)
+            if row.version != expected:
+                raise AdminConflictError(
+                    "If-Match does not match LLM usage settings.",
+                    details={
+                        "resource": "runtime_control",
+                        "expected": expected,
+                        "actual": row.version,
+                    },
+                )
+            before = self._llm_usage_view(row)
+            cancelled_jobs = 0
+            if not enabled:
+                now = utc_now()
+                cancelled = await self.session.execute(
+                    update(Job)
+                    .where(Job.status.in_((JobStatus.PENDING, JobStatus.LEASED)))
+                    .values(
+                        status=JobStatus.CANCELLED,
+                        lease_owner=None,
+                        lease_expires_at=None,
+                        last_error_json={
+                            "code": "LLM_USAGE_DISABLED",
+                            "message": (
+                                "Background processing was stopped by the runtime control."
+                            ),
+                            "retryable": False,
+                        },
+                        updated_at=now,
+                    )
+                )
+                cancelled_jobs = max(0, int(cancelled.rowcount or 0))
+                await self.session.execute(
+                    update(CrawlRun)
+                    .where(CrawlRun.status.in_((CrawlStatus.PENDING, CrawlStatus.RUNNING)))
+                    .values(
+                        status=CrawlStatus.CANCELLED,
+                        finished_at=now,
+                        error_json={
+                            "code": "LLM_USAGE_DISABLED",
+                            "message": "Collection was stopped by the runtime control.",
+                        },
+                    )
+                )
+            row.llm_enabled = bool(enabled)
+            row.version += 1
+            row.updated_by = actor_id
+            row.updated_at = utc_now()
+            await self.session.flush()
+            after = self._llm_usage_view(row, cancelled_jobs=cancelled_jobs)
+            return after, before, after
+
+        return await self._run_mutation(
+            scope="admin:runtime-llm-usage",
+            idempotency_key=idempotency_key,
+            payload=payload,
+            actor_id=actor_id,
+            action="LLM_USAGE_UPDATED",
+            target_type="runtime_control",
+            target_id="singleton",
+            reason=reason,
+            request_id=request_id,
+            operation=operation,
+        )
+
     # ------------------------------------------------------------------
     # Jobs, audit, and protected efficacy metrics
     # ------------------------------------------------------------------
@@ -2614,6 +2745,9 @@ class AdminRepositoryMixin:
     admin_get_autopilot_settings = get_autopilot_settings
     admin_update_autopilot_settings = update_autopilot_settings
     admin_put_autopilot_settings = update_autopilot_settings
+    admin_get_llm_usage = get_llm_usage
+    admin_update_llm_usage = update_llm_usage
+    admin_put_llm_usage = update_llm_usage
     admin_list_jobs = list_jobs
     admin_retry_job = retry_job
     admin_cancel_job = cancel_job

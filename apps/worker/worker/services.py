@@ -16,6 +16,7 @@ import inspect
 import json
 import math
 import re
+import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
@@ -258,6 +259,44 @@ def _database_timestamp(value: Any) -> datetime | None:
     # SQLAlchemy ORM columns apply UTCDateTime automatically. This worker path
     # uses textual SQL, so perform the same conversion before asyncmy binds it.
     return _utc(parsed).replace(tzinfo=None)
+
+
+class MariaDBRuntimeControl:
+    """Read the fail-closed background-processing switch with a short cache."""
+
+    def __init__(
+        self,
+        session_factory: Callable[[], Any],
+        *,
+        cache_seconds: float = 1.0,
+    ) -> None:
+        self.session_factory = session_factory
+        self.cache_seconds = max(0.0, float(cache_seconds))
+        self._cached_enabled = False
+        self._cached_until = 0.0
+
+    async def is_enabled(self) -> bool:
+        now = time.monotonic()
+        if now < self._cached_until:
+            return self._cached_enabled
+        async with _session_scope(self.session_factory) as session:
+            result = await _maybe_await(
+                session.execute(
+                    _sql(
+                        """
+                        SELECT llm_enabled
+                        FROM runtime_controls
+                        WHERE singleton_key = 'global'
+                        LIMIT 1
+                        """.strip()
+                    )
+                )
+            )
+            rows = _rows(result)
+        enabled = bool(rows and int(_row(rows[0], "llm_enabled", 0) or 0) == 1)
+        self._cached_enabled = enabled
+        self._cached_until = now + self.cache_seconds
+        return enabled
 
 
 def _database_confidence(value: Any) -> float:
@@ -2111,20 +2150,10 @@ class MariaDBResultApplier:
         )
 
 
-# Compatibility names for callers that describe the component as a worker
-# service rather than an outcome applier.
-MariaDBWorkerService = MariaDBResultApplier
-DurableResultApplier = MariaDBResultApplier
-MemoryWorkerService = MemoryResultApplier
-
-
 __all__ = [
-    "DurableResultApplier",
     "MariaDBIdempotencyStore",
     "MariaDBResultApplier",
-    "MariaDBWorkerService",
     "MemoryResultApplier",
-    "MemoryWorkerService",
     "ResultApplier",
     "ResultApplicationError",
 ]

@@ -910,6 +910,26 @@ class AutopilotSetting(Base):
     )
 
 
+class RuntimeControl(Base):
+    __tablename__ = "runtime_controls"
+
+    id: Mapped[str] = _id()
+    singleton_key: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="global", server_default="global"
+    )
+    llm_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_by: Mapped[str | None] = _fk("users.id", ondelete="SET NULL", nullable=True)
+    updated_at: Mapped[datetime] = _timestamp()
+
+    __table_args__ = (
+        UniqueConstraint("singleton_key", name="uq_runtime_controls_singleton_key"),
+        CheckConstraint("version > 0", name="positive_runtime_control_version"),
+    )
+
+
 class Job(Base):
     __tablename__ = "jobs"
 

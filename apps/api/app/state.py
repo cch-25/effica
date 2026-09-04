@@ -80,6 +80,7 @@ class PlatformState:
     recommendations: dict[str, dict[str, Any]] = field(default_factory=dict)
     simulations: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     autopilot: dict[str, Any] = field(default_factory=dict)
+    llm_usage: dict[str, Any] = field(default_factory=dict)
     audit: list[dict[str, Any]] = field(default_factory=list)
     idempotency: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
 
@@ -340,6 +341,14 @@ class PlatformState:
             "guardrails": self.weights[weight_id]["guardrails"],
             "manual_locks": [],
             "version": 1,
+        }
+        self.llm_usage = {
+            "enabled": False,
+            "status": "STOPPED",
+            "version": 1,
+            "cancelled_jobs": 0,
+            "updated_by": None,
+            "updated_at": None,
         }
 
     def enqueue(self, job_type: str, dedupe_key: str, payload: dict[str, Any]) -> dict[str, Any]:

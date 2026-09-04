@@ -3,7 +3,7 @@
 import { Avatar } from "@base-ui/react/avatar";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, BookOpenText, Boxes, CircleGauge, Compass, FileText, Home, Landmark, Newspaper, SlidersHorizontal, Sparkles, UserRound } from "lucide-react";
+import { BarChart3, BookOpenText, Boxes, CircleGauge, Compass, FileText, Home, Landmark, Newspaper, Power, SlidersHorizontal, Sparkles, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 import type { UserView } from "@/lib/api/contracts";
 import { HeadlineBand } from "./headline-band";
@@ -16,21 +16,22 @@ const userNav = [
 ];
 
 const adminNav = [
-  { href: "/admin/sources", label: "출처", icon: Landmark, index: "01" },
-  { href: "/admin/crawls", label: "수집", icon: Boxes, index: "02" },
-  { href: "/admin/issues", label: "이슈", icon: Newspaper, index: "03" },
-  { href: "/admin/models", label: "모델", icon: Sparkles, index: "04" },
-  { href: "/admin/weights", label: "가중치", icon: SlidersHorizontal, index: "05" },
-  { href: "/admin/autopilot", label: "Auto Pilot", icon: CircleGauge, index: "06" },
-  { href: "/admin/jobs", label: "작업", icon: BarChart3, index: "07" },
-  { href: "/admin/audit", label: "감사 로그", icon: FileText, index: "08" },
-  { href: "/admin/metrics/efficacy", label: "효능감", icon: BookOpenText, index: "09" },
+  { href: "/admin/runtime", label: "LLM 사용", icon: Power, index: "01" },
+  { href: "/admin/sources", label: "출처", icon: Landmark, index: "02" },
+  { href: "/admin/crawls", label: "수집", icon: Boxes, index: "03" },
+  { href: "/admin/issues", label: "이슈", icon: Newspaper, index: "04" },
+  { href: "/admin/models", label: "모델", icon: Sparkles, index: "05" },
+  { href: "/admin/weights", label: "가중치", icon: SlidersHorizontal, index: "06" },
+  { href: "/admin/autopilot", label: "Auto Pilot", icon: CircleGauge, index: "07" },
+  { href: "/admin/jobs", label: "작업", icon: BarChart3, index: "08" },
+  { href: "/admin/audit", label: "감사 로그", icon: FileText, index: "09" },
+  { href: "/admin/metrics/efficacy", label: "효능감", icon: BookOpenText, index: "10" },
 ];
 
 export function AppShell({ children, user }: { children: ReactNode; user: UserView | null }) {
   const pathname = usePathname();
   const admin = pathname.startsWith("/admin");
-  const minimal = pathname === "/login" || pathname.startsWith("/onboarding");
+  const minimal = pathname === "/login" || pathname === "/admin" || pathname.startsWith("/onboarding");
 
   if (minimal) return <main className="minimal-shell">{children}</main>;
 
@@ -39,7 +40,7 @@ export function AppShell({ children, user }: { children: ReactNode; user: UserVi
       <a className="skip-link" href="#main-content">본문으로 건너뛰기</a>
       {admin ? (
         <aside className="sidebar">
-          <Link href="/admin/sources" className="brand" aria-label="EFFICA 관리자 홈">
+          <Link href="/admin/runtime" className="brand" aria-label="EFFICA 관리자 홈">
             <Avatar.Root className="brand__mark" aria-hidden="true"><Avatar.Fallback>EF</Avatar.Fallback></Avatar.Root>
             <span><strong>EFFICA</strong><small>운영 관제</small></span>
           </Link>

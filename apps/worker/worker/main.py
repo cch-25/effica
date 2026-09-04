@@ -25,7 +25,7 @@ from .services import (
     MariaDBCrawlScheduler,
     MariaDBIdempotencyStore,
     MariaDBResultApplier,
-    MariaDBWorkerService,
+    MariaDBRuntimeControl,
     MemoryResultApplier,
     ResultApplicationError,
     ResultApplier,
@@ -110,6 +110,10 @@ class CrawlScheduler(Protocol):
     async def tick(self, worker_id: str) -> int: ...
 
 
+class RuntimeControl(Protocol):
+    async def is_enabled(self) -> bool: ...
+
+
 class MemoryIdempotencyStore:
     """Small in-process idempotency store for tests and one-process workers.
 
@@ -169,6 +173,7 @@ class WorkerRuntime:
         idempotency_store: IdempotencyStore | None = None,
         result_applier: ResultApplier | None = None,
         crawl_scheduler: CrawlScheduler | None = None,
+        runtime_control: RuntimeControl | None = None,
         services: Mapping[str, Any] | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -182,6 +187,7 @@ class WorkerRuntime:
         # being silently discarded before SUCCEEDED.
         self.result_applier = result_applier or MemoryResultApplier()
         self.crawl_scheduler = crawl_scheduler
+        self.runtime_control = runtime_control
         self.services = dict(services or {})
         self.clock = clock
         self.stop_event = asyncio.Event()
@@ -256,7 +262,7 @@ class WorkerRuntime:
     async def process_one(self) -> bool:
         """Claim and process at most one available job."""
 
-        if self.stop_event.is_set():
+        if self.stop_event.is_set() or not await self._runtime_enabled():
             return False
         job = await self.repository.claim(
             self.worker_id,
@@ -543,17 +549,20 @@ class WorkerRuntime:
         interval = float(self.crawl_scheduler.interval_seconds)
         while not self.stop_event.is_set():
             started = time.monotonic()
+            enabled = await self._runtime_enabled()
             try:
-                created = await self.crawl_scheduler.tick(self.worker_id)
-                logger.info(
-                    "crawl_schedule_tick",
-                    extra={
-                        "event": "crawl_schedule_tick",
-                        "worker_id": self.worker_id,
-                        "jobs_created": created,
-                        "interval_seconds": interval,
-                    },
-                )
+                if enabled:
+                    created = await self.crawl_scheduler.tick(self.worker_id)
+                    logger.info(
+                        "crawl_schedule_tick",
+                        extra={
+                            "event": "crawl_schedule_tick",
+                            "worker_id": self.worker_id,
+                            "jobs_created": created,
+                            "interval_seconds": interval,
+                            "runtime_enabled": True,
+                        },
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -566,7 +575,8 @@ class WorkerRuntime:
                         "exception_type": exc.__class__.__name__,
                     },
                 )
-            remaining = max(0.0, interval - (time.monotonic() - started))
+            next_check = interval if enabled else min(interval, 1.0)
+            remaining = max(0.0, next_check - (time.monotonic() - started))
             try:
                 await asyncio.wait_for(self.stop_event.wait(), timeout=remaining)
             except TimeoutError:
@@ -600,6 +610,20 @@ class WorkerRuntime:
         )
         try:
             while not self.stop_event.is_set():
+                if not await self._runtime_enabled():
+                    if self._active:
+                        for task in tuple(self._active):
+                            task.cancel()
+                        await asyncio.gather(*tuple(self._active), return_exceptions=True)
+                        await self.repository.release_leases(self.worker_id)
+                    try:
+                        await asyncio.wait_for(
+                            self.stop_event.wait(),
+                            timeout=max(0.05, self.config.poll_interval_seconds),
+                        )
+                    except TimeoutError:
+                        pass
+                    continue
                 # Fill the bounded worker pool.  Claims are short DB
                 # transactions; handlers run concurrently outside them.
                 claim_error = False
@@ -658,6 +682,7 @@ class WorkerRuntime:
                     # callbacks discard completed tasks.
                     await asyncio.wait(
                         tuple(self._active),
+                        timeout=max(0.05, self.config.poll_interval_seconds),
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                 elif not self.stop_event.is_set():
@@ -676,6 +701,20 @@ class WorkerRuntime:
 
     async def run(self) -> None:
         await self.run_forever()
+
+    async def _runtime_enabled(self) -> bool:
+        if self.runtime_control is None:
+            return True
+        try:
+            return bool(await self.runtime_control.is_enabled())
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "runtime_control_check_failed",
+                extra={"event": "runtime_control_check_failed", "worker_id": self.worker_id},
+            )
+            return False
 
     async def _graceful_shutdown(self) -> int:
         self.request_stop()
@@ -718,6 +757,7 @@ async def run_worker(
     idempotency_store: IdempotencyStore | None = None,
     result_applier: ResultApplier | None = None,
     crawl_scheduler: CrawlScheduler | None = None,
+    runtime_control: RuntimeControl | None = None,
     services: Mapping[str, Any] | None = None,
 ) -> None:
     """Convenience entry point for process supervisors."""
@@ -729,6 +769,7 @@ async def run_worker(
         idempotency_store=idempotency_store,
         result_applier=result_applier,
         crawl_scheduler=crawl_scheduler,
+        runtime_control=runtime_control,
         services=services,
     )
     await runtime.run_forever()
@@ -742,6 +783,7 @@ def build_mariadb_runtime(
     idempotency_store: IdempotencyStore | None = None,
     result_applier: ResultApplier | None = None,
     crawl_scheduler: CrawlScheduler | None = None,
+    runtime_control: RuntimeControl | None = None,
     services: Mapping[str, Any] | None = None,
 ) -> WorkerRuntime:
     """Build the executable runtime using the API's shared session factory."""
@@ -780,6 +822,8 @@ def build_mariadb_runtime(
             batch_size=settings.worker_crawl_batch_size,
             max_attempts=settings.worker_crawl_max_attempts,
         )
+    if runtime_control is None:
+        runtime_control = MariaDBRuntimeControl(session_factory)
     if services is None:
         services = _default_services(session_factory)
     return WorkerRuntime(
@@ -789,6 +833,7 @@ def build_mariadb_runtime(
         idempotency_store=idempotency_store,
         result_applier=result_applier,
         crawl_scheduler=crawl_scheduler,
+        runtime_control=runtime_control,
         services=services,
     )
 

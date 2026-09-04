@@ -32,7 +32,7 @@ def test_readiness_revision_matches_the_single_migration_head() -> None:
 
 
 def test_schema_preserves_initial_tables_and_adds_evidence_snapshot() -> None:
-    assert len(metadata.tables) == 38
+    assert len(metadata.tables) == 39
     assert "weight_evidence_snapshots" in metadata.tables
     assert "issue_comparison_snapshots" in metadata.tables
     assert {
@@ -42,6 +42,7 @@ def test_schema_preserves_initial_tables_and_adds_evidence_snapshot() -> None:
         "read_sessions",
         "weight_recommendations",
         "autopilot_settings",
+        "runtime_controls",
         "stored_blobs",
         "audit_logs",
     } <= set(metadata.tables)

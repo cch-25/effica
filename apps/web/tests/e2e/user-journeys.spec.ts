@@ -70,11 +70,42 @@ test("share card create, ready, public actions and revoke", async ({ page }) => 
   expect(pageErrors).toEqual([]);
 });
 
-test("admin is fail-closed without a server session or explicit mock role", async ({ page }) => { await page.goto("/admin/sources"); await expect(page).toHaveURL(/\/login\?returnTo=/); });
+test("admin is fail-closed and accepts the dedicated credentials", async ({ page }) => {
+  await page.goto("/admin/sources");
+  await expect(page).toHaveURL(/\/admin\?returnTo=/);
+  await expect(page.getByRole("heading", { name: "관리자 로그인" })).toBeVisible();
+
+  await page.getByLabel("아이디").fill("dev");
+  await page.getByLabel("비밀번호").fill("wrong");
+  await page.getByRole("button", { name: "접속하기" }).click();
+  await expect(page.getByText("아이디 또는 비밀번호가 올바르지 않습니다.", { exact: true })).toBeVisible();
+
+  await page.getByLabel("비밀번호").fill("1234");
+  await page.getByRole("button", { name: "접속하기" }).click();
+  await expect(page).toHaveURL(/\/admin\/sources$/);
+  await expect(page.getByRole("heading", { name: /출처/ })).toBeVisible();
+});
 
 test("analyst and admin action permissions differ", async ({ context, page }) => { await context.addCookies([{ name: "mock-role", value: "analyst", domain: "127.0.0.1", path: "/" }]); await page.goto("/admin/weights"); await expect(page.getByRole("button", { name: /Publish/ }).first()).toBeDisabled(); await context.addCookies([{ name: "mock-role", value: "admin", domain: "127.0.0.1", path: "/" }]); await page.reload(); await expect(page.getByRole("button", { name: "Publish" }).first()).toBeEnabled(); });
 
 test("weight publish sends a real mutation with reason", async ({ context, page }) => { await context.addCookies([{ name: "mock-role", value: "admin", domain: "127.0.0.1", path: "/" }]); await page.goto("/admin/weights"); await page.getByRole("button", { name: "Publish" }).first().click(); await page.getByLabel("변경 사유 (필수)").fill("7일·30일 guardrail 통과"); await page.getByRole("button", { name: "사유와 함께 실행" }).click(); await expect(page.getByText(/Publish 요청이 서버에 반영/)).toBeVisible(); });
+
+test("admin can start and stop the persisted LLM runtime", async ({ context, page }) => {
+  await context.addCookies([{ name: "mock-role", value: "admin", domain: "127.0.0.1", path: "/" }]);
+  await page.goto("/admin/runtime");
+  const control = page.getByRole("switch", { name: "LLM 사용" });
+  await expect(control).not.toBeChecked();
+  await control.click();
+  await page.getByLabel("변경 사유 (필수)").fill("운영자가 직접 실행");
+  await page.getByRole("button", { name: "실행 시작" }).click();
+  await expect(control).toBeChecked();
+  await expect(page.getByText("RUNNING", { exact: true })).toBeVisible();
+  await control.click();
+  await page.getByLabel("변경 사유 (필수)").fill("운영자가 직접 중지");
+  await page.getByRole("button", { name: "전체 중지" }).click();
+  await expect(control).not.toBeChecked();
+  await expect(page.getByText("STOPPED", { exact: true })).toBeVisible();
+});
 
 test("mock analysis is labelled, complete and a populated topic remains usable", async ({ page }) => {
   const mockWorkerReady = page.waitForResponse((response) =>
