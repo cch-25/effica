@@ -39,8 +39,9 @@ describe("기사 LLM 편향 표시", () => {
   it("기사 카드에 한국어 편향 라벨과 x값을 표시한다", () => {
     render(<ArticleCard article={article} />);
 
-    expect(screen.getByText("LLM 평가 편향 · 좌편향 · -24")).toBeVisible();
-    expect(screen.getByText("LLM 평가 과장성 · 0/100")).toBeVisible();
+    expect(screen.getByText(/AI 편향성.*좌편향.*-24/)).toBeVisible();
+    expect(screen.getByText(/AI 과장성.*0\/100/)).toBeVisible();
+    expect(screen.queryByText(/LLM 평가|PROCESSING|READY/)).not.toBeInTheDocument();
     expect(screen.getByText("2026. 08. 16.")).toBeVisible();
     expect(screen.queryByText("8분")).not.toBeInTheDocument();
   });
@@ -48,8 +49,8 @@ describe("기사 LLM 편향 표시", () => {
   it("준비 중 기사는 임의 점수 대신 분석 상태를 표시한다", () => {
     render(<ArticleCard article={{ ...article, analysisStatus: "PROCESSING", analysisProvider: null }} />);
 
-    expect(screen.getByText("분석 준비 중")).toBeVisible();
-    expect(screen.queryByText(/LLM 평가 편향/)).not.toBeInTheDocument();
+    expect(screen.getByText("AI 분석 준비 중")).toBeVisible();
+    expect(screen.queryByText(/AI 편향성|AI 과장성|PROCESSING/)).not.toBeInTheDocument();
   });
 
   it("기사 상세에 한국어 편향 라벨과 x값을 표시한다", () => {
@@ -59,11 +60,12 @@ describe("기사 LLM 편향 표시", () => {
 
     render(<RealArticleDetail articleId={article.id} />);
 
-    expect(screen.getByText("LLM 평가 편향 · 좌편향 · -24")).toBeVisible();
-    expect(screen.getByText("LLM 평가 과장성 · 0/100")).toBeVisible();
+    expect(screen.getByLabelText(/편향성.*좌편향.*-24/)).toBeVisible();
+    expect(screen.getByLabelText("과장성 0/100")).toBeVisible();
     expect(screen.getByRole("button", { name: /편향성: 기사의 주장과 강조점/ })).toBeVisible();
     expect(screen.getByText(/각 분석 기록에서 공개 근거 제공 여부/)).toBeVisible();
+    expect(screen.queryByText(/LLM 평가|PROCESSING|READY/)).not.toBeInTheDocument();
     expect(screen.queryByText("사회문화")).not.toBeInTheDocument();
-    expect(screen.queryByText("국가·대외")).not.toBeInTheDocument();
+    expect(screen.queryByText(/국가.*대외/)).not.toBeInTheDocument();
   });
 });

@@ -33,7 +33,7 @@ function renderVoteForm() {
   return render(<QueryClientProvider client={queryClient}><VoteForm articleId="article-1" /></QueryClientProvider>);
 }
 
-it("7단계 편향성·과장성 선택을 숨은 y/z 중앙값과 함께 제출한다", async () => {
+it("7단계 편향성과 과장성 선택을 숨은 y/z 중앙값과 함께 제출한다", async () => {
   mocks.apiRequest.mockImplementation(async (_path: string, init?: RequestInit) => {
     if ((init?.method ?? "GET") === "GET") notFound();
     return { revision: 2 };
@@ -47,7 +47,7 @@ it("7단계 편향성·과장성 선택을 숨은 y/z 중앙값과 함께 제출
 
   fireEvent.click(screen.getByRole("button", { name: "우편향 +67" }));
   fireEvent.click(screen.getByRole("button", { name: "높음 +83" }));
-  fireEvent.click(screen.getByRole("button", { name: "투표 저장·수정" }));
+  fireEvent.click(screen.getByRole("button", { name: "독자 평가 저장" }));
 
   await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith("/articles/article-1/vote", {
     method: "PUT",
@@ -73,9 +73,9 @@ it("DELETE 성공 뒤에만 투표 화면을 초기화한다", async () => {
   });
   renderVoteForm();
   await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith("/articles/article-1/vote", { authFailureMode: "return-error" }));
-  fireEvent.click(await screen.findByRole("button", { name: "내 투표 삭제" }));
+  fireEvent.click(await screen.findByRole("button", { name: "내 평가 삭제" }));
   await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith("/articles/article-1/vote", { method: "DELETE" }));
-  expect(screen.getByText(/활성 투표가 삭제/)).toBeVisible();
+  expect(screen.getByText(/현재 독자 평가를 삭제/)).toBeVisible();
 });
 
 it("게스트의 선택적 투표 조회는 공개 기사 화면을 유지하고 로그인 CTA를 표시한다", async () => {

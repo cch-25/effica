@@ -20,7 +20,10 @@ describe("progress credit pagination", () => {
       }
       if (path === "/me/credits") {
         return {
-          items: [{ event_type: "READ_RETURN", created_at: "2026-08-19T00:00:00Z", delta: 10, policy_version: "v1" }],
+          items: [
+            { event_type: "READ_RETURN", created_at: "2026-08-19T00:00:00Z", delta: 10, policy_version: "v1" },
+            { event_type: "UNRECOGNIZED_EVENT", created_at: "2026-08-19T01:00:00Z", delta: 0, policy_version: "v1" },
+          ],
           next_cursor: "older",
         };
       }
@@ -41,10 +44,14 @@ describe("progress credit pagination", () => {
     );
 
     expect(await screen.findByText("원문 읽기 복귀 확인")).toBeVisible();
+    expect(screen.getByText("기타 활동")).toBeVisible();
+    expect(screen.queryByText("READ_RETURN")).not.toBeInTheDocument();
+    expect(screen.queryByText("UNRECOGNIZED_EVENT")).not.toBeInTheDocument();
     expect(screen.getByText("불러온 기록")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "이전 기록 더 보기" }));
 
-    await waitFor(() => expect(screen.getByText("COMPARE")).toBeVisible());
+    await waitFor(() => expect(screen.getByText("이슈 비교")).toBeVisible());
+    expect(screen.queryByText("COMPARE")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "이전 기록 더 보기" })).not.toBeInTheDocument();
   });
 });

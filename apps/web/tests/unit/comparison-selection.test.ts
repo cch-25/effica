@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultComparisonSelection, parseComparisonSelection } from "@/features/issues/comparison/selection";
+import { defaultComparisonSelection, isComparisonReadyArticle, parseComparisonSelection } from "@/features/issues/comparison/selection";
 import type { Article } from "@/lib/api/types";
 
 function article(id: string, sourceId: string): Article {
@@ -40,12 +40,32 @@ describe("comparison URL selection", () => {
     });
   });
 
-  it("corrects duplicates and rejects over-limit links without truncating", () => {
+  it("corrects duplicate IDs and over-limit links to a safe default", () => {
     expect(parseComparisonSelection("a,a", articles).correctionNeeded).toBe(true);
     expect(parseComparisonSelection("a,b,c,d,e", articles)).toEqual({
-      selected: [],
-      correctionNeeded: false,
+      selected: ["a", "c", "d"],
+      correctionNeeded: true,
       error: "TOO_MANY",
     });
+  });
+
+  it("corrects unknown IDs and selections that repeat a source", () => {
+    expect(parseComparisonSelection("a,missing", articles)).toEqual({
+      selected: ["a", "c", "d"],
+      correctionNeeded: true,
+      error: null,
+    });
+    expect(parseComparisonSelection("a,b", articles)).toEqual({
+      selected: ["a", "c", "d"],
+      correctionNeeded: true,
+      error: null,
+    });
+  });
+
+  it("only accepts ready OpenAI articles with a sensationalism score", () => {
+    expect(isComparisonReadyArticle(article("a", "one"))).toBe(true);
+    expect(isComparisonReadyArticle({ ...article("b", "two"), analysisStatus: "PROCESSING" })).toBe(false);
+    expect(isComparisonReadyArticle({ ...article("c", "three"), analysisProvider: null })).toBe(false);
+    expect(isComparisonReadyArticle({ ...article("d", "four"), sensationalism: null })).toBe(false);
   });
 });

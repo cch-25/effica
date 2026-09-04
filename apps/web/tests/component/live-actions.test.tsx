@@ -26,7 +26,10 @@ it("기사 체류 기록은 별도 조작 UI 없이 페이지 이탈 시 자동 
 it("공유 카드 폐기는 DELETE 성공 응답 뒤 실제 상태를 갱신한다", async () => {
   mocks.apiRequest.mockResolvedValue(undefined);
   render(<ShareCardStatus initialCard={{ id: "card-1", status: "ready", public_token: "token-1", snapshot: { x: 2 } }} />);
-  fireEvent.click(screen.getByRole("button", { name: "즉시 폐기" }));
+  fireEvent.click(screen.getByRole("button", { name: "카드 폐기" }));
+  expect(mocks.apiRequest).not.toHaveBeenCalled();
+  expect(screen.getByText("이 공유 카드를 폐기할까요?")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "폐기 확인" }));
   await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith("/share-cards/card-1", { method: "DELETE" }));
   expect(screen.getByText("폐기됨")).toBeVisible();
 });
@@ -39,8 +42,8 @@ it("실패한 공유 카드는 같은 카드에서 재생성하거나 폐기할 
   });
   render(<ShareCardStatus initialCard={{ id: "card-1", status: "failed", public_token: null, snapshot: { x: 2 } }} />);
 
-  expect(screen.getByRole("button", { name: "폐기" })).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "다시 생성" }));
+  expect(screen.getByRole("button", { name: "카드 폐기" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "생성 다시 시도" }));
 
   await waitFor(() => expect(mocks.apiRequest).toHaveBeenCalledWith(
     "/share-cards/card-1/retry",

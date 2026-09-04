@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { IssueComparison } from "@/features/issues/comparison/issue-comparison";
 import { ApiError } from "@/lib/api/client";
@@ -79,11 +79,11 @@ it("shows public article-level analysis while the cross-article review is pendin
   render(<IssueComparison issue={issue} articles={[article("a", "출처 A"), article("b", "출처 B")]} initialArticles="a,b" />);
 
   expect(screen.getByRole("status", { name: "이슈 비교 준비 상태" })).toBeVisible();
-  expect(screen.getByText("현재 기사 2개 · 출처 2곳")).toBeVisible();
+  expect(screen.getByText("비교 준비 완료 기사 2개, 출처 2곳")).toBeVisible();
   expect(screen.getByRole("heading", { name: "기사별 AI 분석 비교" })).toBeVisible();
   expect(screen.getByText("공통 사실과 보도 프레임은 편집 검수 후 공개됩니다.")).toBeVisible();
   expect(screen.getAllByRole("button", { name: /편향성:/ })).toHaveLength(2);
-  expect(screen.getAllByRole("link", { name: /기사 원문 보기, 새 창/ })).toHaveLength(4);
+  expect(screen.getAllByRole("link", { name: /기사 원문 보기, 새 창/ })).toHaveLength(2);
   expect(screen.queryByRole("heading", { name: "공통으로 확인된 사실" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "잠시 연결이 불안정합니다" })).not.toBeInTheDocument();
 });
@@ -134,6 +134,64 @@ it("keeps the comparison focused on shared facts, framing, and the two scores", 
   expect(screen.getAllByRole("link", { name: /기사 원문 보기, 새 창/ })).toHaveLength(2);
   expect(screen.getAllByRole("button", { name: /편향성:/ })).toHaveLength(2);
   expect(screen.getAllByText(/분석 신뢰도/)).toHaveLength(2);
-  expect(screen.getAllByText("독자 평가 · AI 평가와 별도")).toHaveLength(2);
-  expect(screen.getAllByRole("link", { name: "상세 분석" })).toHaveLength(2);
+  expect(screen.getAllByText("독자 평가 / AI 평가와 별도")).toHaveLength(2);
+  expect(screen.getAllByRole("link", { name: "상세 분석 보기" })).toHaveLength(2);
+});
+
+it("repairs an invalid article URL to a ready selection from distinct sources", () => {
+  mocks.useIssueComparisonQuery.mockReturnValue({
+    data: undefined,
+    isPending: true,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  });
+
+  render(<IssueComparison issue={issue} articles={[article("a", "출처 A"), article("b", "출처 B")]} initialArticles="missing,b" />);
+
+  expect(mocks.replace).toHaveBeenCalledWith("/issues/issue-1?articles=a%2Cb", { scroll: false });
+  expect(screen.getByText("2개 기사, 2곳 출처 선택")).toBeVisible();
+});
+
+it("does not add a second article from an already selected source", () => {
+  mocks.useIssueComparisonQuery.mockReturnValue({
+    data: undefined,
+    isPending: true,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  });
+
+  render(<IssueComparison
+    issue={{ ...issue, articleIds: ["a", "b", "c"] }}
+    articles={[article("a", "출처 A"), article("b", "출처 B"), article("c", "출처 A")]}
+    initialArticles="a,b"
+  />);
+  fireEvent.click(screen.getByRole("button", { name: "출처 A 기사 비교에 추가하기" }));
+
+  expect(screen.getByText("같은 출처에서는 기사 1개만 선택할 수 있습니다.")).toBeVisible();
+  expect(screen.getByText("2개 기사, 2곳 출처 선택")).toBeVisible();
+  expect(mocks.replace).not.toHaveBeenCalled();
+});
+
+it("keeps issue context and hides the selector while fewer than two articles are ready", () => {
+  mocks.useIssueComparisonQuery.mockReturnValue({
+    data: undefined,
+    isPending: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  });
+  const processing = { ...article("b", "출처 B"), analysisStatus: "PROCESSING" as const };
+
+  render(<IssueComparison issue={issue} articles={[article("a", "출처 A"), processing]} initialArticles="a,b" />);
+
+  expect(screen.getByRole("heading", { name: "비교 이슈" })).toBeVisible();
+  expect(screen.getByText("비교할 이슈의 요약")).toBeVisible();
+  expect(screen.getByRole("link", { name: "전체 이슈로 돌아가기" })).toHaveAttribute("href", "/issues");
+  expect(screen.getByText("비교 준비 완료 기사 1개, 출처 1곳")).toBeVisible();
+  expect(screen.getByRole("heading", { name: "현재 확인할 수 있는 기사" })).toBeVisible();
+  expect(screen.getByRole("link", { name: "출처 A 기사" })).toHaveAttribute("href", "/articles/a");
+  expect(screen.queryByRole("heading", { name: "비교할 기사" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /기사 원문 보기, 새 창/ })).not.toBeInTheDocument();
 });

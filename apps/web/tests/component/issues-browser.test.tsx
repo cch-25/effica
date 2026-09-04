@@ -26,24 +26,24 @@ it("주제 필터를 열고 선택한 주제의 이슈만 표시한다", () => {
   render(<IssuesBrowser fallback={issues} />);
 
   expect(screen.getByRole("heading", { name: "오늘의 이슈" })).toBeVisible();
-  expect(screen.getByRole("heading", { name: "주요 이슈 TOP 10" })).toBeVisible();
-  expect(screen.getByRole("heading", { name: "대주제별 이슈" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "지금 비교할 수 있는 주요 이슈" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "주제별 전체 찾아보기" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "경제" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "국제" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "산업" })).toBeVisible();
   expect(screen.getAllByText("도심 주택 공급 대책")).toHaveLength(2);
 
-  const filterButton = screen.getByRole("button", { name: "주제·기간" });
+  const filterButton = screen.getByRole("button", { name: "주제와 기간" });
   fireEvent.click(filterButton);
   fireEvent.click(screen.getByRole("checkbox", { name: "산업" }));
 
   expect(screen.getByText("공공 AI 기본법 시행령, 혁신과 책임의 경계")).toBeVisible();
   expect(screen.queryByText("도심 주택 공급 대책")).not.toBeInTheDocument();
   expect(filterButton).toHaveAttribute("aria-expanded", "true");
-  expect(screen.getByRole("button", { name: "0개 이슈 · 1개 대주제 보기" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "0개 이슈, 1개 대주제 보기" })).toBeVisible();
 });
 
-it("검증된 사건 이슈에서 편집 우선순위 기준 TOP 10만 고르고 대주제에는 모두 남긴다", () => {
+it("비교 준비가 끝난 주요 이슈를 최대 10개 보여주고 주제별 목록에는 모두 남긴다", () => {
   const manyIssues: Issue[] = Array.from({ length: 12 }, (_, index) => ({
     ...issues[0],
     id: `ranked-${index + 1}`,
@@ -59,6 +59,7 @@ it("검증된 사건 이슈에서 편집 우선순위 기준 TOP 10만 고르고
   expect(ranking?.querySelectorAll(":scope > li")).toHaveLength(10);
   expect(ranking?.querySelector("li:first-child")).toHaveTextContent("이슈 01");
   expect(ranking).not.toHaveTextContent("이슈 11");
+  expect(ranking).not.toHaveTextContent("01위");
   expect(screen.getByRole("heading", { name: "정치" })).toBeVisible();
   expect(screen.getByRole("button", { name: "6개 더 보기" })).toBeVisible();
 });
@@ -81,5 +82,5 @@ it("기사 수가 많은 광역 TOPIC으로 주요 이슈 빈자리를 채우지
 
   expect(ranking).toHaveTextContent(issues[0].title);
   expect(ranking).not.toHaveTextContent("문화");
-  expect(screen.getByText("1/10 검증 완료")).toBeVisible();
+  expect(screen.getByText("1개 준비")).toBeVisible();
 });
