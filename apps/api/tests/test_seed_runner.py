@@ -7,6 +7,7 @@ from db.seeds.seed import (
     LEGACY_SEED_ID_PREFIX,
     MINIMUM_ARTICLE_COUNT,
     REAL_SEED_ID_PREFIX,
+    _assessment_evidence_payload,
     _load_articles,
     _score_components,
     _stable_ulid,
@@ -69,6 +70,20 @@ def test_seed_scores_name_the_trusted_openai_assessment_they_use() -> None:
     assert components["analysis_provider"] == "openai"
     assert components["assessment_ids"] == ["01K00000000000000000000001"]
     assert components["actual_model_ids"] == ["gpt-5.6-luna"]
+
+
+def test_seed_assessment_keeps_summary_with_public_evidence() -> None:
+    payload = _assessment_evidence_payload(
+        {
+            "rationale_summary": "절제된 사실 중심 보도입니다.",
+            "evidence": [{"quote": "공개 인용"}],
+        }
+    )
+
+    assert payload == {
+        "rationale_summary": "절제된 사실 중심 보도입니다.",
+        "evidence": [{"quote": "공개 인용"}],
+    }
 
 
 def test_scheduled_news_feeds_are_broad_metadata_only_and_source_diverse() -> None:

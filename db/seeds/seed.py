@@ -78,6 +78,15 @@ def _score_components(
     }
 
 
+def _assessment_evidence_payload(assessment: dict[str, Any]) -> dict[str, Any]:
+    """Keep the public model summary beside its structured evidence."""
+
+    return {
+        "rationale_summary": assessment["rationale_summary"],
+        "evidence": assessment["evidence"],
+    }
+
+
 def _load_articles(*, require_assessments: bool = True) -> list[dict[str, Any]]:
     payload = json.loads(ARTICLE_DATA.read_text(encoding="utf-8"))
     if not isinstance(payload, list) or len(payload) < MINIMUM_ARTICLE_COUNT:
@@ -497,7 +506,10 @@ async def _insert_articles(connection: Any, articles: list[dict[str, Any]]) -> N
                 "bias": bias,
                 "sensationalism": sensationalism,
                 "confidence": confidence,
-                "evidence": json.dumps(assessment["evidence"], ensure_ascii=False),
+                "evidence": json.dumps(
+                    _assessment_evidence_payload(assessment),
+                    ensure_ascii=False,
+                ),
                 "token_usage": int(assessment["token_usage"]),
                 "latency_ms": int(assessment["latency_ms"]),
                 "created_at": fetched_at,
