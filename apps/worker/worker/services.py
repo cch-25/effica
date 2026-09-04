@@ -1609,7 +1609,20 @@ class MariaDBResultApplier:
             alias_id = str(_row(alias_rows[0], "id", ""))
             if not alias_id:
                 raise ResultApplicationError("model alias canonical ID is empty")
-            evidence = item.get("evidence", item.get("evidence_json", []))
+            stored_evidence = item.get("evidence_json")
+            if isinstance(stored_evidence, Mapping):
+                evidence = dict(stored_evidence)
+                evidence.setdefault("evidence", item.get("evidence", []))
+            else:
+                evidence = {
+                    "evidence": item.get(
+                        "evidence",
+                        stored_evidence if stored_evidence is not None else [],
+                    )
+                }
+            rationale_summary = item.get("rationale_summary")
+            if isinstance(rationale_summary, str) and rationale_summary.strip():
+                evidence["rationale_summary"] = rationale_summary.strip()
             assessment_id = str(
                 item.get("id")
                 or item.get("assessment_id")

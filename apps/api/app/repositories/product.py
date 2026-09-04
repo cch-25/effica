@@ -59,6 +59,7 @@ from apps.api.app.domains.content.trust import (
     is_trusted_openai_assessment,
     public_assessment_evidence,
     public_assessment_summary,
+    public_score_assessment_summary,
     score_matches_trusted_assessments,
 )
 from apps.api.app.domains.engagement.read import evaluate_read_eligibility
@@ -84,6 +85,13 @@ def _event_count_from_confidence(confidence: float) -> int:
     if value <= 0:
         return 0
     return max(1, round(10.0 * value / (1.0 - value)))
+
+
+def _linked_assessment_summary(assessment: ModelAssessment, score: ScoreVersion | None) -> str:
+    return public_assessment_summary(
+        assessment.evidence_json,
+        fallback=public_score_assessment_summary(score, assessment.id),
+    )
 
 
 _TERMINAL_ISSUE_STATUSES = ("merged", "closed", "archived")
@@ -525,7 +533,7 @@ class ProductRepositoryMixin:
             analysis_status = trusted.get("status", "PROCESSING")
             trusted_assessments = trusted.get("trusted_assessments", [])
             summary = (
-                public_assessment_summary(trusted_assessments[0][0].evidence_json)
+                _linked_assessment_summary(trusted_assessments[0][0], score)
                 if trusted_assessments
                 else ""
             )
@@ -745,6 +753,7 @@ class ProductRepositoryMixin:
             assessment, alias = assessments_by_version[version_id][0]
             evidence_json = assessment.evidence_json
             evidence = public_assessment_evidence(evidence_json)
+            summary = _linked_assessment_summary(assessment, score)
             aggregate = aggregates.get(article_id)
             aggregate_payload = aggregate.aggregate_json if aggregate is not None else {}
             qualified = aggregate_payload.get("qualified", {})
@@ -761,7 +770,7 @@ class ProductRepositoryMixin:
                         source,
                         issue_id,
                         analysis_status="READY",
-                        summary=public_assessment_summary(evidence_json),
+                        summary=summary,
                     ),
                     "score": self._score_view(score),
                     "assessment": {
@@ -769,7 +778,7 @@ class ProductRepositoryMixin:
                         "model_alias": alias.alias,
                         "actual_model_id": alias.actual_model_id,
                         "prompt_version": assessment.prompt_version,
-                        "summary": public_assessment_summary(evidence_json),
+                        "summary": summary,
                         "evidence": evidence,
                         "confidence": float(assessment.confidence),
                         "provider": "openai",
@@ -844,8 +853,9 @@ class ProductRepositoryMixin:
         trusted = analysis.get(context[0].current_version_id or "", {}).get(
             "trusted_assessments", []
         )
+        score = analysis.get(context[0].current_version_id or "", {}).get("score")
         summary = (
-            public_assessment_summary(trusted[0][0].evidence_json) if trusted else ""
+            _linked_assessment_summary(trusted[0][0], score) if trusted else ""
         )
         return self._article_view(
             *context,
@@ -859,9 +869,9 @@ class ProductRepositoryMixin:
             return None
         article = context[0]
         analysis = await self._analysis_context()
-        rows = analysis.get(article.current_version_id or "", {}).get(
-            "trusted_assessments", []
-        )
+        analysis_row = analysis.get(article.current_version_id or "", {})
+        rows = analysis_row.get("trusted_assessments", [])
+        score = analysis_row.get("score")
         return {
             "article_version_id": article.current_version_id,
             "assessments": [
@@ -870,7 +880,7 @@ class ProductRepositoryMixin:
                     "model_alias": alias.alias,
                     "actual_model_id": alias.actual_model_id,
                     "prompt_version": assessment.prompt_version,
-                    "summary": public_assessment_summary(assessment.evidence_json),
+                    "summary": _linked_assessment_summary(assessment, score),
                     "confidence": float(assessment.confidence),
                     "evidence": public_assessment_evidence(assessment.evidence_json),
                     "provider": "openai",

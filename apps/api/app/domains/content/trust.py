@@ -54,27 +54,57 @@ def score_matches_trusted_assessments(
     components = getattr(score, "components_json", None)
     if not isinstance(components, Mapping):
         return False
-    if str(components.get("analysis_provider", "")).casefold() != "openai":
-        return False
-    identifiers = components.get("assessment_ids")
-    if not isinstance(identifiers, Sequence) or isinstance(identifiers, (str, bytes, bytearray)):
-        return False
-    declared = {str(value) for value in identifiers}
+    declared = _score_assessment_ids(components)
     trusted = {str(getattr(assessment, "id", "")) for assessment, _ in trusted_assessments}
     return bool(declared & trusted)
 
 
-def public_assessment_summary(evidence: Any) -> str:
+def _score_assessment_ids(components: Mapping[str, Any]) -> set[str]:
+    """Read current provenance or the pre-migration seed shape, never both."""
+
+    if "analysis_provider" in components or "assessment_ids" in components:
+        if str(components.get("analysis_provider", "")).casefold() != "openai":
+            return set()
+        identifiers = components.get("assessment_ids")
+        if not isinstance(identifiers, Sequence) or isinstance(
+            identifiers, (str, bytes, bytearray)
+        ):
+            return set()
+        return {str(value) for value in identifiers}
+    if (
+        str(components.get("분석방식", "")).casefold() == "llm"
+        and components.get("모델평가ID")
+    ):
+        return {str(components["모델평가ID"])}
+    return set()
+
+
+def public_score_assessment_summary(score: Any, assessment_id: Any) -> str | None:
+    """Return a legacy summary only when the score links it to the assessment."""
+
+    components = getattr(score, "components_json", None)
+    if not isinstance(components, Mapping):
+        return None
+    if str(assessment_id) not in _score_assessment_ids(components):
+        return None
+    for key in ("rationale_summary", "근거요약"):
+        value = components.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:500]
+    return None
+
+
+def public_assessment_summary(evidence: Any, *, fallback: str | None = None) -> str:
     """Build a bounded public summary without exposing a raw model response."""
 
     if isinstance(evidence, Mapping):
-        for key in ("summary", "rationale_summary", "reason", "근거요약"):
+        for key in ("rationale_summary", "summary", "reason", "근거요약"):
             value = evidence.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()[:500]
         values = evidence.get("evidence")
         if values is not None:
-            return public_assessment_summary(values)
+            return public_assessment_summary(values, fallback=fallback)
     if isinstance(evidence, Sequence) and not isinstance(evidence, (str, bytes, bytearray)):
         rationales = [
             str(item.get("rationale", "")).strip()
@@ -83,6 +113,8 @@ def public_assessment_summary(evidence: Any) -> str:
         ]
         if rationales:
             return " ".join(rationales)[:500]
+    if isinstance(fallback, str) and fallback.strip():
+        return fallback.strip()[:500]
     return "공개 가능한 근거 인용이 제공되지 않았습니다."
 
 
