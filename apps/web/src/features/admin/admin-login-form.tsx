@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/form-controls";
 import { isMockMode } from "@/lib/api/mode";
@@ -13,12 +13,34 @@ export function AdminLoginForm({ returnTo }: { returnTo: string }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const markReady = () => {
+      if (active) setReady(true);
+    };
+    if (isMockMode()) {
+      void import("@/mocks/browser")
+        .then(({ startMockWorker }) => startMockWorker())
+        .then(markReady, markReady);
+    } else {
+      markReady();
+    }
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
+      if (isMockMode()) {
+        const { startMockWorker } = await import("@/mocks/browser");
+        await startMockWorker();
+      }
       const response = await fetch("/api/v1/auth/admin/login", {
         method: "POST",
         credentials: "include",
@@ -68,8 +90,8 @@ export function AdminLoginForm({ returnTo }: { returnTo: string }) {
           onChange={(event) => setPassword(event.target.value)}
         />
         {error ? <p className="form-error admin-login__error" role="alert">{error}</p> : null}
-        <Button className="admin-login__submit" type="submit" disabled={submitting}>
-          {submitting ? "확인 중" : "접속하기"}
+        <Button className="admin-login__submit" type="submit" disabled={!ready || submitting}>
+          {!ready ? "준비 중" : submitting ? "확인 중" : "접속하기"}
         </Button>
       </form>
       <p className="admin-login__user-link">일반 사용자라면 <Link href="/login">Google 로그인</Link>을 이용해 주세요.</p>

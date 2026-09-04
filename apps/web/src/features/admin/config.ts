@@ -31,7 +31,7 @@ export const adminConfigs: Record<string, AdminConfig> = {
     { label: "모델 수정", level: "publish", method: "PATCH", path: (id) => `/admin/models/${id}`, needsValues: true, ifMatch: true, body: (reason, values) => ({ reason, values }) },
   ] },
   weights: { eyebrow: "Weight control", title: "가중치 revision", description: "simulation 결과를 확인한 뒤 publish 또는 rollback합니다.", listPath: "/admin/weights", minimumRole: "analyst", actions: [
-    { label: "7·30일 simulation", level: "operate", method: "POST", path: (id) => `/admin/weights/${id}/simulate`, defaultValues: { windows: [7, 30] }, body: (reason, values) => ({ reason, windows: values.windows ?? [7, 30] }) },
+    { label: "7일과 30일 시뮬레이션", level: "operate", method: "POST", path: (id) => `/admin/weights/${id}/simulate`, defaultValues: { windows: [7, 30] }, body: (reason, values) => ({ reason, windows: values.windows ?? [7, 30] }) },
     { label: "Publish", level: "publish", method: "POST", path: (id) => `/admin/weights/${id}/publish`, ifMatch: true, ifMatchPath: "/admin/autopilot/settings", body: reasonBody },
     { label: "Rollback", level: "publish", method: "POST", path: (id) => `/admin/weights/${id}/rollback`, destructive: true, needsValues: true, ifMatch: true, ifMatchPath: "/admin/autopilot/settings", body: (reason, values) => ({ reason, target_revision_id: values.target_revision_id }) },
   ] },
@@ -39,10 +39,10 @@ export const adminConfigs: Record<string, AdminConfig> = {
     { label: "Approve", level: "review", method: "POST", path: (id) => `/admin/autopilot/recommendations/${id}/approve`, body: reasonBody },
     { label: "Reject", level: "review", method: "POST", path: (id) => `/admin/autopilot/recommendations/${id}/reject`, destructive: true, body: reasonBody },
   ] },
-  jobs: { eyebrow: "MariaDB queue", title: "작업 큐", description: "lease와 attempt 상태를 확인하고 운영 재시도·취소를 실행합니다.", listPath: "/admin/jobs", minimumRole: "analyst", actions: [
+  jobs: { eyebrow: "MariaDB queue", title: "작업 큐", description: "lease와 attempt 상태를 확인하고 운영 재시도 또는 취소를 실행합니다.", listPath: "/admin/jobs", minimumRole: "analyst", actions: [
     { label: "Retry", level: "review", method: "POST", path: (id) => `/admin/jobs/${id}/retry`, body: reasonBody },
     { label: "Cancel", level: "review", method: "POST", path: (id) => `/admin/jobs/${id}/cancel`, destructive: true, body: reasonBody },
   ] },
-  audit: { eyebrow: "Audit trail", title: "변경 감사 로그", description: "actor·action·before·after·reason·request ID를 확인합니다.", listPath: "/admin/audit", minimumRole: "reviewer", actions: [] },
+  audit: { eyebrow: "Audit trail", title: "변경 감사 로그", description: "행위자, 행동, 변경 전후, 사유, 요청 ID를 확인합니다.", listPath: "/admin/audit", minimumRole: "reviewer", actions: [] },
   "metrics/efficacy": { eyebrow: "Protected aggregate", title: "효능감 cohort 지표", description: "서버에서 suppression된 집계만 표시합니다.", listPath: "/admin/metrics/efficacy", minimumRole: "analyst", actions: [] },
 };
