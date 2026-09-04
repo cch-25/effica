@@ -258,7 +258,7 @@ def evaluate_guardrails(
         if needed not in windows:
             failures.append(f"MISSING_SIMULATION:{needed}")
     if baseline_metrics is None and runs:
-        baseline_metrics = SimulationMetrics(0 if False else 1, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+        baseline_metrics = SimulationMetrics(1, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0)
     for run in runs:
         if run.model_success_rate < config.min_model_success_rate:
             failures.append(f"MODEL_SUCCESS:{run.window_days}")

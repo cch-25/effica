@@ -7,7 +7,7 @@ import httpx
 import pytest
 from app.domains.analysis import (
     AssessmentInput,
-    HTTPProvider,
+    HttpLLMProvider,
     ProviderConfig,
     ensemble_assessments,
 )
@@ -45,7 +45,7 @@ def test_analysis_request_bounds_pathological_crawl_content_without_changing_off
             request=request,
         )
 
-    provider = HTTPProvider(
+    provider = HttpLLMProvider(
         ProviderConfig(
             "test",
             "gpt-test",

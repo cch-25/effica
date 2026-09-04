@@ -146,10 +146,8 @@ class ArticleScore:
 def calculate_article_score(
     components: ScoreComponents | Mapping[str, Any],
     weights: WeightProfile | Mapping[str, Any] | None = None,
-    *,
-    fact_check: Any = None,
 ) -> ArticleScore:
-    """Calculate a reproducible score; ``fact_check`` is intentionally ignored."""
+    """Calculate a reproducible score."""
 
     if not isinstance(components, ScoreComponents):
         components = ScoreComponents(**components)

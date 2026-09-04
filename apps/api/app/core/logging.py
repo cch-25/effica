@@ -96,10 +96,6 @@ def redact(value: Any, *, key: str | None = None) -> Any:
     return f"<{type(value).__name__}>"
 
 
-redact_value = redact
-redact_log_record = redact
-
-
 class RedactingFilter(logging.Filter):
     """Sanitize log messages and extras before handlers serialize them."""
 
@@ -218,7 +214,5 @@ __all__ = [
     "is_sensitive_key",
     "log_event",
     "redact",
-    "redact_log_record",
     "redact_text",
-    "redact_value",
 ]

@@ -127,9 +127,6 @@ class AuthResult:
         return self.credentials.session_token
 
 
-OAuthCallbackResult = AuthResult
-
-
 class AuthService:
     """Coordinates provider callback validation and local account sessions."""
 
@@ -281,7 +278,6 @@ class AuthService:
 __all__ = [
     "AuthResult",
     "AuthService",
-    "OAuthCallbackResult",
     "OAuthStart",
     "OAuthStateStore",
     "PendingOAuthChallenge",

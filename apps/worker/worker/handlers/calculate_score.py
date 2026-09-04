@@ -96,7 +96,7 @@ async def handle(
             "weights must be an object", code="INVALID_SCORE_WEIGHTS"
         )
     try:
-        score = calculate_article_score(components, weights, fact_check=payload.get("fact_check"))
+        score = calculate_article_score(components, weights)
     except (TypeError, ValueError) as exc:
         raise NonRetryableHandlerError(
             str(exc), code="INVALID_SCORE_PAYLOAD"
@@ -117,6 +117,3 @@ async def handle(
         value=value,
         side_effect_key=(context.idempotency_key if context else None),
     )
-
-
-run = handle

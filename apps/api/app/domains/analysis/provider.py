@@ -99,13 +99,6 @@ class ProviderSchemaError(ProviderError, ValueError):
     retryable = True
 
 
-# Short aliases are useful to callers that use the control name rather than
-# the provider-prefixed exception name.  The long names remain canonical.
-RateLimitError = ProviderRateLimitError
-CircuitOpenError = ProviderCircuitOpenError
-SchemaValidationError = ProviderSchemaError
-
-
 _MAX_RETRIES = 8
 _MAX_BACKOFF_SECONDS = 60.0
 _MAX_TIMEOUT_SECONDS = 300.0
@@ -447,8 +440,6 @@ def sanitize_public_assessment(
 
 
 # Friendly aliases for callers that describe this operation as validation.
-validate_public_output = sanitize_public_assessment
-validate_evidence = validate_public_evidence
 
 
 @dataclass(frozen=True)
@@ -1547,40 +1538,6 @@ class DeterministicStubProvider(LLMProvider):
         )
 
 
-# Common spellings retained as aliases; all use the same controls and schema.
-HTTPProvider = HttpLLMProvider
-HttpProvider = HttpLLMProvider
-LLMHttpProvider = HttpLLMProvider
-HTTPProviderAdapter = HttpLLMProvider
-LLMProviderAdapter = HttpLLMProvider
-ConfiguredHTTPProvider = HttpLLMProvider
-ConfiguredLLMProvider = HttpLLMProvider
-
-
-def provider_from_config(
-    config: ProviderConfig,
-    *,
-    transport: httpx.BaseTransport | Callable[[httpx.Request], httpx.Response] | None = None,
-    client: httpx.Client | None = None,
-    sleep: Callable[[float], None] | None = None,
-    clock: Callable[[], float] | None = None,
-) -> LLMProvider:
-    """Build an HTTP provider when an endpoint is configured, otherwise stub."""
-
-    if config.endpoint:
-        return HttpLLMProvider(
-            config,
-            transport=transport,
-            client=client,
-            sleep=sleep,
-            clock=clock,
-        )
-    return DeterministicStubProvider(config)
-
-
-StubProvider = DeterministicStubProvider
-
-
 def make_stub_providers(count: int = 1) -> list[DeterministicStubProvider]:
     if count < 1:
         raise ValueError("count must be positive")
@@ -1590,9 +1547,3 @@ def make_stub_providers(count: int = 1) -> list[DeterministicStubProvider]:
         )
         for index in range(count)
     ]
-
-
-make_deterministic_stub_providers = make_stub_providers
-
-# Factory spelling used by service bootstrap code.
-build_provider = provider_from_config

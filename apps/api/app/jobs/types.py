@@ -142,7 +142,3 @@ class JobSubmission:
     job_type: str
     dedupe_key: str | None
     created: bool
-
-
-# This alias is useful to callers that describe the protocol by operation.
-Job = JobEnvelope

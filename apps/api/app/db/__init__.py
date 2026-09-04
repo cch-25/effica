@@ -8,7 +8,6 @@ without importing the FastAPI application.
 from .base import Base, metadata
 from .blob import BlobError, BlobNotFoundError, BlobRepository, BlobTooLargeError
 from .session import (
-    async_session_factory,
     create_engine,
     get_session,
     session_factory,
@@ -28,7 +27,6 @@ __all__ = [
     "BlobTooLargeError",
     "UTCDateTime",
     "ULIDType",
-    "async_session_factory",
     "create_engine",
     "ensure_utc",
     "get_session",

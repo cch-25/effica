@@ -15,11 +15,9 @@ from statistics import fmean
 from typing import Any
 
 from sqlalchemy import func, or_, select
-from sqlalchemy.exc import IntegrityError
 
 from apps.api.app.db.enums import (
     ArticleStatus,
-    CreditStatus,
     IssueKind,
     IssueStatus,
     JobStatus,
@@ -1420,80 +1418,6 @@ class ProductRepositoryMixin:
             }
             for row in rows
         ]
-
-    async def reverse_credit_row(
-        self,
-        *,
-        user_id: str,
-        original_ledger_id: str,
-        event_key: str,
-        policy_version: str,
-    ) -> dict[str, Any] | None:
-        """Create one durable reversal for an original ledger entry.
-
-        The original row is the serialization point: locking it prevents two
-        requests from both observing an un-reversed entry.  The unique
-        ``reversed_ledger_id`` constraint remains the database backstop for
-        dialects that do not honor row locks (and for independent writers).
-        """
-
-        original = await self.session.scalar(
-            select(CreditLedger)
-            .where(CreditLedger.id == original_ledger_id, CreditLedger.user_id == user_id)
-            .with_for_update()
-        )
-        if original is None:
-            return None
-        if _value(original.status) == CreditStatus.REVERSED.value or str(
-            original.event_type
-        ).upper() == "REVERSAL":
-            raise ProductConflictError("CREDIT_REVERSAL_CHAIN")
-        existing = await self.session.scalar(
-            select(CreditLedger)
-            .where(CreditLedger.reversed_ledger_id == original.id)
-            .with_for_update()
-        )
-        if existing is not None:
-            if existing.event_key == event_key:
-                return {
-                    "id": existing.id,
-                    "event_type": existing.event_type,
-                    "event_key": existing.event_key,
-                    "delta": existing.delta,
-                    "policy_version": existing.policy_version,
-                    "status": _value(existing.status),
-                    "reversed_ledger_id": existing.reversed_ledger_id,
-                    "created_at": existing.created_at,
-                }
-            raise ProductConflictError("CREDIT_ALREADY_REVERSED")
-        reversal = CreditLedger(
-            id=new_ulid(),
-            user_id=user_id,
-            event_type="REVERSAL",
-            event_key=event_key,
-            delta=-original.delta,
-            policy_version=policy_version,
-            status=CreditStatus.REVERSED,
-            reversed_ledger_id=original.id,
-            created_at=utc_now(),
-        )
-        self.session.add(reversal)
-        try:
-            await self.session.flush()
-        except IntegrityError as exc:
-            await self.session.rollback()
-            raise ProductConflictError("CREDIT_ALREADY_REVERSED") from exc
-        await self.session.commit()
-        return {
-            "id": reversal.id,
-            "event_type": reversal.event_type,
-            "event_key": reversal.event_key,
-            "delta": reversal.delta,
-            "policy_version": reversal.policy_version,
-            "status": _value(reversal.status),
-            "reversed_ledger_id": reversal.reversed_ledger_id,
-            "created_at": reversal.created_at,
-        }
 
     async def progress_view(self, user_id: str) -> dict[str, Any]:
         total = int(

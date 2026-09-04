@@ -29,9 +29,7 @@ from apps.api.app.core.security import (
 )
 from apps.api.app.domains.auth.providers import (
     GoogleOAuthProvider,
-    KakaoOAuthProvider,
     MockOAuthProvider,
-    NaverOAuthProvider,
     OAuthNonceError,
     OAuthProviderConfig,
     OAuthResponseError,
@@ -320,37 +318,6 @@ def _google_provider(
         transport=transport,
         clock=lambda: _GOOGLE_NOW,
     )
-
-
-def test_kakao_profile_accepts_numeric_id() -> None:
-    provider = KakaoOAuthProvider(
-        OAuthProviderConfig(
-            provider="kakao",
-            client_id="kakao-id",
-            client_secret="kakao-secret",
-            authorize_endpoint="https://kauth.kakao.com/oauth/authorize",
-            token_endpoint="https://kauth.kakao.com/oauth/token",
-            userinfo_endpoint="https://kapi.kakao.com/v2/user/me",
-        )
-    )
-    identity = provider._parse_profile({"id": 1234567890, "properties": {"nickname": "한강"}})
-    assert identity.subject == "1234567890"
-    assert identity.display_name == "한강"
-
-
-def test_naver_profile_accepts_numeric_id() -> None:
-    provider = NaverOAuthProvider(
-        OAuthProviderConfig(
-            provider="naver",
-            client_id="naver-id",
-            client_secret="naver-secret",
-            authorize_endpoint="https://nid.naver.com/oauth2.0/authorize",
-            token_endpoint="https://nid.naver.com/oauth2.0/token",
-            userinfo_endpoint="https://openapi.naver.com/v1/nid/me",
-        )
-    )
-    identity = provider._parse_profile({"response": {"id": 987654321}})
-    assert identity.subject == "987654321"
 
 
 def test_google_exchange_reads_nonce_from_id_token() -> None:

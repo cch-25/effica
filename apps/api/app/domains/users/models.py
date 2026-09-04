@@ -203,9 +203,6 @@ class UserProfile:
         return self.x, self.y, self.z
 
 
-SelfReportedProfile = UserProfile
-
-
 @dataclass
 class UserDemographics:
     user_id: str
@@ -250,7 +247,6 @@ __all__ = [
     "QuestionnaireResponse",
     "QuestionnaireScore",
     "QuestionnaireVersion",
-    "SelfReportedProfile",
     "User",
     "UserConsent",
     "UserDemographics",

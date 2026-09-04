@@ -8,9 +8,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, field_validator
 
 ULID_PATTERN = r"^[0-9A-HJKMNP-TV-Z]{26}$"
-Axis = int
-
-
 class ContractModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -59,13 +56,6 @@ class Coordinate(ContractModel):
 class Page(ContractModel):
     items: list[dict[str, Any]]
     next_cursor: str | None = None
-
-
-class StatusResponse(ContractModel):
-    status: str
-    id: str | None = None
-    version: int | None = None
-    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class JobAccepted(ContractModel):

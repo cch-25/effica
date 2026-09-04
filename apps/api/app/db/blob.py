@@ -6,7 +6,7 @@ import hashlib
 import re
 from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -114,19 +114,6 @@ class BlobRepository:
         if row.expires_at is not None and row.expires_at <= utc_now():
             raise BlobNotFoundError(blob_id)
         return row
-
-    async def delete_expired(self, session: AsyncSession, *, now: datetime | None = None) -> int:
-        """Delete expired BLOBs and return the number of rows removed."""
-
-        cutoff = ensure_utc(now) if now is not None else utc_now()
-        result = await session.execute(
-            delete(StoredBlob).where(
-                StoredBlob.expires_at.is_not(None),
-                StoredBlob.expires_at <= cutoff,
-            )
-        )
-        return int(result.rowcount or 0)
-
 
 __all__ = [
     "BlobError",

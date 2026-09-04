@@ -49,8 +49,6 @@ class OAuthNonceError(OAuthResponseError):
 
 
 class ProviderName(str, Enum):
-    KAKAO = "kakao"
-    NAVER = "naver"
     GOOGLE = "google"
     MOCK = "mock"
 
@@ -104,9 +102,6 @@ class OAuthUserInfo:
     @property
     def provider_subject(self) -> str:
         return self.subject
-
-
-OAuthIdentity = OAuthUserInfo
 
 
 class OAuthTransport(Protocol):
@@ -419,65 +414,6 @@ def hmac_compare(left: str, right: str) -> bool:
     return hmac.compare_digest(left, right)
 
 
-class KakaoOAuthProvider(ConfiguredOAuthProvider):
-    name = ProviderName.KAKAO.value
-    default_scopes = ("profile_nickname", "account_email")
-
-    def _parse_profile(self, payload: Mapping[str, Any]) -> OAuthUserInfo:
-        subject = self._require_subject(payload, "id", context="profile")
-        account = payload.get("kakao_account")
-        account_map = account if isinstance(account, Mapping) else {}
-        properties = payload.get("properties")
-        properties_map = properties if isinstance(properties, Mapping) else {}
-        return OAuthUserInfo(
-            provider=self.name,
-            subject=subject,
-            email=account_map.get("email") if isinstance(account_map.get("email"), str) else None,
-            display_name=(
-                properties_map.get("nickname")
-                if isinstance(properties_map.get("nickname"), str)
-                else None
-            ),
-            nonce=self._extract_nonce(payload),
-            avatar_url=(
-                properties_map.get("profile_image")
-                if isinstance(properties_map.get("profile_image"), str)
-                else None
-            ),
-        )
-
-    @staticmethod
-    def _extract_nonce(payload: Mapping[str, Any]) -> str | None:
-        value = payload.get("nonce") or payload.get("id_token_nonce")
-        return value if isinstance(value, str) else None
-
-
-class NaverOAuthProvider(ConfiguredOAuthProvider):
-    name = ProviderName.NAVER.value
-    default_scopes = ("name", "email", "profile_image")
-
-    def _parse_profile(self, payload: Mapping[str, Any]) -> OAuthUserInfo:
-        nested = payload.get("response")
-        profile = nested if isinstance(nested, Mapping) else payload
-        subject = self._require_subject(profile, "id", context="profile")
-        return OAuthUserInfo(
-            provider=self.name,
-            subject=subject,
-            email=profile.get("email") if isinstance(profile.get("email"), str) else None,
-            display_name=(
-                profile.get("name") or profile.get("nickname")
-                if isinstance(profile.get("name") or profile.get("nickname"), str)
-                else None
-            ),
-            nonce=(profile.get("nonce") if isinstance(profile.get("nonce"), str) else None),
-            avatar_url=(
-                profile.get("profile_image")
-                if isinstance(profile.get("profile_image"), str)
-                else None
-            ),
-        )
-
-
 class GoogleOAuthProvider(ConfiguredOAuthProvider):
     name = ProviderName.GOOGLE.value
     default_scopes = ("openid", "email", "profile")
@@ -617,26 +553,7 @@ class GoogleOAuthProvider(ConfiguredOAuthProvider):
         )
 
 
-# Short aliases keep route wiring and fixture code readable while retaining
-# explicit class names for documentation and type checkers.
-KakaoProvider = KakaoOAuthProvider
-NaverProvider = NaverOAuthProvider
-GoogleProvider = GoogleOAuthProvider
-
-
 def _default_endpoints(provider: str) -> tuple[str, str, str]:
-    if provider == ProviderName.KAKAO.value:
-        return (
-            "https://kauth.kakao.com/oauth/authorize",
-            "https://kauth.kakao.com/oauth/token",
-            "https://kapi.kakao.com/v2/user/me",
-        )
-    if provider == ProviderName.NAVER.value:
-        return (
-            "https://nid.naver.com/oauth2.0/authorize",
-            "https://nid.naver.com/oauth2.0/token",
-            "https://openapi.naver.com/v1/nid/me",
-        )
     if provider == ProviderName.GOOGLE.value:
         return (
             "https://accounts.google.com/o/oauth2/v2/auth",
@@ -671,14 +588,9 @@ def provider_from_config(
             issuer=config.issuer,
             jwks_endpoint=config.jwks_endpoint,
         )
-    cls = {
-        ProviderName.KAKAO.value: KakaoOAuthProvider,
-        ProviderName.NAVER.value: NaverOAuthProvider,
-        ProviderName.GOOGLE.value: GoogleOAuthProvider,
-    }.get(provider)
-    if cls is None:
+    if provider != ProviderName.GOOGLE.value:
         raise ValueError(f"unsupported configured OAuth provider: {provider}")
-    return cls(config, transport=transport)
+    return GoogleOAuthProvider(config, transport=transport)
 
 
 class MockOAuthProvider:
@@ -795,35 +707,11 @@ class ProviderRegistry:
         return tuple(sorted(self._providers))
 
 
-def build_provider_registry(
-    configs: Mapping[ProviderName | str, OAuthProviderConfig],
-    *,
-    transports: Mapping[ProviderName | str, TransportLike] | None = None,
-    include_mock: bool = False,
-) -> ProviderRegistry:
-    registry = ProviderRegistry()
-    for name, config in configs.items():
-        key = name.value if isinstance(name, ProviderName) else str(name).strip().lower()
-        transport = None
-        if transports:
-            transport = transports.get(name) or transports.get(key)
-        registry.register(key, provider_from_config(config, transport=transport))
-    if include_mock and ProviderName.MOCK.value not in registry:
-        registry.register(ProviderName.MOCK, MockOAuthProvider())
-    return registry
-
-
 __all__ = [
     "ConfiguredOAuthProvider",
     "GoogleOAuthProvider",
-    "GoogleProvider",
-    "KakaoOAuthProvider",
-    "KakaoProvider",
     "MockOAuthProvider",
-    "NaverOAuthProvider",
-    "NaverProvider",
     "OAuthError",
-    "OAuthIdentity",
     "OAuthNonceError",
     "OAuthProvider",
     "OAuthProviderConfig",
@@ -835,6 +723,5 @@ __all__ = [
     "ProviderName",
     "ProviderRegistry",
     "UrllibOAuthTransport",
-    "build_provider_registry",
     "provider_from_config",
 ]

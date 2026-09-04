@@ -8,12 +8,10 @@ worker can be imported without creating a FastAPI application.
 
 from .payloads import (
     JOB_PAYLOAD_CONTRACTS,
-    JOB_PAYLOAD_SCHEMAS,
     JobPayloadContract,
     JobPayloadError,
     get_job_payload_contract,
     validate_job_payload,
-    validate_payload,
 )
 from .producer import JobProducer, MariaDBJobProducer
 from .types import (
@@ -31,7 +29,6 @@ from .types import (
 __all__ = [
     "DEFAULT_MAX_ATTEMPTS",
     "JOB_PAYLOAD_CONTRACTS",
-    "JOB_PAYLOAD_SCHEMAS",
     "JobEnvelope",
     "JobPayloadContract",
     "JobPayloadError",
@@ -46,5 +43,4 @@ __all__ = [
     "normalize_job_type",
     "utc_now",
     "validate_job_payload",
-    "validate_payload",
 ]

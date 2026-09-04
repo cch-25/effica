@@ -253,7 +253,6 @@ def quality_status_for(vote: Vote, *, prior_votes: Iterable[Vote] = ()) -> VoteQ
     )
 
 
-aggregate_vote_snapshots = aggregate_votes
 
 
 def _mean_values(votes: list[Vote]) -> dict[str, int | None]:

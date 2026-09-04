@@ -131,7 +131,3 @@ def content_hash(text: str | None) -> bytes:
 
 
 # Friendly aliases used by workers and tests.
-canonical_url = canonicalize_url
-hash_url = url_hash
-canonical_url_hash = url_hash
-compute_content_hash = content_hash

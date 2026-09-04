@@ -5,7 +5,7 @@ import pytest
 from app.domains.analysis import (
     AssessmentInput,
     CircuitState,
-    HTTPProvider,
+    HttpLLMProvider,
     ProviderCircuitOpenError,
     ProviderConfig,
     ProviderConfigurationError,
@@ -55,8 +55,8 @@ def _provider(
     config: ProviderConfig | None = None,
     clock=None,
     sleep=None,
-) -> HTTPProvider:
-    return HTTPProvider(
+) -> HttpLLMProvider:
+    return HttpLLMProvider(
         config
         or ProviderConfig(
             "test-provider",
@@ -73,7 +73,7 @@ def _provider(
 
 def test_live_provider_rejects_non_openai_endpoints_without_test_injection():
     with pytest.raises(ProviderConfigurationError):
-        HTTPProvider(
+        HttpLLMProvider(
             ProviderConfig(
                 "upstage",
                 "solar-pro",

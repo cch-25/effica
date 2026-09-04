@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from numbers import Real
-from typing import Any, Protocol
+from typing import Any
 
 from ...core.security import Role, SessionStore, new_identifier, normalize_role, utc_now
 from .models import (
@@ -175,13 +175,6 @@ def score_questionnaire(
         answered_count=answered,
         question_count=len(questionnaire.questions),
     )
-
-
-calculate_questionnaire_score = score_questionnaire
-
-
-class UserRepository(Protocol):
-    """Shape implemented by the in-memory and production repositories."""
 
 
 class InMemoryUserRepository:
@@ -794,12 +787,6 @@ class PrivacyService:
         return user
 
 
-# Public names used by route wiring and worker handlers.
-DataRightsService = PrivacyService
-UserDataRightsService = PrivacyService
-ConsentManager = ConsentService
-
-
 class OnboardingService:
     """Convenience facade consumed by the user routes."""
 
@@ -847,8 +834,6 @@ class OnboardingService:
 __all__ = [
     "ConsentRequiredError",
     "ConsentService",
-    "ConsentManager",
-    "DataRightsService",
     "ConsentVersionNotFoundError",
     "DeletionConfirmationError",
     "InMemoryUserRepository",
@@ -863,7 +848,5 @@ __all__ = [
     "UserInactiveError",
     "UserNotFoundError",
     "UserService",
-    "UserDataRightsService",
-    "calculate_questionnaire_score",
     "score_questionnaire",
 ]

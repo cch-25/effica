@@ -275,17 +275,10 @@ def validate_job_payload(job_type: Any, payload: Mapping[str, Any]) -> dict[str,
         raise
 
 
-# Concise aliases used by worker integrations and API callers.
-validate_payload = validate_job_payload
-JOB_PAYLOAD_SCHEMAS = JOB_PAYLOAD_CONTRACTS
-
-
 __all__ = [
     "JOB_PAYLOAD_CONTRACTS",
-    "JOB_PAYLOAD_SCHEMAS",
     "JobPayloadContract",
     "JobPayloadError",
     "get_job_payload_contract",
     "validate_job_payload",
-    "validate_payload",
 ]

@@ -109,11 +109,3 @@ def _confidence(values: Sequence[ModelAssessment], spread: float, max_spread: fl
     return round(
         max(0.0, min(1.0, base * (0.5 + 0.5 * spread_factor) * (0.75 + 0.25 * count_factor))), 6
     )
-
-
-def fact_check_does_not_change_axes(
-    assessment: ModelAssessment, verdict: str | None = None
-) -> ModelAssessment:
-    """Attachable fact-checks never mutate ideological coordinates."""
-
-    return assessment.model_copy(deep=True)

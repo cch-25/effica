@@ -98,8 +98,6 @@ def analysis_status(
     )
 
 
-is_analysis_stale = analysis_is_stale
-version_decision = decide_version
 
 
 def mark_stale(records: list[Any], current_version_id: str) -> list[Any]:

@@ -72,8 +72,6 @@ class Role(str, Enum):
     ADMIN = "admin"
 
 
-UserRole = Role
-
 # The ordering is intentional.  Analyst and reviewer are separate capabilities
 # rather than a strict inheritance chain; an admin is allowed to perform both.
 ROLE_RANK: Mapping[Role, int] = {
@@ -131,9 +129,6 @@ def generate_token(nbytes: int = MIN_TOKEN_BYTES) -> str:
     return secrets.token_urlsafe(nbytes)
 
 
-generate_opaque_token = generate_token
-
-
 def hash_token(token: str) -> str:
     """Return the SHA-256 digest persisted for an opaque token.
 
@@ -144,10 +139,6 @@ def hash_token(token: str) -> str:
     if not isinstance(token, str) or not token:
         raise InvalidTokenError("token is required")
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-sha256_token = hash_token
-token_hash = hash_token
 
 
 def token_matches(token: str, expected_hash: str) -> bool:
@@ -163,9 +154,6 @@ def token_matches(token: str, expected_hash: str) -> bool:
         return False
 
 
-verify_token = token_matches
-
-
 def generate_csrf_token() -> str:
     """Generate a CSRF token that is kept only in the session cookie boundary."""
 
@@ -176,10 +164,6 @@ def verify_csrf_token(expected_hash: str, presented_token: str) -> bool:
     """Verify a CSRF token against the session's SHA-256 hash."""
 
     return token_matches(presented_token, expected_hash)
-
-
-csrf_matches = verify_csrf_token
-verify_csrf = verify_csrf_token
 
 
 def require_csrf(expected_hash: str, presented_token: str | None) -> None:
@@ -354,9 +338,6 @@ class SessionStore:
         return record
 
 
-SessionManager = SessionStore
-
-
 def normalize_role(role: Role | str) -> Role:
     if isinstance(role, Role):
         return role
@@ -387,10 +368,6 @@ def role_allows(actor_role: Role | str, required_role: Role | str) -> bool:
     if required is Role.REVIEWER:
         return actor in {Role.REVIEWER, Role.ADMIN}
     return role_rank(actor) >= role_rank(required)
-
-
-has_role = role_allows
-check_role = role_allows
 
 
 def require_role(actor_role: Role | str, required_role: Role | str) -> Role:
@@ -496,9 +473,6 @@ def is_allowed_redirect(redirect_uri: str, allowed: Iterable[str]) -> bool:
     return True
 
 
-redirect_allowed = is_allowed_redirect
-
-
 @dataclass(frozen=True)
 class OAuthChallenge:
     """Server-side OAuth callback challenge (state and nonce are one-use)."""
@@ -551,14 +525,9 @@ __all__ = [
     "SessionRecord",
     "SessionRevokedError",
     "SessionStore",
-    "SessionManager",
-    "UserRole",
-    "csrf_matches",
     "generate_csrf_token",
-    "generate_opaque_token",
     "generate_token",
     "hash_token",
-    "has_role",
     "is_allowed_redirect",
     "new_identifier",
     "new_oauth_challenge",
@@ -568,14 +537,8 @@ __all__ = [
     "require_role",
     "role_allows",
     "role_rank",
-    "redirect_allowed",
-    "sha256_token",
-    "token_hash",
     "token_matches",
     "utc_now",
     "validate_redirect_uri",
     "verify_csrf_token",
-    "verify_csrf",
-    "verify_token",
-    "check_role",
 ]

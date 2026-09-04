@@ -14,7 +14,6 @@ from app.domains.analysis import (
     DeterministicStubProvider,
     ModelAssessment,
     ensemble_assessments,
-    fact_check_does_not_change_axes,
     sanitize_rationale,
 )
 from app.domains.content import (
@@ -114,7 +113,7 @@ def test_issue_clustering_and_idempotent_merge_split():
     assert [item.article_ids for item in split] == [("a",), ("b",)]
 
 
-def test_analysis_schema_masking_ensemble_and_fact_check_independence():
+def test_analysis_schema_masking_and_ensemble():
     input_data = AssessmentInput(
         article_version_id="v1",
         title="Source headline",
@@ -127,7 +126,6 @@ def test_analysis_schema_masking_ensemble_and_fact_check_independence():
     assert result.eligible and result.successful_model_count == 3
     assert result.y == 0 and result.z == 0
     assert all(item.y == 0 and item.z == 0 for item in assessments)
-    assert fact_check_does_not_change_axes(assessments[0], "false").x == assessments[0].x
     assert "[REDACTED_EMAIL]" in sanitize_rationale("mail test@example.com")
 
 

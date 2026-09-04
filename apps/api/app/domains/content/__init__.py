@@ -18,9 +18,7 @@ from .adapters import (
     parse_rss_fixture,
 )
 from .canonical import (
-    canonical_url_hash,
     canonicalize_url,
-    compute_content_hash,
     content_hash,
     normalize_text,
     url_hash,
@@ -32,8 +30,6 @@ from .versioning import (
     VersionDecision,
     analysis_is_stale,
     decide_version,
-    is_analysis_stale,
-    version_decision,
 )
 
 __all__ = [
@@ -48,10 +44,8 @@ __all__ = [
     "parse_rss_fixture",
     "canonicalize_url",
     "url_hash",
-    "canonical_url_hash",
     "normalize_text",
     "content_hash",
-    "compute_content_hash",
     "CrawlerPolicyError",
     "CrawlerPolicyGuard",
     "SourcePolicy",
@@ -60,6 +54,4 @@ __all__ = [
     "VersionDecision",
     "decide_version",
     "analysis_is_stale",
-    "is_analysis_stale",
-    "version_decision",
 ]

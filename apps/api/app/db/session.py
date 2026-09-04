@@ -133,7 +133,6 @@ def session_factory() -> async_sessionmaker[AsyncSession]:
 
 # Explicitly named alias for dependency-injection code that prefers the
 # SQLAlchemy terminology.
-async_session_factory = session_factory
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

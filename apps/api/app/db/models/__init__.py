@@ -1009,8 +1009,6 @@ class AuditLog(Base):
 
 # Public aliases used by callers that prefer the table's pluralized domain
 # name.  The canonical class names remain singular SQLAlchemy entities.
-OAuthAccounts = OAuthAccount
-Sessions = Session
 
 
 __all__ = [
