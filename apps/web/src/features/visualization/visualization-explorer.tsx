@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { visualizationPoints as fixturePoints } from "@/mocks/fixtures/content";
 import { useViewerQuery, useVisualizationPointsQuery } from "@/lib/api/queries";
 import { formatBiasScore, formatSensationalismScore } from "@/lib/api/formatters";
 import { isMockMode } from "@/lib/api/mode";
 import { StatePanel } from "@/components/ui/state-panel";
-import { Button } from "@/components/ui/button";
-import { ApiError } from "@/lib/api/client";
+import { Button, ButtonLink } from "@/components/ui/button";
+import { ApiError, apiRequest } from "@/lib/api/client";
 import type { VisualizationPoint } from "@/lib/api/types";
 import { PerspectiveField } from "./perspective-field";
 import { DefinitionTooltip } from "@/components/ui/definition-tooltip";
@@ -38,7 +38,7 @@ export function VisualizationExplorer() {
   const initialPoint = sortedArticles[0] ?? userPoint ?? orderedPoints[0];
   return (
     <>
-      {!isGuest && viewer.data && !userPoint ? <div className="notice">자기보고 설문이나 기사 읽기·평가 기록이 생기면 이 지도를 나의 관점 기준으로 정렬합니다.</div> : null}
+      {!isGuest && viewer.data && !userPoint ? <div className="notice">자기보고 설문이나 기사 읽기와 평가 기록이 생기면 이 지도를 나의 관점 기준으로 정렬합니다.</div> : null}
       <VisualizationFieldContent points={orderedPoints} initialPointId={initialPoint.id} personalPointId={userPoint?.id} />
     </>
   );
@@ -55,6 +55,27 @@ function distanceLabel(distance: number) {
   if (distance <= 12) return "현재 관점과 가까운 기사";
   if (distance <= 28) return "부담 없이 넓히는 인접 관점";
   return "관점을 크게 넓히는 기사";
+}
+
+function SelectedArticleLinks({ articleId }: { articleId: string }) {
+  const [issueId, setIssueId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void apiRequest<{ issue_id?: string | null }>(`/articles/${encodeURIComponent(articleId)}`)
+      .then((article) => {
+        if (active) setIssueId(article.issue_id ?? null);
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [articleId]);
+
+  return (
+    <div className="form-actions" aria-label="선택한 기사에서 이어서 보기">
+      <ButtonLink href={`/articles/${articleId}`}>선택한 기사 분석 보기</ButtonLink>
+      {issueId ? <ButtonLink variant="secondary" href={`/issues/${issueId}`}>관련 이슈에서 다른 보도 비교하기</ButtonLink> : null}
+    </div>
+  );
 }
 
 function VisualizationFieldContent({ points, initialPointId, personalPointId }: { points: VisualizationPoint[]; initialPointId: string; personalPointId?: string }) {
@@ -81,7 +102,7 @@ function VisualizationFieldContent({ points, initialPointId, personalPointId }: 
     };
   }, [points]);
 
-  const graphTitle = `${personalPoint ? "나의 편향 기준과 " : ""}기사 편향성·과장성 좌표 분포`;
+  const graphTitle = `${personalPoint ? "나의 편향 기준과 " : ""}기사 편향성과 과장성 좌표 분포`;
 
   return (
     <section className="perspective-solid" aria-labelledby="perspective-solid-title">
@@ -96,7 +117,7 @@ function VisualizationFieldContent({ points, initialPointId, personalPointId }: 
         {personalPoint && currentDistance !== null ? (
           <div className="perspective-solid__personal">
             <strong>{distanceLabel(currentDistance)}</strong>
-            <span>{personalPoint.label}과의 편향 거리 {Math.round(currentDistance)} · 붉은 선은 나의 편향 기준, 검은 테두리는 선택 자료</span>
+            <span>{personalPoint.label}과의 편향 거리 {Math.round(currentDistance)}. 붉은 선은 나의 편향 기준이고 검은 테두리는 선택 자료입니다.</span>
           </div>
         ) : null}
         <p className="perspective-solid__intro">모든 점은 실제 분석 수치에 놓입니다. 배경 형태는 전체 기사 좌표로 계산하며, 기사를 선택해도 분포 자체를 왜곡하지 않습니다.</p>
@@ -117,10 +138,11 @@ function VisualizationFieldContent({ points, initialPointId, personalPointId }: 
         </dl>
 
         <dl className="perspective-solid__distribution" aria-label="기사 분석 분포 요약">
-          <div><dt><DefinitionTooltip {...analysisTerms.biasRange} /></dt><dd>{formatBiasScore(distribution.biasMin)} — {formatBiasScore(distribution.biasMax)}</dd></div>
+          <div><dt><DefinitionTooltip {...analysisTerms.biasRange} /></dt><dd>{formatBiasScore(distribution.biasMin)}에서 {formatBiasScore(distribution.biasMax)}까지</dd></div>
           <div><dt><DefinitionTooltip {...analysisTerms.averageSensationalism} /></dt><dd>{distribution.averageSensationalism === null ? "미측정" : Math.round(distribution.averageSensationalism)}</dd></div>
           <div><dt><DefinitionTooltip {...analysisTerms.averageConfidence} /></dt><dd>{Math.round(distribution.averageConfidence * 100)}%</dd></div>
         </dl>
+        {current.type === "article" ? <SelectedArticleLinks key={current.id} articleId={current.id} /> : null}
       </div>
 
       <div className="perspective-solid__scope" aria-label="시각화에 포함된 자료">
@@ -141,7 +163,7 @@ function VisualizationFieldContent({ points, initialPointId, personalPointId }: 
           >
             <span>{String(index + 1).padStart(2, "0")}</span>
             <strong>{point.label}</strong>
-            <small>{point.type === "user" ? point.label : personalPoint && point.type === "article" ? distanceLabel(perspectiveDistance(point, personalPoint)) : `${formatBiasScore(point.x)} · 과장 ${point.sensationalism ?? "—"}`}</small>
+            <small>{point.type === "user" ? point.label : personalPoint && point.type === "article" ? distanceLabel(perspectiveDistance(point, personalPoint)) : `${formatBiasScore(point.x)}, 과장 ${point.sensationalism ?? "미측정"}`}</small>
           </Button>
         ))}
       </div>

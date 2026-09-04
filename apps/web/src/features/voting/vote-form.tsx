@@ -106,29 +106,29 @@ function VoteEditor({
     try {
       const saved = await saveVote.mutateAsync(vote);
       setHasVote(true);
-      setMessage(`투표 revision ${saved.revision}가 저장되었습니다.`);
-    } catch { setMessage("투표를 저장하지 못했습니다. 기존 투표는 유지됩니다."); }
+      setMessage(`독자 평가 수정 이력 ${saved.revision}번을 저장했습니다.`);
+    } catch { setMessage("독자 평가를 저장하지 못했습니다. 기존 평가는 유지됩니다."); }
   };
   const remove = async () => {
     try {
       await deleteVote.mutateAsync();
       setHasVote(false);
       setVote({ x: 0, y: 0, z: 0, sensationalism: 0 });
-      setMessage("활성 투표가 삭제되었습니다. 이전 revision은 이력으로 보존됩니다.");
-    } catch { setMessage("투표를 삭제하지 못했습니다. 기존 투표는 유지됩니다."); }
+      setMessage("현재 독자 평가를 삭제했습니다. 이전 수정 내용은 이력으로 보존됩니다.");
+    } catch { setMessage("독자 평가를 삭제하지 못했습니다. 기존 평가는 유지됩니다."); }
   };
   return (
     <section className="card card--padded">
       <p className="eyebrow">독자 평가</p><h2>이 기사를 어떻게 읽었나요?</h2>
       <ChoiceScale legend="편향성 (좌편향 ↔ 우편향)" value={vote.x} choices={BIAS_CHOICES} onChange={(value) => update("x", value)} />
       <ChoiceScale legend="과장성 (낮음 ↔ 높음)" value={vote.sensationalism} choices={SENSATIONALISM_CHOICES} onChange={(value) => update("sensationalism", value)} />
-      <div className="notice">AI 점수를 정답처럼 맞히는 평가가 아닙니다. 독자 투표는 별도 집계이며 공식 AI 점수를 즉시 교체하지 않습니다.</div>
-      <div className="form-actions"><Button variant="ghost" onClick={() => void remove()} disabled={busy || !hasVote}>내 투표 삭제</Button><Button onClick={() => void submit()} disabled={busy}>투표 저장·수정</Button></div>
+      <div className="notice">AI 점수를 정답처럼 맞히는 평가가 아닙니다. 독자 평가는 별도로 집계되며 공식 AI 점수를 즉시 교체하지 않습니다.</div>
+      <div className="form-actions"><Button variant="ghost" onClick={() => void remove()} disabled={busy || !hasVote}>내 평가 삭제</Button><Button onClick={() => void submit()} disabled={busy}>독자 평가 저장</Button></div>
       <div className="reader-aggregate" aria-live="polite">
         <strong>독자 평가 집계</strong>
-        {aggregatePending && <p>집계 반영 중입니다. 표시된 수치가 있으면 이전 snapshot 기준입니다.</p>}
+        {aggregatePending && <p>집계 반영 중입니다. 표시된 수치가 있으면 최근 집계 기준입니다.</p>}
         {aggregate.data?.qualified_count ? (
-          <p>편향성 {aggregate.data.qualified.x === null ? "미측정" : formatBiasScore(aggregate.data.qualified.x)} · 과장성 {formatSensationalismScore(aggregate.data.qualified.sensationalism)}</p>
+          <p>편향성 {aggregate.data.qualified.x === null ? "미측정" : formatBiasScore(aggregate.data.qualified.x)}, 과장성 {formatSensationalismScore(aggregate.data.qualified.sensationalism)}</p>
         ) : !aggregatePending && !aggregate.isError ? <p>아직 공개할 독자 집계가 없습니다.</p> : null}
         {aggregate.isError && <p>독자 집계 기준을 불러오지 못했습니다.</p>}
         {aggregate.data?.small_segments_suppressed && <small>작은 집단의 세부 결과는 공개하지 않습니다.</small>}

@@ -1,10 +1,11 @@
-import { ExternalLink, History, Info } from "lucide-react";
+import { ArrowLeft, ExternalLink, Info } from "lucide-react";
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { StatePanel } from "@/components/ui/state-panel";
 import { ArticleDwellTracker } from "@/features/reading/article-dwell-tracker";
 import { VoteForm } from "@/features/voting/vote-form";
-import { Button } from "@/components/ui/button";
+import { ButtonLink } from "@/components/ui/button";
 import { articles } from "@/mocks/fixtures/content";
 import { clampScore, formatBiasScore, formatConfidence, formatPublishedDate, formatSensationalismScore } from "@/lib/api/formatters";
 import { RealArticleDetail } from "@/features/articles/real-article-detail";
@@ -21,15 +22,15 @@ export default async function ArticlePage({ params }: { params: Promise<{ articl
     <>
       <ArticleDwellTracker articleId={article.id} />
       {article.stale && <div style={{ marginBottom: "1rem" }}><StatePanel state="stale" /></div>}
+      <nav className="content-path" aria-label="현재 콘텐츠 경로"><Link href={`/issues/${article.issueId}`}>이슈 비교</Link><span aria-hidden="true">/</span><span aria-current="page">기사 분석</span></nav>
       <div className="article-layout">
         <article className="card article-main">
-          <div className="news-card__meta"><Badge tone="warning">Mock 전용 데이터</Badge><Badge>{article.source}</Badge><span>{formatPublishedDate(article.publishedAt)}</span><Badge tone="info">{article.scoreVersion}</Badge><Badge>분석 예시 편향성 · {formatBiasScore(article.x)}</Badge><Badge>분석 예시 과장성 · {formatSensationalismScore(article.sensationalism)}</Badge></div>
+          <div className="news-card__meta"><Badge tone="warning">샘플 데이터</Badge><Badge>{article.source}</Badge><span>{formatPublishedDate(article.publishedAt)}</span></div>
           <h1>{article.title}</h1><p className="article-main__dek">{article.dek}</p>
-          <div className="notice"><Info size={15} aria-hidden="true" /> 편향성·과장성 점수는 기사의 사실 여부나 품질을 판정하지 않습니다. 각 분석 기록에서 공개 근거 제공 여부를 확인할 수 있으며, 기사 전체 내용은 원문에서 확인해 주세요.</div>
+          <div className="notice"><Info size={15} aria-hidden="true" /> 편향성과 과장성 점수는 기사의 사실 여부나 품질을 판정하지 않습니다. 각 분석 기록에서 공개 근거 제공 여부를 확인할 수 있으며, 기사 전체 내용은 원문에서 확인해 주세요.</div>
           <div className="section-head"><h2>핵심 주장</h2></div><ol className="claim-list">{article.claims.map((claim) => <li key={claim}>{claim}</li>)}</ol>
           <div className="section-head"><h2>제한 공개 분석</h2></div>
-          <StatePanel state="processing" />
-          <p style={{ color: "var(--muted)" }}>Mock 화면에서는 실제 모델 provenance나 독자 집계를 표시하지 않습니다.</p>
+          <p className="notice">이 샘플 화면은 실제 AI 분석 근거와 독자 집계를 재현하지 않습니다. 오른쪽의 수치는 화면 흐름을 확인하기 위한 예시입니다.</p>
         </article>
         <aside className="card article-side" aria-label="기사 관점 분석">
           <div><p className="eyebrow">AI 기사 평가</p><h2>편향성과 과장성</h2><p className="article-analysis-confidence"><DefinitionTooltip {...analysisTerms.confidence} /><strong>{formatConfidence(article.confidence)}</strong></p></div>
@@ -45,7 +46,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ articl
             <small>허위 판정이 아닌 표현 강도 평가</small>
           </div>
           <a className="external-link" href={article.originalUrl} target="_blank" rel="noreferrer">출처 원문 새 창에서 보기 <ExternalLink size={15} /></a>
-          <Button variant="ghost"><History size={15} /> 점수 정정·버전 이력</Button>
+          <ButtonLink variant="secondary" href={`/issues/${article.issueId}`}><ArrowLeft size={15} aria-hidden="true" /> 관련 이슈 비교로 돌아가기</ButtonLink>
         </aside>
       </div>
       <div style={{ marginTop: "1rem" }}><VoteForm articleId={article.id} /></div>

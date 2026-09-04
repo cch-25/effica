@@ -59,7 +59,7 @@ export function getBiasLabel(value: number): BiasLabel {
 
 export function formatBiasScore(value: number): string {
   const score = clampScore(value);
-  return `${getBiasLabel(score)} · ${score > 0 ? `+${score}` : score}`;
+  return `${getBiasLabel(score)} ${score > 0 ? `+${score}` : score}`;
 }
 
 export function formatSensationalismScore(value: number | null): string {
@@ -73,7 +73,7 @@ export function clampScore(value: number, min = -100, max = 100): number {
 
 export function formatAxis(value: number, axis: keyof typeof AXIS_META): string {
   const score = clampScore(value);
-  if (score === 0) return `${AXIS_META[axis].short} 중앙·판단 불충분 0`;
+  if (score === 0) return `${AXIS_META[axis].short} 중앙, 판단 불충분 0`;
   const direction = score < 0 ? AXIS_META[axis].negative : AXIS_META[axis].positive;
   return `${AXIS_META[axis].short} ${direction} ${Math.abs(score)}`;
 }
@@ -81,7 +81,25 @@ export function formatAxis(value: number, axis: keyof typeof AXIS_META): string 
 export function formatConfidence(value: number): string {
   const bounded = Math.min(1, Math.max(0, value));
   const label = bounded >= 0.8 ? "높음" : bounded >= 0.6 ? "보통" : "낮음";
-  return `${label} · ${Math.round(bounded * 100)}%`;
+  return `${label} ${Math.round(bounded * 100)}%`;
+}
+
+export function formatTierLabel(value: string): string {
+  const labels: Record<string, string> = {
+    STARTER: "시작",
+    EXPLORER: "탐색가",
+    "BRIDGE BUILDER": "관점 연결자",
+    NAVIGATOR: "길잡이",
+    NEW: "시작",
+    PARTICIPANT: "참여자",
+    ENGAGED: "적극 참여자",
+    ADVANCED: "숙련자",
+    EXPERT: "전문가",
+    탐색가: "탐색가",
+    "관점 연결자": "관점 연결자",
+    길잡이: "길잡이",
+  };
+  return labels[value.toUpperCase()] ?? "미확인";
 }
 
 export function formatPublishedDate(value: string): string {

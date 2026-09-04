@@ -67,7 +67,7 @@ function signed(value: number) {
 function pointValue(point: VisualizationPoint) {
   if (point.type === "user") return `나의 편향 기준 ${signed(point.x)}`;
   const sensationalism = point.sensationalism === null ? "미측정" : Math.round(point.sensationalism);
-  return `편향 ${signed(point.x)} · 과장 ${sensationalism}`;
+  return `편향 ${signed(point.x)}, 과장 ${sensationalism}`;
 }
 
 function selectedLabelPosition(x: number, y: number) {
@@ -186,8 +186,8 @@ export function PerspectiveField({ points, selectedId, anchorId, title }: Perspe
 
         <line className="perspective-field__axis-line" x1={GRAPH_BOUNDS.left} y1={GRAPH_BOUNDS.bottom} x2={GRAPH_BOUNDS.right} y2={GRAPH_BOUNDS.bottom} />
         <line className="perspective-field__axis-line" x1={GRAPH_BOUNDS.left} y1={GRAPH_BOUNDS.top} x2={GRAPH_BOUNDS.left} y2={GRAPH_BOUNDS.bottom} />
-        <text className="perspective-field__axis-title" x={(GRAPH_BOUNDS.left + GRAPH_BOUNDS.right) / 2} y={GRAPH_BOUNDS.height - 18} textAnchor="middle">기사의 편향성 · 좌편향 ← 0 → 우편향</text>
-        <text className="perspective-field__axis-title" x="18" y={(GRAPH_BOUNDS.top + GRAPH_BOUNDS.bottom) / 2} textAnchor="middle" transform={`rotate(-90 18 ${(GRAPH_BOUNDS.top + GRAPH_BOUNDS.bottom) / 2})`}>기사의 과장성 · 높을수록 자극적</text>
+        <text className="perspective-field__axis-title" x={(GRAPH_BOUNDS.left + GRAPH_BOUNDS.right) / 2} y={GRAPH_BOUNDS.height - 18} textAnchor="middle">기사의 편향성: 좌편향 ← 0 → 우편향</text>
+        <text className="perspective-field__axis-title" x="18" y={(GRAPH_BOUNDS.top + GRAPH_BOUNDS.bottom) / 2} textAnchor="middle" transform={`rotate(-90 18 ${(GRAPH_BOUNDS.top + GRAPH_BOUNDS.bottom) / 2})`}>기사의 과장성: 높을수록 자극적</text>
         <text className="perspective-field__neutral-label" x={xPosition(0)} y={GRAPH_BOUNDS.top + 21} textAnchor="middle">중립 구간</text>
       </svg>
 

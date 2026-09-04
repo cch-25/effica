@@ -17,7 +17,7 @@ export function DataAsOfBadge({ fallback }: { fallback: Issue[] }) {
   const prefix = isMockMode() ? "데모 " : "";
   return (
     <Badge tone={issue.freshnessStatus === "UPDATE_NEEDED" ? "warning" : "positive"}>
-      {prefix}{formatDataAsOf(issue.dataAsOf)}{issue.freshnessStatus === "UPDATE_NEEDED" ? " · 업데이트 필요" : ""}
+      {prefix}{formatDataAsOf(issue.dataAsOf)}{issue.freshnessStatus === "UPDATE_NEEDED" ? ", 업데이트 필요" : ""}
     </Badge>
   );
 }

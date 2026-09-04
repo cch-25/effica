@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { ApiError, apiRequest } from "@/lib/api/client";
+import { isMockMode } from "@/lib/api/mode";
 import type { ReadResult, ReadSessionView } from "@/lib/api/contracts";
 
 type ActiveDwell = {
@@ -16,7 +17,8 @@ export function ArticleDwellTracker({ articleId }: { articleId: string }) {
   useEffect(() => {
     let disposed = false;
 
-    const report = () => {
+    const report = (event?: Event) => {
+      if (isMockMode() && (document.visibilityState === "hidden" || (event?.type === "pagehide" && event.isTrusted))) return;
       const session = active.current;
       if (!session || session.reporting) return;
       session.reporting = true;

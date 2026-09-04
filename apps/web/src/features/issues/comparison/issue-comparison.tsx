@@ -15,7 +15,7 @@ import {
 } from "@/lib/api/formatters";
 import { useIssueComparisonQuery } from "@/lib/api/queries";
 import type { Article, Issue } from "@/lib/api/types";
-import { parseComparisonSelection } from "./selection";
+import { isComparisonReadyArticle, parseComparisonSelection } from "./selection";
 import { IssueReadiness } from "../issue-readiness";
 import { DefinitionTooltip } from "@/components/ui/definition-tooltip";
 import { analysisTerms } from "@/lib/content/analysis-terms";
@@ -52,12 +52,6 @@ function ScoreScale({ label, value, kind }: { label: string; value: number; kind
   );
 }
 
-function hasPublicScore(article: Article): boolean {
-  return article.analysisStatus === "READY"
-    && article.analysisProvider === "openai"
-    && article.sensationalism !== null;
-}
-
 function PendingReviewComparison({ articles }: { articles: Article[] }) {
   return (
     <section className="comparison-results comparison-results--pending" aria-labelledby="pending-comparison-title">
@@ -69,13 +63,11 @@ function PendingReviewComparison({ articles }: { articles: Article[] }) {
       </div>
       <section className="comparison-grid" data-columns={articles.length} aria-label="선택한 기사별 공개 분석 비교">
         {articles.map((article) => {
-          const scoreReady = hasPublicScore(article);
           return (
             <article className="comparison-column" key={article.id} aria-labelledby={`pending-article-${article.id}`}>
               <header className="comparison-column__header">
                 <div className="comparison-column__source">
                   <span><strong>{article.source}</strong><time dateTime={article.publishedAt || undefined}>{formatPublishedDate(article.publishedAt)}</time></span>
-                  <a className="comparison-column__original" href={article.originalUrl} target="_blank" rel="noreferrer" aria-label={`${article.source} 기사 원문 보기, 새 창`}>원문 보기 <ExternalLink size={14} aria-hidden="true" /></a>
                 </div>
                 <h3 id={`pending-article-${article.id}`}>{article.title}</h3>
               </header>
@@ -83,15 +75,11 @@ function PendingReviewComparison({ articles }: { articles: Article[] }) {
                 <span>기사 요약</span>
                 <p>{article.dek || "기사 요약을 준비하고 있습니다."}</p>
               </div>
-              {scoreReady ? (
-                <div className="comparison-column__scores">
-                  <ScoreScale label="편향성" value={article.x} kind="bias" />
-                  <ScoreScale label="과장성" value={article.sensationalism ?? 0} kind="intensity" />
-                  <p className="comparison-column__confidence">분석 신뢰도 {formatConfidence(article.confidence)}</p>
-                </div>
-              ) : (
-                <p className="comparison-column__pending-score">신뢰할 수 있는 기사별 AI 점수를 준비하고 있습니다.</p>
-              )}
+              <div className="comparison-column__scores">
+                <ScoreScale label="편향성" value={article.x} kind="bias" />
+                <ScoreScale label="과장성" value={article.sensationalism ?? 0} kind="intensity" />
+                <p className="comparison-column__confidence">분석 신뢰도 {formatConfidence(article.confidence)}</p>
+              </div>
             </article>
           );
         })}
@@ -112,9 +100,17 @@ export function IssueComparison({
 }) {
   const router = useRouter();
   const pathname = usePathname();
+  const readyArticles = useMemo(
+    () => articles.filter(isComparisonReadyArticle),
+    [articles],
+  );
+  const readySourceCount = useMemo(
+    () => new Set(readyArticles.map((article) => article.sourceId)).size,
+    [readyArticles],
+  );
   const parsed = useMemo(
-    () => parseComparisonSelection(initialArticles, articles),
-    [articles, initialArticles],
+    () => parseComparisonSelection(initialArticles, readyArticles),
+    [initialArticles, readyArticles],
   );
   const [selected, setSelected] = useState(parsed.selected);
   const [selectionMessage, setSelectionMessage] = useState(
@@ -138,6 +134,14 @@ export function IssueComparison({
       setSelectionMessage("기사는 최대 4개까지 비교할 수 있습니다.");
       return;
     }
+    const candidate = readyArticles.find((article) => article.id === articleId);
+    const sourceAlreadySelected = candidate && selected.some((selectedId) => (
+      readyArticles.find((article) => article.id === selectedId)?.sourceId === candidate.sourceId
+    ));
+    if (!included && sourceAlreadySelected) {
+      setSelectionMessage("같은 출처에서는 기사 1개만 선택할 수 있습니다.");
+      return;
+    }
     const next = included
       ? selected.filter((id) => id !== articleId)
       : [...selected, articleId];
@@ -154,30 +158,51 @@ export function IssueComparison({
     ? [...snapshot.articles].sort((left, right) => selected.indexOf(left.article.id) - selected.indexOf(right.article.id))
     : [];
   const selectedArticles = selected
-    .map((articleId) => articles.find((article) => article.id === articleId))
+    .map((articleId) => readyArticles.find((article) => article.id === articleId))
     .filter((article): article is Article => article !== undefined);
+  const selectedSourceCount = new Set(selectedArticles.map((article) => article.sourceId)).size;
+
+  const detailHeader = (
+    <header className="comparison-hero">
+      <p className="eyebrow">하나의 사건에서 여러 보도 비교</p>
+      <h1>{issue.title}</h1>
+      <p>{issue.summary}</p>
+      <p className="comparison-hero__meta">
+        <span>전체 기사 {snapshot?.issue.article_count ?? issue.articleIds.length}개</span>
+        <span>전체 출처 {snapshot?.issue.source_count ?? issue.sourceCount}곳</span>
+        {dataAsOf ? <span>{formatPublishedDate(dataAsOf)} 기준</span> : null}
+      </p>
+      <Link href="/issues">전체 이슈로 돌아가기</Link>
+    </header>
+  );
+
+  if (readyArticles.length < 2 || readySourceCount < 2) {
+    return (
+      <div className="issue-comparison">
+        {detailHeader}
+        <IssueReadiness articleCount={readyArticles.length} sourceCount={readySourceCount} />
+        {readyArticles.length ? (
+          <section className="available-articles" aria-labelledby="available-articles-title">
+            <div className="comparison-section-title"><h2 id="available-articles-title">현재 확인할 수 있는 기사</h2></div>
+            <ul>{readyArticles.map((article) => <li key={article.id}><span>{article.source}</span><Link href={`/articles/${article.id}`}>{article.title}</Link></li>)}</ul>
+          </section>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className="issue-comparison">
-      <header className="comparison-hero">
-        <p className="eyebrow">하나의 사건 · 여러 보도</p>
-        <h1>{issue.title}</h1>
-        <p className="comparison-hero__meta">
-          기사 {snapshot?.issue.article_count ?? issue.articleIds.length}개
-          <span aria-hidden="true">·</span>
-          출처 {snapshot?.issue.source_count ?? issue.sourceCount}곳
-          {dataAsOf ? <><span aria-hidden="true">·</span>{formatPublishedDate(dataAsOf)} 기준</> : null}
-        </p>
-      </header>
+      {detailHeader}
 
       <section className="comparison-selector" aria-labelledby="comparison-selector-title">
         <div className="comparison-section-title">
           <h2 id="comparison-selector-title">비교할 기사</h2>
-          <span>{selected.length}개 선택</span>
+          <span>{selected.length}개 기사, {selectedSourceCount}곳 출처 선택</span>
         </div>
-        <p className="comparison-selector__hint">준비된 기사 중 2개에서 4개까지 선택해 관점을 나란히 비교합니다.</p>
+        <p className="comparison-selector__hint">서로 다른 출처에서 준비된 기사를 2개부터 4개까지 선택하세요.</p>
         <div className="comparison-selector__list" role="group" aria-label="비교할 기사">
-          {articles.map((article) => {
+          {readyArticles.map((article) => {
             const checked = selected.includes(article.id);
             return (
               <div className="comparison-selector__row" key={article.id}>
@@ -195,7 +220,7 @@ export function IssueComparison({
                   </span>
                   <span className="comparison-selector__check" aria-hidden="true"><Check size={16} strokeWidth={2.5} /></span>
                 </Button>
-                {!snapshot ? <a className="comparison-selector__original" href={article.originalUrl} target="_blank" rel="noreferrer" aria-label={`${article.source} 기사 원문 보기, 새 창`}>원문 보기 <ExternalLink size={14} aria-hidden="true" /></a> : null}
+                <a className="comparison-selector__original" href={article.originalUrl} target="_blank" rel="noreferrer" aria-label={`${article.source} 기사 원문 보기, 새 창`}>원문 보기 <ExternalLink size={14} aria-hidden="true" /></a>
               </div>
             );
           })}
@@ -210,7 +235,7 @@ export function IssueComparison({
       ) : comparisonIsPreparing ? (
         <>
           <PendingReviewComparison articles={selectedArticles} />
-          <IssueReadiness articleCount={issue.articleIds.length} sourceCount={issue.sourceCount} />
+          <IssueReadiness articleCount={readyArticles.length} sourceCount={readySourceCount} />
         </>
       ) : comparison.isError ? (
         <StatePanel state="error" onRetry={() => void comparison.refetch()} />
@@ -239,7 +264,6 @@ export function IssueComparison({
                   <header className="comparison-column__header">
                     <div className="comparison-column__source">
                       <span><strong>{article.source}</strong><time dateTime={article.published_at ?? undefined}>{formatPublishedDate(article.published_at ?? "")}</time></span>
-                      <a className="comparison-column__original" href={article.canonical_url} target="_blank" rel="noreferrer" aria-label={`${article.source} 기사 원문 보기, 새 창`}>원문 보기 <ExternalLink size={14} aria-hidden="true" /></a>
                     </div>
                     <h3 id={`comparison-article-${article.id}`}>{article.title}</h3>
                   </header>
@@ -247,17 +271,17 @@ export function IssueComparison({
                   <div className="comparison-column__frame">
                     <span>핵심 관점</span>
                     <p>{frame.headline_frame || "분석할 근거가 부족합니다."}</p>
-                    {frame.emphasis.length > 0 ? <p className="comparison-column__emphasis">{frame.emphasis.join(" · ")}</p> : null}
+                    {frame.emphasis.length > 0 ? <p className="comparison-column__emphasis">{frame.emphasis.join(" / ")}</p> : null}
                   </div>
 
                   <div className="comparison-column__analysis">
                     <span>AI 분석 요약</span>
                     <p>{assessment.summary || "공개할 분석 요약이 없습니다."}</p>
-                    {frame.omissions_note ? <><span>기사에서 확인되지 않은 내용</span><p>{frame.omissions_note}</p></> : null}
+                    {frame.omissions_note ? <><span>이 기사가 다루지 않은 맥락</span><p>{frame.omissions_note}</p></> : null}
                     <details>
                       <summary>근거와 분석 정보</summary>
-                      <p>{frame.evidence_refs.length ? frame.evidence_refs.join(" · ") : "공개 가능한 근거 참조가 없습니다."}</p>
-                      <small>{assessment.model_alias} / {assessment.actual_model_id} · {assessment.prompt_version}</small>
+                      <p>{frame.evidence_refs.length ? frame.evidence_refs.join(" / ") : "공개 가능한 근거 참조가 없습니다."}</p>
+                      <small>{assessment.model_alias} / {assessment.actual_model_id} / {assessment.prompt_version}</small>
                     </details>
                   </div>
 
@@ -267,19 +291,18 @@ export function IssueComparison({
                     <p className="comparison-column__confidence">분석 신뢰도 {formatConfidence(score.confidence)}</p>
                   </div>
                   <div className="comparison-column__reader" aria-label="독자 평가 집계">
-                    <span>독자 평가 · AI 평가와 별도</span>
-                    {vote_aggregate.status === "pending" ? <p>집계 반영 중</p> : vote_aggregate.qualified_count === 0 ? <p>아직 공개할 독자 집계가 없습니다.</p> : <p>편향성 {vote_aggregate.qualified.x === null ? "미측정" : formatBiasScore(vote_aggregate.qualified.x)} · 과장성 {formatSensationalismScore(vote_aggregate.qualified.sensationalism)}</p>}
+                    <span>독자 평가 / AI 평가와 별도</span>
+                    {vote_aggregate.status === "pending" ? <p>집계 반영 중</p> : vote_aggregate.qualified_count === 0 ? <p>아직 공개할 독자 집계가 없습니다.</p> : <p>편향성 {vote_aggregate.qualified.x === null ? "미측정" : formatBiasScore(vote_aggregate.qualified.x)}, 과장성 {formatSensationalismScore(vote_aggregate.qualified.sensationalism)}</p>}
                     {vote_aggregate.small_segments_suppressed ? <small>작은 집단의 세부 결과는 공개하지 않습니다.</small> : null}
                   </div>
                   <nav className="comparison-column__actions" aria-label={`${article.source} 기사 이동`}>
-                    <a href={article.canonical_url} target="_blank" rel="noreferrer">원문 <ExternalLink size={14} aria-hidden="true" /></a>
-                    <Link href={`/articles/${article.id}`}>상세 분석</Link>
+                    <Link href={`/articles/${article.id}`}>상세 분석 보기</Link>
                   </nav>
                 </article>
               ))}
             </section>
             <p className="comparison-results__note">점수는 사실 여부나 기사 품질을 판정하지 않습니다.</p>
-            <footer className="comparison-provenance">비교 {snapshot.comparison_version} · {snapshot.model_alias} / {snapshot.actual_model_id} · {snapshot.prompt_version} · 편집 검수 {formatPublishedDate(snapshot.reviewed_at)}</footer>
+            <details className="comparison-provenance"><summary>비교 분석 기술 정보 보기</summary><p>{snapshot.comparison_version} / {snapshot.model_alias} / {snapshot.actual_model_id} / {snapshot.prompt_version} / 편집 검수 {formatPublishedDate(snapshot.reviewed_at)}</p></details>
           </section>
         </>
       ) : null}

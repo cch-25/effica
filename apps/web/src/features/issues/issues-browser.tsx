@@ -71,7 +71,7 @@ function topicOrder(left: string, right: string): number {
 }
 
 function IssueCounts({ issue }: { issue: Issue }) {
-  return <span>{issue.articleIds.length}개 기사 · {issue.sourceCount}개 출처</span>;
+  return <span>{issue.articleIds.length}개 기사, {issue.sourceCount}개 출처</span>;
 }
 
 function ArticleDate({ article }: { article: Article }) {
@@ -79,7 +79,7 @@ function ArticleDate({ article }: { article: Article }) {
   const label = Number.isFinite(value.getTime())
     ? new Intl.DateTimeFormat("ko-KR", { month: "2-digit", day: "2-digit" }).format(value)
     : "날짜 확인 중";
-  return <span>{article.source} · {label}</span>;
+  return <span>{article.source}, {label}</span>;
 }
 
 function TopicSection({
@@ -108,7 +108,7 @@ function TopicSection({
     <section className="topic-section" id={id} aria-labelledby={`${id}-title`}>
       <header className="topic-section__head">
         <h3 id={`${id}-title`}>{topic}</h3>
-        <span>{issues.length}개 이슈 · {collection.items.length}개 기사</span>
+        <span>{issues.length}개 이슈, {collection.items.length}개 기사</span>
       </header>
       <ul className="topic-issue-list">
         {displayedRows.map((row) => (
@@ -213,16 +213,16 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
   return (
     <>
       <PageHeader
-        eyebrow="Issues / 02"
+        eyebrow="이슈 찾기"
         title="오늘의 이슈"
-        description="검증된 주요 이슈를 최대 10개 먼저 보고, 정치·사회·경제·국제·산업 대주제별로 최신 기사를 이어서 살펴봅니다."
-        actions={<Button variant="secondary" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)}><Filter size={16} /> 주제·기간{activeFilterCount > 0 ? ` ${activeFilterCount}` : ""}</Button>}
+        description="바로 비교할 수 있는 이슈를 먼저 확인하고, 필요한 주제의 전체 이슈와 기사를 이어서 찾아보세요."
+        actions={<Button variant="secondary" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)}><Filter size={16} /> 주제와 기간{activeFilterCount > 0 ? ` ${activeFilterCount}` : ""}</Button>}
       />
 
       <div className="issue-filter-status" aria-live="polite">
         <span><strong>{visibleEventCount}</strong>개 이슈</span>
         {topicGroups.length > 0 ? <span><strong>{topicGroups.length}</strong>개 대주제</span> : null}
-        <span>{topics.length ? topics.join(" · ") : "모든 주제"}</span>
+        <span>{topics.length ? topics.join(", ") : "모든 주제"}</span>
         <span>{periodOptions.find((option) => option.value === period)?.label}</span>
         {activeFilterCount > 0 && <Button variant="ghost" onClick={resetFilters}><RotateCcw size={14} /> 필터 초기화</Button>}
       </div>
@@ -232,17 +232,17 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
           <section className="issue-group issue-ranking" aria-labelledby="featured-issues-title">
               <header className="issue-group__head">
                 <div>
-                  <p className="eyebrow">Now</p>
-                  <h2 id="featured-issues-title">주요 이슈 TOP 10</h2>
+                  <p className="eyebrow">비교 준비 완료</p>
+                  <h2 id="featured-issues-title">지금 비교할 수 있는 주요 이슈</h2>
                 </div>
-                <span>{featuredIssues.length}/10 검증 완료</span>
+                <span>{featuredIssues.length}개 준비</span>
               </header>
-              <p className="issue-group__description">3개 이상 기사와 서로 다른 3개 이상 출처, 최신 AI 분석을 모두 충족한 실제 사건만 표시합니다. 분류명이나 기사 모음으로 빈자리를 채우지 않습니다.</p>
-              {featuredIssues.length > 0 ? <ol className="issue-rank-list">
-                {featuredIssues.map((issue, index) => (
+              <p className="issue-group__description">기사 3개 이상, 출처 3곳 이상, 최신 AI 분석 기준을 모두 충족한 실제 사건을 최대 10개까지 표시합니다.</p>
+              {featuredIssues.length > 0 ? <ul className="issue-rank-list">
+                {featuredIssues.map((issue) => (
                   <li key={issue.id}>
                     <Link className="issue-rank-row" href={`/issues/${issue.id}`}>
-                      <span className="issue-rank-row__number" aria-label={`${index + 1}위`}>{String(index + 1).padStart(2, "0")}</span>
+                      <span className="issue-rank-row__number">비교</span>
                       <span className="issue-rank-row__copy">
                         <small>{issue.topic}</small>
                         <strong>{issue.title}</strong>
@@ -252,18 +252,18 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
                     </Link>
                   </li>
                 ))}
-              </ol> : <p className="issue-ranking__empty">현재 기준을 충족한 주요 이슈를 검증하고 있습니다.</p>}
+              </ul> : <p className="issue-ranking__empty">현재 기준을 충족한 주요 이슈를 검증하고 있습니다.</p>}
             </section>
           {topicGroups.length > 0 ? (
             <section className="issue-group topic-directory" aria-labelledby="topic-issues-title">
               <header className="issue-group__head">
                 <div>
-                  <p className="eyebrow">By topic</p>
-                  <h2 id="topic-issues-title">대주제별 이슈</h2>
+                  <p className="eyebrow">전체 자료</p>
+                  <h2 id="topic-issues-title">주제별 전체 찾아보기</h2>
                 </div>
                 <span>{topicGroups.length}개 주제</span>
               </header>
-              <p className="issue-group__description">검증된 사건 이슈와 각 대주제의 최신 기사를 한곳에 모았습니다.</p>
+              <p className="issue-group__description">위의 비교 가능 이슈를 포함한 전체 사건을 주제 맥락에서 다시 찾고, 주제별 최신 기사도 함께 확인할 수 있습니다.</p>
               <nav className="topic-directory__nav" aria-label="대주제 바로가기">
                 {topicGroups.map((group) => <a key={group.topic} href={`#${group.id}`}><strong>{group.topic}</strong><span>{group.issues.length ? `${group.issues.length} 이슈` : "최신 기사"}</span></a>)}
               </nav>
@@ -296,7 +296,7 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
       )}
       {query.hasNextPage && <div className="form-actions"><Button variant="secondary" onClick={() => void query.fetchNextPage()} disabled={query.isFetchingNextPage}>{query.isFetchingNextPage ? "불러오는 중…" : "더 보기"}</Button></div>}
 
-      <Drawer open={drawerOpen} title="주제·기간 필터" onClose={() => setDrawerOpen(false)}>
+      <Drawer open={drawerOpen} title="주제와 기간 필터" onClose={() => setDrawerOpen(false)}>
         <fieldset className="issue-filter-group">
           <legend>주제</legend>
           <p>하나 이상 선택하면 해당 주제만 표시합니다.</p>
@@ -317,7 +317,7 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
         <div className="issue-filter-actions">
           <Button variant="ghost" onClick={resetFilters}><RotateCcw size={14} /> 초기화</Button>
           <Button onClick={() => setDrawerOpen(false)}>
-            {visibleEventCount}개 이슈{topicGroups.length > 0 ? ` · ${topicGroups.length}개 대주제` : ""} 보기
+            {visibleEventCount}개 이슈{topicGroups.length > 0 ? `, ${topicGroups.length}개 대주제` : ""} 보기
           </Button>
         </div>
       </Drawer>
