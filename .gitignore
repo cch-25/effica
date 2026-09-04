@@ -21,3 +21,5 @@ apps/web/node_modules/
 .mypy_cache/
 AGENTS.md
 output/
+.ops/
+tmp/

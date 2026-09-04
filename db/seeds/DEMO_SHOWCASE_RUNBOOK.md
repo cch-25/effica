@@ -21,24 +21,24 @@ ID를 `reviewed_by`에 기록하고 `APPROVED`로 바꾸기 전에는 실제 ref
 5. manifest의 각 `policy_reference`가 해당 원문과 수집 방식에 적용되는지 다시 확인한다.
    `APPROVED`에는 `PENDING` 메모가 아니라 공식 정책 URL과 검수 결론이 필요하다.
 6. 세 사건의 기사들이 같은 사건을 다루는지 사람이 확인하고 검수자와 상태를 기록한다.
-7. `./.agents/scripts/run.sh demo-refresh --dry-run --manifest db/seeds/demo_showcase.json`을
+7. `./.ops/run.sh demo-refresh --dry-run --manifest db/seeds/demo_showcase.json`을
    실행한다.
 
 DB를 변경하지 않고 현재 schema, 콘텐츠 수, 분석 provider, queue, manifest 정책 상태를
 확인하려면 먼저 다음 명령을 실행한다.
 
 ```sh
-./.agents/scripts/run.sh demo-preflight
+./.ops/run.sh demo-preflight
 ```
 
 ## 적용
 
 ```sh
-./.agents/scripts/run.sh migrate
-./.agents/scripts/run.sh demo-refresh \
+./.ops/run.sh migrate
+./.ops/run.sh demo-refresh \
   --manifest db/seeds/demo_showcase.json \
   --backup-reference '<snapshot-or-release-record-id>'
-./.agents/scripts/run.sh demo-audit
+./.ops/run.sh demo-audit
 ```
 
 refresh는 canonical URL hash, issue editorial key, job dedupe key와 issue version별 비교
@@ -109,6 +109,6 @@ membership이 있으면 다음 순서로 전체 복원을 수행한다.
 - 대표 데이터 결과: 이슈 3개, 기사 9개, 이슈별 서로 다른 출처 3개, OpenAI 성공 분석
   9개, synthetic 분석 0개, score 9개 승격
 - queue 결과: 이번 refresh 범위 작업 18개 `SUCCEEDED`, pending/leased/dead 0개
-- 감사 결과: `./.agents/scripts/run.sh demo-audit` 종료 코드 `0`, warning/error 없음
+- 감사 결과: `./.ops/run.sh demo-audit` 종료 코드 `0`, warning/error 없음
 - 운영 상태: `perspective-api.service`, `perspective-worker.service` active 및
   `/health/ready` revision 일치 확인

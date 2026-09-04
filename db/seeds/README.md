@@ -39,8 +39,8 @@ rollback 절차는 [DEMO_SHOWCASE_RUNBOOK.md](./DEMO_SHOWCASE_RUNBOOK.md)를 따
 점수와 큐 상태를 확인한다.
 
 ```sh
-./.agents/scripts/run.sh seed --repair-pipeline --generation 2026-08-27-r1 --dry-run
-./.agents/scripts/run.sh seed --repair-pipeline --generation 2026-08-27-r1
+./.ops/run.sh seed --repair-pipeline --generation 2026-08-27-r1 --dry-run
+./.ops/run.sh seed --repair-pipeline --generation 2026-08-27-r1
 ```
 
 복구는 한 DB 트랜잭션에서 다음 작업만 수행한다.
@@ -62,9 +62,9 @@ rollback 절차는 [DEMO_SHOWCASE_RUNBOOK.md](./DEMO_SHOWCASE_RUNBOOK.md)를 따
 공식 RSS 출처 확장과 즉시 재수집은 반드시 dry-run을 먼저 확인한 뒤 새 세대로 실행한다.
 
 ```sh
-./.agents/scripts/run.sh seed --repair-pipeline --bootstrap-news-sources \
+./.ops/run.sh seed --repair-pipeline --bootstrap-news-sources \
   --generation 2026-08-28-news-v1 --dry-run
-./.agents/scripts/run.sh seed --repair-pipeline --bootstrap-news-sources \
+./.ops/run.sh seed --repair-pipeline --bootstrap-news-sources \
   --generation 2026-08-28-news-v1
 ```
 

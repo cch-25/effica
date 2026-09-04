@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS = ROOT / ".agents" / "scripts"
+SCRIPTS = ROOT / ".ops"
 
 
 def test_deploy_manifest_is_runtime_only_and_complete() -> None:
@@ -29,7 +29,7 @@ def test_deploy_manifest_is_runtime_only_and_complete() -> None:
 
     assert paths == expected
     assert not any(
-        path.startswith(("apps/web/", "tests/", "docs/", ".agents/", "output/", "PPT_VIDEO/"))
+        path.startswith(("apps/web/", "tests/", "docs/", ".agents/", ".ops/", "output/", "PPT_VIDEO/"))
         for path in paths
     )
     assert not any(path.endswith((".env", ".pem", ".key", ".p12")) for path in paths)

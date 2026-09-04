@@ -136,7 +136,7 @@ chmod 600 .env
 ### 2. 통합 개발 서버 실행
 
 ```bash
-./.agents/scripts/run.sh start
+./.ops/run.sh start
 ```
 
 의존성 동기화, DB 터널 연결, Alembic migration, FastAPI와 Next.js 실행을 한 번에 처리합니다. 루트의 임의 `run.sh`가 아니라 위 스크립트가 공식 실행 진입점입니다.
@@ -145,21 +145,21 @@ chmod 600 .env
 
 ```bash
 # 전체 품질 게이트
-./.agents/scripts/run.sh verify
+./.ops/run.sh verify
 
 # 백엔드 테스트
-./.agents/scripts/run.sh test
+./.ops/run.sh test
 
 # OpenAPI 계약 검증
-./.agents/scripts/run.sh openapi
+./.ops/run.sh openapi
 
 # 비동기 워커 실행
-./.agents/scripts/run.sh worker
+./.ops/run.sh worker
 
 # DB 연결 확인 / migration / seed
-./.agents/scripts/run.sh check-db
-./.agents/scripts/run.sh migrate
-./.agents/scripts/run.sh seed
+./.ops/run.sh check-db
+./.ops/run.sh migrate
+./.ops/run.sh seed
 ```
 
 `LLM_PROVIDER_MODE=stub`은 네트워크 없이 결정론적인 분석을 수행합니다. 기본값인 `auto`는 `OPENAI_API_KEY`가 있으면 live 분석을, 없으면 offline 분석을 사용합니다. live 모드의 활성 모델과 reasoning effort는 관리자 API에서 변경할 수 있습니다. 워커는 MariaDB advisory lock과 수집 주기별 dedupe key를 사용해 여러 프로세스가 실행되어도 승인된 출처를 한 번씩만 예약합니다. 예약 RSS는 메타데이터 우선으로 수집하고 최근 72시간의 승인 출처 기사를 함께 비교해 출처 간 사건 후보를 만들며, 단일 기사·단일 출처 묶음은 이슈로 저장하지 않습니다.
@@ -176,17 +176,17 @@ effica/
 ├── db/               # Alembic migration과 seed
 ├── docs/             # 설계 결정과 문서 자산
 ├── tests/            # 통합·운영 계약 테스트
-└── .agents/scripts/  # 공식 실행·검증·배포 진입점
+└── .ops/             # 공식 실행, 검증, 배포 진입점
 ```
 
 ## 배포
 
 프로덕션의 정식 주소는 [https://effica.vercel.app](https://effica.vercel.app)입니다.
-GitHub Actions와 Git 연동 자동 배포는 사용하지 않습니다. 실행·검증은 `.agents/scripts/run.sh`,
-배포는 `.agents/scripts/deploy.sh`만 공식 진입점으로 사용합니다.
+GitHub Actions와 Git 연동 자동 배포는 사용하지 않습니다. 실행과 검증은 `.ops/run.sh`,
+배포는 `.ops/deploy.sh`만 공식 진입점으로 사용합니다.
 
 ```bash
-./.agents/scripts/deploy.sh
+./.ops/deploy.sh
 ```
 
 배포 스크립트는 사전 검증, MariaDB 백업, EC2 atomic release, Vercel 배포와 배포 후 health check를 순서대로 수행합니다. Next.js는 Vercel에서만 서비스하며 EC2에서는 실행하지 않습니다. 프로덕션 시작은 MariaDB, HTTPS origin, 정확한 Google callback URL과 OAuth 자격 증명이 모두 유효하지 않으면 중단됩니다.
