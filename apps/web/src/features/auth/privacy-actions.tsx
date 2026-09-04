@@ -51,9 +51,9 @@ export function PrivacyActions() {
 
   return <>
     <section className="card card--padded">
-      <div className="privacy-action"><div><strong>정치 민감정보 별도 동의</strong><p>{sensitive ? `${sensitive.granted ? "활성" : "철회됨"} · ${sensitive.version}` : "상태 확인 중"}</p></div><Button variant="secondary" disabled={busy || !sensitive?.granted} onClick={() => setDialog("withdraw")}>동의 철회</Button></div>
+      <div className="privacy-action"><div><strong>정치 민감정보 별도 동의</strong><p>{sensitive ? `${sensitive.granted ? "활성" : "철회됨"}, ${sensitive.version}` : "상태 확인 중"}</p></div><Button variant="secondary" disabled={busy || !sensitive?.granted} onClick={() => setDialog("withdraw")}>동의 철회</Button></div>
       <div className="privacy-action"><div><strong>내 데이터 내보내기</strong><p>JSON 아카이브를 비동기 작업으로 준비합니다.</p></div><Button variant="secondary" disabled={busy} onClick={requestExport}>내보내기 요청</Button></div>
-      <div className="privacy-action"><div><strong>계정 삭제</strong><p>세션·공유 토큰은 즉시 폐기되고 법적 보존 조건을 확인한 뒤 개인 데이터가 파기 또는 비식별화됩니다.</p></div><Button variant="danger" disabled={busy} onClick={() => { setConfirmation(""); setDialog("delete"); }}>계정 삭제 요청</Button></div>
+      <div className="privacy-action"><div><strong>계정 삭제</strong><p>세션과 공유 토큰은 즉시 폐기되고 법적 보존 조건을 확인한 뒤 개인 데이터가 파기 또는 비식별화됩니다.</p></div><Button variant="danger" disabled={busy} onClick={() => { setConfirmation(""); setDialog("delete"); }}>계정 삭제 요청</Button></div>
       {(error || consentQuery.isError) && <p role="alert" style={{ color: "var(--danger)" }}>{error || "현재 동의 상태를 불러오지 못했습니다."}</p>}
     </section>
     <Dialog open={dialog !== null} onClose={() => setDialog(null)} title={dialog === "delete" ? "계정을 삭제할까요?" : "별도 동의를 철회할까요?"}>
