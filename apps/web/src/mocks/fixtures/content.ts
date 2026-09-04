@@ -173,5 +173,5 @@ export const reasonLabels: Record<Article["reasonCode"], string> = {
   ADJACENT_VIEW: "내 관점과 가깝지만 다른 시각",
   SOURCE_DIVERSITY: "최근 덜 본 출처",
   ISSUE_BALANCE: "같은 이슈의 보완 관점",
-  RECENT_HIGH_CONFIDENCE: "최신·높은 분석 신뢰도",
+  RECENT_HIGH_CONFIDENCE: "최신 기사 중 분석 신뢰도 높음",
 };
