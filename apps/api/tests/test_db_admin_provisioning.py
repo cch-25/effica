@@ -4,9 +4,7 @@ from pathlib import Path
 
 
 def test_integrated_deployer_scopes_admin_and_uses_mariadb_stdin() -> None:
-    deploy_script = (
-        Path(__file__).resolve().parents[3] / ".agents" / "scripts" / "deploy.sh"
-    )
+    deploy_script = Path(__file__).resolve().parents[3] / ".ops" / "deploy.sh"
     source = deploy_script.read_text(encoding="utf-8")
 
     assert "DB_ADMIN_PASSWORD must equal EC2_PASSWORD" in source
