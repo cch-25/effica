@@ -126,10 +126,4 @@ async def handle_split(
 JOB_TYPE_MERGE = "merge_issue"
 JOB_TYPE_SPLIT = "split_issue"
 
-# A single operation module makes the idempotency boundary explicit while
-# keeping registry names equal to the persisted job_type values.
-merge = handle_merge
-split = handle_split
-
-
-__all__ = ["JOB_TYPE_MERGE", "JOB_TYPE_SPLIT", "handle_merge", "handle_split", "merge", "split"]
+__all__ = ["JOB_TYPE_MERGE", "JOB_TYPE_SPLIT", "handle_merge", "handle_split"]

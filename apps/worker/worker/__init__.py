@@ -12,14 +12,11 @@ from importlib import import_module
 from typing import Any
 
 _MAIN_EXPORTS = {
-    "DurableResultApplier",
     "HandlerRegistry",
     "MariaDBIdempotencyStore",
     "MariaDBResultApplier",
-    "MariaDBWorkerService",
     "MemoryIdempotencyStore",
     "MemoryResultApplier",
-    "MemoryWorkerService",
     "ResultApplicationError",
     "ResultApplier",
     "WorkerConfig",
@@ -33,11 +30,9 @@ _QUEUE_EXPORTS = {
     "Job",
     "JobNotFound",
     "JobQueueError",
-    "JobRecord",
     "MariaDBQueueRepository",
     "MemoryQueueRepository",
     "QueueRepository",
-    "calculate_backoff",
 }
 
 __all__ = sorted(_MAIN_EXPORTS | _QUEUE_EXPORTS)

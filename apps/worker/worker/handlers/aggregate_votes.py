@@ -115,6 +115,3 @@ async def handle(
         value=result,
         side_effect_key=(context.idempotency_key if context else None),
     )
-
-
-run = handle

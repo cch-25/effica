@@ -56,6 +56,3 @@ async def handle(
         value={"candidates": eligible, "candidate": True},
         side_effect_key=(context.idempotency_key if context else None),
     )
-
-
-run = handle

@@ -201,9 +201,6 @@ async def handle(
     )
 
 
-run = handle
-
-
 def _provider_error_is_retryable(exc: ProviderError) -> bool:
     """Preserve provider-specific retry semantics at the queue boundary."""
 

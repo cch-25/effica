@@ -22,13 +22,11 @@ from .handlers.base import (
 from .handlers.registry import HandlerRegistry, build_default_registry
 from .queue import ExponentialBackoff, Job, JobStatus, MariaDBQueueRepository, QueueRepository
 from .services import (
-    DurableResultApplier,
     MariaDBCrawlScheduler,
     MariaDBIdempotencyStore,
     MariaDBResultApplier,
     MariaDBWorkerService,
     MemoryResultApplier,
-    MemoryWorkerService,
     ResultApplicationError,
     ResultApplier,
 )
@@ -580,16 +578,6 @@ class WorkerRuntime:
     async def cancel_job(self, job_id: str) -> bool:
         return await self.repository.cancel(job_id)
 
-    async def run_once(self) -> bool:
-        """Alias useful to supervisor loops and tests."""
-
-        return await self.process_one()
-
-    async def process_job(self, job: Job) -> None:
-        """Process a record that the caller already claimed."""
-
-        await self._process_claimed(job)
-
     async def run_forever(self) -> None:
         """Run until SIGTERM/Ctrl-C or :meth:`request_stop`."""
 
@@ -920,14 +908,11 @@ async def main() -> None:
 __all__ = [
     "HandlerRegistry",
     "CrawlScheduler",
-    "DurableResultApplier",
     "IdempotencyStore",
     "MariaDBIdempotencyStore",
     "MariaDBResultApplier",
-    "MariaDBWorkerService",
     "MemoryIdempotencyStore",
     "MemoryResultApplier",
-    "MemoryWorkerService",
     "ResultApplier",
     "ResultApplicationError",
     "WorkerConfig",

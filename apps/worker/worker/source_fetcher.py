@@ -87,8 +87,7 @@ class SourceFetchError(RuntimeError):
 class SourceFetchResponse:
     """A bounded source response handed to the crawl parser.
 
-    ``body`` is retained only at the worker boundary.  ``as_metadata`` is
-    deliberately body-free for logging and crawl statistics.
+    ``body`` is retained only at the worker boundary.
     """
 
     url: str
@@ -167,17 +166,6 @@ class SourceFetchResponse:
         import json
 
         return json.loads(self.body)
-
-    def as_metadata(self) -> dict[str, Any]:
-        return {
-            "url": self.url,
-            "status_code": self.status_code,
-            "attempts": self.attempts,
-            "fetched_at": self.fetched_at,
-            "content_type": self.content_type,
-            "byte_size": len(self.body),
-        }
-
 
 SleepCallable = Callable[[float], Awaitable[Any] | Any]
 ClockCallable = Callable[[], float]
@@ -1146,16 +1134,8 @@ def _as_bool(value: Any, *, default: bool) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
-# Names that read naturally at injection sites and keep the public contract
-# stable if callers prefer "fetcher" terminology.
-AsyncSourceFetcher = SourceFetchService
-SourceFetcher = SourceFetchService
-
-
 __all__ = [
-    "AsyncSourceFetcher",
     "SourceFetchError",
     "SourceFetchResponse",
     "SourceFetchService",
-    "SourceFetcher",
 ]

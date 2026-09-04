@@ -27,9 +27,6 @@ class HandlerRegistry:
             raise TypeError("handler must be callable")
         self._handlers[name] = handler
 
-    def unregister(self, job_type: str) -> None:
-        self._handlers.pop(str(job_type), None)
-
     def get(self, job_type: str) -> HandlerCallable | None:
         return self._handlers.get(str(job_type))
 

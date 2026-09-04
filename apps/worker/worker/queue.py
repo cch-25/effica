@@ -85,9 +85,6 @@ class Job:
             raise ValueError("max_attempts must be at least 1")
 
 
-JobRecord = Job
-
-
 def _aware_utc(value: datetime | None) -> datetime:
     if value is None:
         return utc_now()
@@ -325,22 +322,6 @@ class ExponentialBackoff:
         return max(0.0, min(self.max_seconds, nominal + (spread * jitter)))
 
     __call__ = delay
-
-
-def calculate_backoff(
-    attempt: int,
-    *,
-    base_seconds: float = 1.0,
-    max_seconds: float = 300.0,
-    jitter_ratio: float = 0.2,
-    random_fn: Callable[[], float] | None = None,
-) -> float:
-    return ExponentialBackoff(
-        base_seconds=base_seconds,
-        max_seconds=max_seconds,
-        jitter_ratio=jitter_ratio,
-        random_fn=random_fn,
-    ).delay(attempt)
 
 
 class MemoryQueueRepository:

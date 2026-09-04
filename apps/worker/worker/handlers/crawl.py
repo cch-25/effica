@@ -1296,6 +1296,3 @@ def _ingestion_result(
         value=value,
         side_effect_key=None,
     )
-
-
-run = handle

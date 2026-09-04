@@ -70,13 +70,6 @@ from db.seeds.source_feeds import (
     scheduled_rss_config,
 )
 
-RECOVERY_JOB_TYPES = (
-    "crawl",
-    "analyze",
-    "calculate_score",
-    "cluster",
-    "build_issue_comparison",
-)
 _ACTIVE_JOB_STATUSES = frozenset({JobStatus.PENDING.value, JobStatus.LEASED.value})
 _RETRYABLE_JOB_STATUSES = frozenset(
     {JobStatus.FAILED.value, JobStatus.DEAD.value, JobStatus.CANCELLED.value}
