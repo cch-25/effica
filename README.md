@@ -14,7 +14,7 @@ AI 분석과 독자의 판단을 함께 보여주는 **정치 뉴스 큐레이�
 [![MariaDB](https://img.shields.io/badge/MariaDB_10.6+-003545?style=flat-square&logo=mariadb&logoColor=white)](https://mariadb.org/)
 [![OpenAI](https://img.shields.io/badge/OpenAI_Responses_API-412991?style=flat-square&logo=openai&logoColor=white)](https://platform.openai.com/docs/api-reference/responses)
 
-[**서비스 바로가기**](https://effica.vercel.app) · [**발표 자료**](PPT_VIDEO/25-EFFICA.pdf) · [**API 명세**](contracts/openapi.json)
+[**서비스 바로가기**](https://effica.vercel.app) | [**발표 자료**](PPT_VIDEO/25-EFFICA.pdf) | [**API 명세**](apps/web/src/lib/api/generated/openapi.json)
 
 </div>
 
@@ -172,7 +172,6 @@ effica/
 │   ├── web/          # Next.js 사용자·관리자 웹
 │   ├── api/          # FastAPI와 도메인 서비스
 │   └── worker/       # 수집·분석·집계를 처리하는 비동기 워커
-├── contracts/        # 버전 관리되는 OpenAPI 계약
 ├── db/               # Alembic migration과 seed
 ├── docs/             # 설계 결정과 문서 자산
 ├── tests/            # 통합·운영 계약 테스트

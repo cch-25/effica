@@ -1,6 +1,6 @@
 import type { Article } from "@/lib/api/types";
 
-export type SelectionResult = {
+type SelectionResult = {
   selected: string[];
   correctionNeeded: boolean;
   error: "TOO_MANY" | null;

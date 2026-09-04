@@ -1,4 +1,4 @@
-export type ShareCardStatus = "queued" | "rendering" | "ready" | "failed" | "revoked";
+type ShareCardStatus = "queued" | "rendering" | "ready" | "failed" | "revoked";
 
 const transitions: Record<ShareCardStatus, ShareCardStatus[]> = {
   queued: ["rendering", "failed", "revoked"],

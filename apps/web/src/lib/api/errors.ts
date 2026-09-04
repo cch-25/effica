@@ -1,4 +1,4 @@
-export const ERROR_MESSAGES: Record<string, string> = {
+const ERROR_MESSAGES: Record<string, string> = {
   AUTH_PROVIDER_DISABLED: "현재 사용할 수 없는 로그인 방식입니다.",
   CONSENT_REQUIRED: "정치 민감정보 별도 동의가 필요합니다.",
   QUESTIONNAIRE_VERSION_STALE: "설문이 갱신되었습니다. 최신 문항을 확인해 주세요.",

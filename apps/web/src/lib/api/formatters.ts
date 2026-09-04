@@ -47,8 +47,8 @@ export const AXIS_META = {
   x: { short: "편향성", negative: "좌편향", positive: "우편향" },
 } as const;
 
-export type BiasLabel = "좌편향" | "중립적" | "우편향";
-export const BIAS_CENTER_THRESHOLD = 10;
+type BiasLabel = "좌편향" | "중립적" | "우편향";
+const BIAS_CENTER_THRESHOLD = 10;
 
 export function getBiasLabel(value: number): BiasLabel {
   const score = clampScore(value);

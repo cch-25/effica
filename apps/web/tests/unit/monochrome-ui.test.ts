@@ -3,10 +3,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const sourceRoot = join(process.cwd(), "src");
-const legacyDesignLayers = new Set(["crouwel.css", "weingart.css"]);
 const files = (directory: string): string[] => readdirSync(directory).flatMap((name) => {
   const path = join(directory, name);
-  return statSync(path).isDirectory() ? files(path) : /\.(css|tsx)$/.test(path) && !legacyDesignLayers.has(name) ? [path] : [];
+  return statSync(path).isDirectory() ? files(path) : /\.(css|tsx)$/.test(path) ? [path] : [];
 });
 
 describe("Peer Design system", () => {

@@ -1,1 +1,0 @@
-sha256  49a791be6e10c26ce229defc7db2ad3b6f9aca913527470442d9c83353c71f5a  openapi.json

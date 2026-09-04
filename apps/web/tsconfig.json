@@ -36,14 +36,10 @@
     ".next/dev/types/**/*.ts",
     ".next-real/types/**/*.ts",
     ".next-real/dev/types/**/*.ts",
-    ".next-playwright-3000/types/**/*.ts",
-    ".next-playwright-3000/dev/types/**/*.ts",
-    ".next-playwright-3001/types/**/*.ts",
-    ".next-playwright-3001/dev/types/**/*.ts",
+    ".next-playwright-*/types/**/*.ts",
+    ".next-playwright-*/dev/types/**/*.ts",
     ".next-playwright-3200/types/**/*.ts",
-    ".next-playwright-3200/dev/types/**/*.ts",
-    ".next-playwright-boundary/types/**/*.ts",
-    ".next-playwright-boundary/dev/types/**/*.ts"
+    ".next-playwright-3200/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

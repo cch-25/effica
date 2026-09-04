@@ -1,7 +1,6 @@
-import type { components, paths } from "./generated/schema";
+import type { components } from "./generated/schema";
 
-export type ApiSchema<Name extends keyof components["schemas"]> = components["schemas"][Name];
-export type ApiPath = keyof paths;
+type ApiSchema<Name extends keyof components["schemas"]> = components["schemas"][Name];
 
 export type ConsentView = ApiSchema<"ConsentView">;
 export type ConsentSubmission = ApiSchema<"ConsentSubmission">;
@@ -22,7 +21,7 @@ export type ShareCardView = ApiSchema<"ShareCardView">;
 export type UserView = ApiSchema<"UserView">;
 export type VoteView = ApiSchema<"VoteView">;
 
-export type ApiRole = ApiSchema<"Role">;
+type ApiRole = ApiSchema<"Role">;
 export type Role = Lowercase<ApiRole> | "guest";
 
 export function normalizeRole(role: ApiRole | undefined): Role {

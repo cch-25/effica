@@ -21,8 +21,8 @@ export class ApiError extends Error {
   }
 }
 
-export type AuthFailureMode = "redirect" | "return-error";
-export type ApiRequestInit = RequestInit & { authFailureMode?: AuthFailureMode };
+type AuthFailureMode = "redirect" | "return-error";
+type ApiRequestInit = RequestInit & { authFailureMode?: AuthFailureMode };
 
 export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promise<T> {
   if (typeof window !== "undefined" && isMockMode()) {

@@ -165,14 +165,6 @@ export type VisualizationPoint = Omit<AxisScores, "sensationalism"> & {
   observedAt: string;
 };
 
-export type AdminItem = {
-  id: string;
-  title: string;
-  subtitle: string;
-  status: string;
-  metadata: Array<{ label: string; value: string }>;
-};
-
 export type ApiErrorBody = {
   error: {
     code: string;

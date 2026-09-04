@@ -1,6 +1,6 @@
-export type ApiMode = "mock" | "real";
+type ApiMode = "mock" | "real";
 
-export function apiMode(): ApiMode {
+function apiMode(): ApiMode {
   return process.env.NEXT_PUBLIC_API_MODE === "mock" ? "mock" : "real";
 }
 

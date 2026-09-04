@@ -2,19 +2,19 @@ import type { components } from "./generated/schema";
 import { decodeHtmlEntities } from "./formatters";
 import type { Article, Issue, IssueComparison, VisualizationPoint } from "./types";
 
-export type FeedItemDto = components["schemas"]["FeedItem"];
+type FeedItemDto = components["schemas"]["FeedItem"];
 export type FeedPageDto = components["schemas"]["FeedPage"];
 export type ArticleDto = components["schemas"]["ArticleView"];
-export type ArticleWithCoordinateDto = components["schemas"]["ArticleWithCoordinate"];
+type ArticleWithCoordinateDto = components["schemas"]["ArticleWithCoordinate"];
 export type ArticlePageDto = components["schemas"]["ArticlePage"];
 export type ScoreDto = components["schemas"]["ScoreView"];
-export type IssueDto = components["schemas"]["IssueView"];
+type IssueDto = components["schemas"]["IssueView"];
 export type IssueDetailDto = components["schemas"]["IssueDetailView"];
 export type IssuePageDto = components["schemas"]["IssuePage"];
-export type VisualizationPointDto = components["schemas"]["VisualizationPoint"];
+type VisualizationPointDto = components["schemas"]["VisualizationPoint"];
 export type VisualizationPointPageDto = components["schemas"]["VisualizationPointPage"];
 
-export type CursorPage<T> = { items: T[]; next_cursor: string | null };
+type CursorPage<T> = { items: T[]; next_cursor: string | null };
 
 function mapReasonCode(reason: string): Article["reasonCode"] {
   switch (reason) {
@@ -61,7 +61,7 @@ function articleBase(
   };
 }
 
-export function mapFeedItem(dto: FeedItemDto): Article {
+function mapFeedItem(dto: FeedItemDto): Article {
   return {
     id: dto.article_id,
     issueId: dto.issue_id,
@@ -92,7 +92,7 @@ export function mapArticle(dto: ArticleDto, score: ScoreDto | null): Article {
   return articleBase(dto, score, "RECENT_HIGH_CONFIDENCE", score?.score_version_id ?? score?.id ?? "분석 준비 중");
 }
 
-export function mapArticleWithCoordinate(dto: ArticleWithCoordinateDto): Article {
+function mapArticleWithCoordinate(dto: ArticleWithCoordinateDto): Article {
   return articleBase(dto, dto.coordinate ?? null, "ISSUE_BALANCE", dto.current_version_id ?? "분석 준비 중");
 }
 
@@ -128,7 +128,7 @@ export function mapIssuePage(dto: IssuePageDto): CursorPage<Issue> {
   return { items: dto.items.map(mapIssue), next_cursor: dto.next_cursor ?? null };
 }
 
-export function mapVisualizationPoint(dto: VisualizationPointDto): VisualizationPoint {
+function mapVisualizationPoint(dto: VisualizationPointDto): VisualizationPoint {
   return {
     id: dto.entity_id,
     label: decodeHtmlEntities(dto.label),
