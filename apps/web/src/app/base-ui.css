@@ -696,7 +696,7 @@
 .input::placeholder,
 .textarea::placeholder,
 .select__value[data-placeholder] {
-  color: var(--peer-color-disabled);
+  color: var(--peer-color-ink-muted);
 }
 
 .input:focus,
@@ -1534,7 +1534,6 @@
   align-items: center;
   padding: var(--peer-space-6) 0;
   border-block: 1px solid var(--line-strong);
-  animation: runtime-control-in var(--peer-duration-medium) var(--peer-ease-out);
 }
 
 .runtime-control__state,
@@ -1613,11 +1612,6 @@
 
 .runtime-switch__thumb[data-checked] { transform: translateX(1.2rem); }
 .runtime-control__error { color: var(--danger); }
-
-@keyframes runtime-control-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
 
 /* Share surface */
 

@@ -1,5 +1,5 @@
 /*
- * EFFICA art direction — warm paper, flat color, and asymmetric geometry.
+ * EFFICA art direction: warm paper, flat color, and asymmetric geometry.
  * Color planes stay bright and matte; structure remains defined by neutral rules.
  */
 
@@ -10,15 +10,6 @@
 .page-header,
 .card {
   animation-name: none;
-}
-
-.form-card.admin-login {
-  animation: admin-login-in 180ms ease-out both;
-}
-
-@keyframes admin-login-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
 }
 
 .button {
@@ -86,9 +77,23 @@
 .headline-band {
   position: relative;
   z-index: 30;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   min-height: 2.25rem;
   border-bottom: 1px solid var(--peer-color-ink);
   background: #fff;
+}
+
+.headline-band__label {
+  display: flex;
+  min-height: 2.25rem;
+  align-items: center;
+  padding: 0 var(--peer-space-4);
+  border-right: 1px solid var(--line);
+  color: var(--peer-color-ink-muted);
+  font-size: .6875rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .headline-band__story {
@@ -97,12 +102,21 @@
   min-width: 0;
   align-items: center;
   justify-content: center;
+  gap: var(--peer-space-2);
   overflow: hidden;
   padding: 0 clamp(1rem, 5vw, 4rem);
   color: #111;
   font-family: Helvetica, Arial, sans-serif;
   font-size: clamp(.75rem, 1.2vw, .9rem);
   font-weight: 700;
+}
+
+.headline-band__destination {
+  flex: 0 0 auto;
+  color: var(--peer-color-ink-muted);
+  font-size: .6875rem;
+  font-weight: 400;
+  white-space: nowrap;
 }
 
 .headline-band__story-text {
@@ -118,24 +132,49 @@
   to { transform: translateY(0); }
 }
 
-.corner-nav {
-  position: fixed;
-  z-index: 35;
-  top: 3rem;
-  right: clamp(1rem, 2.25vw, 2rem);
-  display: flex;
-  gap: .625rem;
+.site-nav {
+  position: relative;
+  z-index: 25;
+  display: grid;
+  min-height: 3rem;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: stretch;
+  padding-inline: var(--peer-layout-gutter);
+  border-bottom: 1px solid var(--peer-color-ink);
+  background: #fff;
 }
 
-.corner-nav__link {
-  display: grid;
-  width: 3rem;
-  height: 3rem;
-  place-items: center;
-  border: 1px solid var(--peer-color-ink);
-  border-radius: 100%;
-  background: #fff;
+.site-nav__brand,
+.site-nav__link,
+.site-nav__account {
+  display: inline-flex;
+  min-height: 3rem;
+  align-items: center;
+  justify-content: center;
+  gap: var(--peer-space-2);
+  padding-inline: var(--peer-space-4);
   color: var(--peer-color-ink);
+  font-size: var(--peer-text-xs);
+  white-space: nowrap;
+}
+
+.site-nav__brand {
+  justify-content: flex-start;
+  padding-left: 0;
+  font-size: var(--peer-text-sm);
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.site-nav__links {
+  display: flex;
+  justify-content: center;
+}
+
+.site-nav__link.is-active,
+.site-nav__account[aria-current="page"] {
+  background: var(--effica-butter);
+  font-weight: 700;
 }
 
 @media (hover: hover) {
@@ -144,7 +183,9 @@
     text-underline-offset: .18em;
   }
 
-  .corner-nav__link:hover {
+  .site-nav__link:hover,
+  .site-nav__account:hover,
+  .site-nav__brand:hover {
     background: var(--effica-sky);
   }
 }
@@ -162,7 +203,7 @@
   min-height: 0;
   overflow: visible;
   margin: 0 auto clamp(1.75rem, 4vw, 3rem);
-  padding: clamp(1rem, 2.5vw, 1.75rem) clamp(7rem, 10vw, 9rem) clamp(1rem, 2.5vw, 1.75rem) 0;
+  padding: clamp(1rem, 2.5vw, 1.75rem) 0;
   border-bottom: 1px solid var(--peer-color-ink);
   background: transparent;
 }
@@ -187,6 +228,52 @@
   line-height: 1.6;
 }
 
+.content-path {
+  display: flex;
+  align-items: center;
+  gap: var(--peer-space-2);
+  margin-bottom: var(--peer-space-4);
+  color: var(--peer-color-ink-muted);
+  font-size: var(--peer-text-xs);
+}
+
+.content-path a {
+  color: var(--peer-color-ink);
+  font-weight: var(--peer-weight-bold);
+  text-decoration: underline;
+  text-underline-offset: .2em;
+}
+
+.form-card nav[aria-label="온보딩 단계"] {
+  margin: var(--peer-space-5) 0 var(--peer-space-4);
+}
+
+.form-card nav[aria-label="온보딩 단계"] ol {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--peer-color-ink);
+  list-style: none;
+}
+
+.form-card nav[aria-label="온보딩 단계"] li {
+  min-width: 0;
+  padding: .65rem .75rem;
+  color: var(--peer-color-ink-muted);
+  font-size: var(--peer-text-xs);
+  text-align: center;
+}
+
+.form-card nav[aria-label="온보딩 단계"] li + li {
+  border-left: 1px solid var(--line);
+}
+
+.form-card nav[aria-label="온보딩 단계"] li[aria-current="step"] {
+  background: var(--effica-butter);
+  color: var(--peer-color-ink);
+}
+
 .bottom-nav {
   background: var(--effica-cream);
 }
@@ -205,7 +292,7 @@
   position: relative;
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  min-height: min(42rem, calc(100svh - 2.25rem));
+  min-height: min(42rem, calc(100svh - 5.25rem));
   gap: 0;
   overflow: hidden;
   margin-top: calc(-1 * var(--peer-space-8));
@@ -646,6 +733,10 @@
   z-index: 1;
 }
 
+.public-share-card > .eyebrow {
+  color: var(--peer-color-ink);
+}
+
 .public-share-card__title {
   display: flex;
   align-items: end;
@@ -691,6 +782,13 @@
   font-weight: 700;
 }
 
+.public-share-card__metrics dd small {
+  display: block;
+  margin-top: .35rem;
+  font-family: var(--peer-font-sans);
+  font-weight: var(--peer-weight-regular);
+}
+
 .public-share-card__foot {
   display: flex;
   align-items: center;
@@ -724,9 +822,8 @@
   padding: clamp(1.25rem, 2.4vw, 1.75rem);
 }
 
-/* Keep the floating account navigation clear of the article analysis rail. */
 .shell:not(.shell--admin) .article-side {
-  padding-top: 4.5rem;
+  padding-top: var(--peer-space-6);
 }
 
 @media (max-width: 900px) {
@@ -762,7 +859,7 @@
     font-size: .75rem;
   }
 
-  .corner-nav {
+  .site-nav {
     display: none;
   }
 

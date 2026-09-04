@@ -27,6 +27,58 @@
   font-size: var(--peer-text-xs);
 }
 
+.comparison-hero > a {
+  width: fit-content;
+  margin-top: var(--peer-space-2);
+  color: var(--peer-color-accent);
+  font-size: var(--peer-text-sm);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: .2em;
+}
+
+.available-articles {
+  padding-block: var(--peer-space-8);
+  border-top: 1px solid var(--peer-color-ink);
+}
+
+.available-articles ul {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border-bottom: 1px solid var(--line);
+  list-style: none;
+}
+
+.available-articles li {
+  display: grid;
+  grid-template-columns: minmax(7rem, .25fr) minmax(0, 1fr);
+  gap: var(--peer-space-4);
+  align-items: center;
+  padding-block: var(--peer-space-4);
+  border-top: 1px solid var(--line);
+}
+
+.available-articles li span {
+  color: var(--peer-color-ink-muted);
+  font-size: var(--peer-text-xs);
+}
+
+.available-articles li a {
+  color: var(--peer-color-accent);
+  font-weight: var(--peer-weight-bold);
+  text-decoration: underline;
+  text-underline-offset: .2em;
+}
+
+@media (max-width: 560px) {
+  .available-articles li {
+    grid-template-columns: 1fr;
+    gap: var(--peer-space-1);
+  }
+}
+
 .comparison-selector,
 .common-facts {
   padding: 0;
