@@ -34,7 +34,9 @@ def _read_root_env_value(key: str) -> str | None:
     value = os.getenv(key)
     if value:
         return value
-    root_env = Path(__file__).resolve().parents[4] / ".env"
+    server_root = Path(__file__).resolve().parents[4]
+    repository_root = server_root.parent if server_root.name == "server" else server_root
+    root_env = repository_root / ".env"
     try:
         lines = root_env.read_text(encoding="utf-8").splitlines()
     except OSError:

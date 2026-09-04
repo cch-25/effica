@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 loadEnvConfig(repositoryRoot);
 
 const apiMode = process.env.NEXT_PUBLIC_API_MODE;

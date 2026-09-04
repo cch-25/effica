@@ -11,10 +11,10 @@ htmlcov/
 dist/
 build/
 *.egg-info/
-apps/web/.next/
-apps/web/.next-real/
-apps/web/.next-playwright-*/
-apps/web/node_modules/
+client/.next/
+client/.next-real/
+client/.next-playwright-*/
+client/node_modules/
 .vercel/
 .DS_Store
 .playwright-cli/

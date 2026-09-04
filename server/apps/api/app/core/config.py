@@ -8,7 +8,8 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+SERVER_ROOT = Path(__file__).resolve().parents[4]
+REPOSITORY_ROOT = SERVER_ROOT.parent if SERVER_ROOT.name == "server" else SERVER_ROOT
 ROOT_ENV_FILE = REPOSITORY_ROOT / ".env"
 
 

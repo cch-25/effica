@@ -9,9 +9,9 @@ import sys
 from tests.pytest_repo_root import repo_root, rewrite_pytest_args
 
 
-def test_repo_relative_pytest_args_are_rewritten_from_apps_web() -> None:
+def test_server_relative_pytest_args_are_rewritten_from_client() -> None:
     root = repo_root()
-    nested = root / "apps" / "web"
+    nested = root.parent / "client"
     target = (root / "apps/api/tests/test_auth_privacy.py").resolve()
     args = rewrite_pytest_args(
         ["-q", "apps/api/tests/test_auth_privacy.py::test_foo", "--tb=short"],
@@ -32,18 +32,20 @@ def test_existing_cwd_relative_args_become_absolute() -> None:
     assert args == [str(target)]
 
 
-def test_pytest_collects_repo_paths_when_invoked_from_apps_web() -> None:
+def test_pytest_collects_server_paths_when_invoked_from_client() -> None:
     root = repo_root()
     result = subprocess.run(
         [
             sys.executable,
             "-m",
             "pytest",
+            "-c",
+            "../server/pyproject.toml",
             "--collect-only",
             "-q",
             "tests/integration/test_pytest_repo_root.py",
         ],
-        cwd=root / "apps" / "web",
+        cwd=root.parent / "client",
         capture_output=True,
         text=True,
         timeout=45,

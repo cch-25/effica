@@ -1,8 +1,8 @@
-"""Force pytest to run from the repository root.
+"""Force pytest to run from the server project root.
 
 File arguments are resolved against the invocation directory.  A leftover
-``cwd`` from ``apps/web`` makes ``apps/api/tests/...`` missing and can stall
-collection.  This plugin chdirs to the repo root and rewrites those paths
+``cwd`` from ``client`` makes ``apps/api/tests/...`` missing and can stall
+collection.  This plugin chdirs to the server root and rewrites those paths
 before collection.
 """
 

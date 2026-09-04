@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS = ROOT / ".ops"
+REPOSITORY_ROOT = ROOT.parent
+SCRIPTS = REPOSITORY_ROOT / ".ops"
 
 
 def test_deploy_manifest_is_runtime_only_and_complete() -> None:
@@ -29,7 +30,7 @@ def test_deploy_manifest_is_runtime_only_and_complete() -> None:
 
     assert paths == expected
     assert not any(
-        path.startswith(("apps/web/", "tests/", "docs/", ".agents/", ".ops/", "output/", "PPT_VIDEO/"))
+        path.startswith(("client/", "tests/", "docs/", ".agents/", ".ops/", "output/"))
         for path in paths
     )
     assert not any(path.endswith((".env", ".pem", ".key", ".p12")) for path in paths)
@@ -41,14 +42,15 @@ def test_deploy_preflight_precedes_remote_mutations_and_release_is_atomic() -> N
     preflight = source.index("preflight\n")
     remote_stage_mutation = source.index('"${SSH[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "rm -rf')
     assert preflight < remote_stage_mutation
-    assert "uv run ruff check apps db tests" in source
-    assert "uv run mypy apps tests" in source
+    assert "server_uv run ruff check apps db tests" in source
+    assert "server_uv run mypy apps tests" in source
     assert "npm run typecheck" in source
     assert "npm run build" in source
     assert "pip-audit" in source
-    assert "uv pip freeze --exclude-editable" in source
+    assert "server_uv pip freeze --exclude-editable" in source
     assert "--path \"$ROOT/.venv\"" not in source
     assert "--files-from=\"$DEPLOY_MANIFEST\"" in source
+    assert '"$SERVER_DIR/" "$DEPLOY_USER@$DEPLOY_HOST:$REMOTE_STAGE/"' in source
     assert 'RELEASES_DIR="$APP_DIR/releases"' in source
     assert 'CURRENT_LINK="$APP_DIR/current"' in source
     assert "ROLLBACK_REQUIRED=1" in source
@@ -93,8 +95,8 @@ def test_preflight_and_verify_include_headless_mock_a11y_and_real_flows() -> Non
 def test_operations_have_only_agent_script_entrypoints_and_no_github_workflows() -> None:
     assert (SCRIPTS / "deploy.sh").is_file()
     assert (SCRIPTS / "run.sh").is_file()
-    assert not (ROOT / "deploy.sh").exists()
-    assert not (ROOT / "run.sh").exists()
+    assert not (REPOSITORY_ROOT / "deploy.sh").exists()
+    assert not (REPOSITORY_ROOT / "run.sh").exists()
 
-    workflows = ROOT / ".github" / "workflows"
+    workflows = REPOSITORY_ROOT / ".github" / "workflows"
     assert not workflows.exists() or not any(workflows.glob("*.y*ml"))
