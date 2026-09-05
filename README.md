@@ -9,7 +9,7 @@
 Compare coverage of the same event side by side.<br />
 Explore the context through AI analysis and reader perspectives.
 
-<img src="https://img.shields.io/badge/Codex%20Community%20Hackathon-3rd%20Place-7586F5?style=for-the-badge&amp;labelColor=FFFFFF" width="454" alt="Codex Community Hackathon : 3rd Place" border="1" style="border: 1px solid #202735;" />
+<img src="https://img.shields.io/badge/Codex%20Community%20Hackathon-3rd%20Place-7586F5?style=for-the-badge&amp;labelColor=def3d2" width="454" alt="Codex Community Hackathon : 3rd Place" border="1" style="border: 1px solid #202735;" />
 
 <br />
 
