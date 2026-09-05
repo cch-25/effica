@@ -15,7 +15,7 @@ import json
 import re
 from collections import Counter
 from collections.abc import Iterable, Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from xml.etree import ElementTree
@@ -105,9 +105,6 @@ async def handle(payload: Mapping[str, Any], context: HandlerContext | None = No
     url = canonical_url(str(source["url"]))
     source["url"] = url
     source_id = source.get("source_id")
-    # Validate adapter retention settings before a live request starts.  This
-    # avoids fetching data that cannot be durably represented by the worker.
-    _retention_days(source)
     adapter_config = _source_config(source)
 
     # Fixture mode is intentionally side-effect free.  It may still parse a
@@ -852,13 +849,16 @@ async def _hydrate_rss_articles(
             code="RSS_HYDRATION_POLICY_NOT_APPROVED",
         ) from exc
 
+    require_hydrated_body = _config_bool(
+        config.get("require_hydrated_body"), default=False
+    )
     minimum_chars = _bounded_nonnegative_int(
         config.get("hydrate_min_body_chars"), default=300, maximum=100_000
     )
     eligible: list[tuple[int, ArticleCandidate]] = []
     origin_skipped = 0
     for index, candidate in enumerate(initial_candidates):
-        if len(candidate.body.strip()) >= minimum_chars:
+        if not require_hydrated_body and len(candidate.body.strip()) >= minimum_chars:
             continue
         if not _navigation_allowed(seed_url, candidate.url, config, purpose="hydration"):
             origin_skipped += 1
@@ -879,7 +879,7 @@ async def _hydrate_rss_articles(
 
     async def fetch_one(
         index: int, candidate: ArticleCandidate
-    ) -> tuple[int, ArticleCandidate | None, str | None]:
+    ) -> tuple[int, ArticleCandidate | None, str | None, bool]:
         async with semaphore:
             child_source = _navigation_source(
                 source,
@@ -912,7 +912,7 @@ async def _hydrate_rss_articles(
                     default=None,
                 )
                 if rich is None:
-                    return index, None, "RSS_HYDRATED_ARTICLE_EMPTY"
+                    return index, None, "RSS_HYDRATED_ARTICLE_EMPTY", False
                 hydrated = ArticleCandidate(
                     url=rich.url,
                     title=rich.title or candidate.title,
@@ -920,34 +920,48 @@ async def _hydrate_rss_articles(
                     author=rich.author or candidate.author,
                     published_at=candidate.published_at or rich.published_at,
                     source_id=candidate.source_id,
-                    raw_payload=rich.raw_payload,
                     external_id=candidate.external_id,
                     adapter_type=candidate.adapter_type,
                 )
-                return index, hydrated, None
+                return index, hydrated, None, False
             except SourceFetchError as exc:
-                return index, None, exc.code
+                return index, None, exc.code, exc.retryable
             except Exception:
-                return index, None, "RSS_HYDRATED_ARTICLE_PARSE_FAILED"
+                return index, None, "RSS_HYDRATED_ARTICLE_PARSE_FAILED", False
 
     results = await asyncio.gather(
         *(fetch_one(index, candidate) for index, candidate in scheduled)
     )
-    articles = list(initial_candidates)
+    articles = [] if require_hydrated_body else list(initial_candidates)
     failure_counts: Counter[str] = Counter()
+    retryable_failure = False
+    if require_hydrated_body and origin_skipped:
+        failure_counts["RSS_HYDRATION_ORIGIN_BLOCKED"] += origin_skipped
     succeeded = 0
-    for index, hydrated, error_code in results:
+    for index, hydrated, error_code, retryable in results:
         if hydrated is not None:
-            articles[index] = hydrated
+            if require_hydrated_body:
+                articles.append(hydrated)
+            else:
+                articles[index] = hydrated
             succeeded += 1
         elif error_code:
             failure_counts[error_code] += 1
+            retryable_failure = retryable_failure or retryable
+    if require_hydrated_body and initial_candidates and not articles:
+        error_type = RetryableHandlerError if retryable_failure else NonRetryableHandlerError
+        raise error_type(
+            "RSS article hydration failed before yielding usable content",
+            code="RSS_HYDRATION_FAILED",
+            details={"failure_counts": dict(sorted(failure_counts.items()))},
+        )
     stats: dict[str, Any] = {
         "hydration_eligible_count": len(eligible),
         "hydration_attempted": len(scheduled),
         "hydration_succeeded": succeeded,
         "hydration_failed": sum(failure_counts.values()),
-        "hydration_skipped": max(0, len(eligible) - len(scheduled)) + origin_skipped,
+        "hydration_skipped": max(0, len(eligible) - len(scheduled))
+        + (0 if require_hydrated_body else origin_skipped),
         "hydration_origin_skipped": origin_skipped,
     }
     if failure_counts:
@@ -1193,29 +1207,6 @@ def _config_bool(value: Any, *, default: bool) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
-def _retention_days(source: Mapping[str, Any]) -> int | None:
-    value = source.get("raw_payload_retention_days")
-    if value is None:
-        config = _source_config(source)
-        if isinstance(config, Mapping):
-            value = config.get("raw_payload_retention_days", config.get("retention_days"))
-    if value in (None, ""):
-        return None
-    try:
-        days = int(value)
-    except (TypeError, ValueError) as exc:
-        raise NonRetryableHandlerError(
-            "raw payload retention days must be a non-negative integer",
-            code="INVALID_RETENTION_POLICY",
-        ) from exc
-    if days < 0:
-        raise NonRetryableHandlerError(
-            "raw payload retention days must be a non-negative integer",
-            code="INVALID_RETENTION_POLICY",
-        )
-    return days
-
-
 def _source_config(source: Mapping[str, Any]) -> dict[str, Any]:
     """Merge adapter config aliases without letting it override source state.
 
@@ -1235,8 +1226,6 @@ def _source_config(source: Mapping[str, Any]) -> dict[str, Any]:
         merged = {**dict(nested), **{key: value for key, value in merged.items() if key != "adapter"}}
     if source.get("rate_limit") is not None:
         merged.setdefault("rate_limit", source.get("rate_limit"))
-    if source.get("raw_payload_retention_days") is not None:
-        merged.setdefault("raw_payload_retention_days", source.get("raw_payload_retention_days"))
     return merged
 
 
@@ -1253,19 +1242,17 @@ def _ingestion_result(
     fetched_at = response.fetched_at if response is not None else datetime.now(UTC)
     if fetched_at.tzinfo is None:
         fetched_at = fetched_at.replace(tzinfo=UTC)
-    retention_days = _retention_days(source)
-    expires_at = (
-        fetched_at + timedelta(days=retention_days) if retention_days is not None else None
-    )
     articles: list[dict[str, Any]] = []
     for candidate in candidates:
         article = candidate.as_dict()
+        from apps.api.app.domains.content.retention import expired
+
+        if expired(article.get("published_at"), fetched_at, fetched_at):
+            continue
         # DurableResultApplier consumes ``content`` while the canonical
         # adapter intentionally calls the field ``body``.
         article["content"] = candidate.body
         article["fetched_at"] = fetched_at
-        article["raw_payload_retention_days"] = retention_days
-        article["raw_payload_expires_at"] = expires_at
         articles.append(article)
     stats: dict[str, Any] = {
         "fetched": fetched,
@@ -1289,8 +1276,6 @@ def _ingestion_result(
         "articles": articles,
         "stats": stats,
         "fetched_at": fetched_at,
-        "raw_payload_retention_days": retention_days,
-        "raw_payload_expires_at": expires_at,
     }
     return HandlerResult(
         value=value,

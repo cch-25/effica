@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 
 @dataclass(frozen=True)
@@ -17,8 +18,9 @@ class ScheduledRSSSource:
 
 # Keep one broad feed per publisher until the adapter schema supports multiple
 # RSS adapters per source. The previous entries both pointed at politics,
-# which made every other public topic structurally sparse. Ingestion remains
-# metadata-first: linked article pages are not fetched by the scheduled job.
+# which made every other public topic structurally sparse. Scheduled ingestion
+# hydrates each bounded feed item from its approved publisher domain so the
+# analysis pipeline receives article bodies instead of RSS summaries.
 SCHEDULED_RSS_SOURCES = (
     ScheduledRSSSource(
         "뉴시스",
@@ -86,7 +88,10 @@ _SOURCES_BY_HOME = {
 SCHEDULED_RSS_FEEDS = {
     source.home_url: source.feed_url for source in SCHEDULED_RSS_SOURCES
 }
-SCHEDULED_RSS_MAX_ITEMS = 80
+# Eight scheduled publishers run every 15 minutes with a polite per-source
+# request rate. Thirty fully hydrated articles per source keeps one cycle well
+# inside the schedule while still providing a broad, fresh homepage corpus.
+SCHEDULED_RSS_MAX_ITEMS = 30
 
 
 def bootstrap_scheduled_rss_sources() -> tuple[ScheduledRSSSource, ...]:
@@ -99,11 +104,18 @@ def scheduled_rss_config(
     source = _SOURCES_BY_HOME.get(_canonical_home(source_home_url))
     if source is None:
         return None
+    article_domain = (urlsplit(source.home_url).hostname or "").lower().removeprefix(
+        "www."
+    )
     return {
         "scheduled": True,
         "feed_url": source.feed_url,
-        "hydrate_article_links": False,
-        "metadata_only": True,
+        "hydrate_article_links": True,
+        "require_hydrated_body": True,
+        "hydrate_min_body_chars": 100_000,
+        "max_hydration_fetches": SCHEDULED_RSS_MAX_ITEMS,
+        "allowed_domains": [article_domain],
+        "metadata_only": False,
         "max_items": SCHEDULED_RSS_MAX_ITEMS,
         "allow_empty_result": False,
         "policy_reference": policy_reference or source.policy_reference,

@@ -2,10 +2,9 @@
 
 The HTTP layer deliberately stays thin.  This mixin owns the state transitions
 used by the ``/admin`` endpoints and is mixed into
-``MariaDBPlatformRepository`` by the API composition root.  There is no
-admin-only table in the physical schema: idempotency records are represented by
-``AuditLog`` rows and source/model versions are derived from their audit
-history because those legacy tables do not have a version column.
+``MariaDBPlatformRepository`` by the API composition root. Compact request
+receipts preserve idempotency without audit history. Source/model versions
+are stored directly on their records.
 
 Methods return JSON-friendly dictionaries (or lists of dictionaries) so route
 handlers can apply their normal cursor and response-model handling.  All
@@ -26,7 +25,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any, TypeVar
 
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.app.core.logging import redact
@@ -44,8 +43,8 @@ from apps.api.app.db.enums import (
     SourceType,
 )
 from apps.api.app.db.models import (
+    AdminRequestReceipt,
     Article,
-    AuditLog,
     AutopilotSetting,
     CrawlRun,
     EfficacyAggregateSnapshot,
@@ -255,30 +254,26 @@ class AdminRepositoryMixin:
     session: AsyncSession
 
     # ------------------------------------------------------------------
-    # Transaction, audit, and idempotency primitives
+    # Transaction and idempotency primitives
     # ------------------------------------------------------------------
 
     @staticmethod
     def _idempotency_target(scope: str, key: str) -> str:
-        # A digest keeps arbitrary client keys inside AuditLog.target_id's
-        # 128-character limit and avoids putting secrets in operational logs.
+        # Store a fixed-size digest instead of arbitrary client keys.
         return hashlib.sha256(f"{scope}\x00{key}".encode()).hexdigest()
 
     async def _idempotency_record(
         self,
         scope: str,
         key: str | None,
-    ) -> AuditLog | None:
+    ) -> AdminRequestReceipt | None:
         if not key:
             return None
         return await self.session.scalar(
-            select(AuditLog)
+            select(AdminRequestReceipt)
             .where(
-                AuditLog.action == "IDEMPOTENCY_RECORDED",
-                AuditLog.target_type == "idempotency",
-                AuditLog.target_id == self._idempotency_target(scope, key),
+                AdminRequestReceipt.key_hash == self._idempotency_target(scope, key),
             )
-            .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
             .with_for_update()
         )
 
@@ -296,7 +291,7 @@ class AdminRepositoryMixin:
         request_id: str | None,
         operation: Callable[[], Awaitable[tuple[T, Any, Any]]],
     ) -> T:
-        """Run a mutation, write its audit record, and persist replay data.
+        """Run a mutation and persist its compact replay data atomically.
 
         The repository owns its request-scoped session.  A prior authentication
         read may have opened an implicit SQLAlchemy transaction, so this method
@@ -308,7 +303,7 @@ class AdminRepositoryMixin:
         try:
             prior = await self._idempotency_record(scope, idempotency_key)
             if prior is not None:
-                stored = prior.after_json or {}
+                stored = prior.data_json or {}
                 if stored.get("request_digest") != digest:
                     raise IdempotencyConflictError(
                         "This Idempotency-Key was already used with another request.",
@@ -316,57 +311,18 @@ class AdminRepositoryMixin:
                     )
                 return deepcopy(stored.get("response"))
 
-            result, before, after = await operation()
+            result, _, _ = await operation()
             await self.session.flush()
-
-            resolved_target_id = target_id
-            if resolved_target_id is None and isinstance(result, Mapping):
-                resolved_target_id = next(
-                    (
-                        candidate
-                        for candidate in (
-                            result.get("id"),
-                            result.get("source_id"),
-                            result.get("model_id"),
-                            result.get("weight_id"),
-                            result.get("recommendation_id"),
-                        )
-                        if candidate is not None
-                    ),
-                    None,
-                )
-
-            self.session.add(
-                AuditLog(
-                    id=new_ulid(),
-                    actor_id=actor_id,
-                    action=action,
-                    target_type=target_type,
-                    target_id=resolved_target_id,
-                    before_json=_safe_json(before),
-                    after_json=_safe_json(after),
-                    reason=reason,
-                    request_id=request_id,
-                    created_at=utc_now(),
-                )
-            )
 
             if idempotency_key:
                 self.session.add(
-                    AuditLog(
-                        id=new_ulid(),
-                        actor_id=actor_id,
-                        action="IDEMPOTENCY_RECORDED",
-                        target_type="idempotency",
-                        target_id=self._idempotency_target(scope, idempotency_key),
-                        before_json=None,
-                        after_json={
+                    AdminRequestReceipt(
+                        key_hash=self._idempotency_target(scope, idempotency_key),
+                        data_json={
                             "request_digest": digest,
                             "scope": scope,
                             "response": _safe_response(result),
                         },
-                        reason="durable idempotency record",
-                        request_id=request_id,
                         created_at=utc_now(),
                     )
                 )
@@ -377,14 +333,9 @@ class AdminRepositoryMixin:
             raise
 
     async def _audit_version(self, target_type: str, target_id: str, actions: Sequence[str]) -> int:
-        count = await self.session.scalar(
-            select(func.count(AuditLog.id)).where(
-                AuditLog.target_type == target_type,
-                AuditLog.target_id == target_id,
-                AuditLog.action.in_(tuple(actions)),
-            )
-        )
-        return max(1, int(count or 0))
+        model = Source if target_type == "source" else ModelAlias
+        version = await self.session.scalar(select(model.version).where(model.id == target_id))
+        return max(1, int(version or 1))
 
     async def _autopilot_row(self, *, lock: bool = False) -> AutopilotSetting | None:
         query = select(AutopilotSetting).where(AutopilotSetting.singleton_key == "global")
@@ -467,7 +418,7 @@ class AdminRepositoryMixin:
             "alias": row.alias,
             "provider": row.provider,
             "actual_model_id": row.actual_model_id,
-            "reasoning_effort": config.get("reasoning_effort", "xhigh"),
+            "reasoning_effort": config.get("reasoning_effort", "high"),
             "secret_env_name": configured_secret,
             "status": _value(row.status),
             "config_json": _safe_json(config),
@@ -625,7 +576,7 @@ class AdminRepositoryMixin:
             # legacy source rows still remain adapter-less.
             if adapter_type is None and any(
                 payload.get(field) not in (None, {}, "")
-                for field in ("config_json", "rate_limit", "raw_payload_retention_days")
+                for field in ("config_json", "rate_limit")
             ):
                 adapter_type = source_type
             if adapter_type is not None:
@@ -635,7 +586,6 @@ class AdminRepositoryMixin:
                     adapter_type=_normalise_status(adapter_type, AdapterType, field="adapter_type"),
                     config_json=deepcopy(payload.get("config_json") or {}),
                     rate_limit=payload.get("rate_limit"),
-                    raw_payload_retention_days=payload.get("raw_payload_retention_days"),
                     active=bool(payload.get("adapter_active", True)),
                 )
                 self.session.add(adapter)
@@ -704,7 +654,8 @@ class AdminRepositoryMixin:
                 else:
                     row.active = bool(value)
             await self.session.flush()
-            after = await self._source_view(row, version=current + 1)
+            row.version = current + 1
+            after = await self._source_view(row, version=row.version)
             return after, before, after
 
         return await self._run_mutation(
@@ -1277,7 +1228,7 @@ class AdminRepositoryMixin:
             if secret_env_name not in {None, _OPENAI_SECRET_ENV}:
                 raise AdminValidationError("secret_env_name must be OPENAI_API_KEY.")
             reasoning_effort = _validate_reasoning_effort(
-                payload.get("reasoning_effort", "xhigh")
+                payload.get("reasoning_effort", "high")
             )
             status = _normalise_status(
                 payload.get("status", ModelStatus.ACTIVE.value), ModelStatus, field="status"
@@ -1442,7 +1393,7 @@ class AdminRepositoryMixin:
                         "reasoning_effort": _validate_reasoning_effort(
                             requested.get(
                                 "reasoning_effort",
-                                (row.config_json or {}).get("reasoning_effort", "xhigh"),
+                                (row.config_json or {}).get("reasoning_effort", "high"),
                             )
                         ),
                         "secret_env_name": _OPENAI_SECRET_ENV,
@@ -1453,12 +1404,13 @@ class AdminRepositoryMixin:
             final_config = deepcopy(row.config_json or {})
             row.config_json = {
                 "reasoning_effort": _validate_reasoning_effort(
-                    final_config.get("reasoning_effort", "xhigh")
+                    final_config.get("reasoning_effort", "high")
                 ),
                 "secret_env_name": _OPENAI_SECRET_ENV,
             }
             await self.session.flush()
-            after = await self._model_view(row, version=current + 1)
+            row.version = current + 1
+            after = await self._model_view(row, version=row.version)
             return after, before, after
 
         return await self._run_mutation(
@@ -1817,10 +1769,7 @@ class AdminRepositoryMixin:
         )
 
     async def _weight_guardrails_pass(self, weight_id: str) -> bool:
-        # WeightSimulation historically references recommendations rather than
-        # revisions.  Accept direct evidence if a caller stores a matching
-        # recommendation id, while also accepting queue-completed results in
-        # AuditLog.  This keeps the method compatible with both schema eras.
+        # Accept persisted simulations or matching completed queue evidence.
         rows = list(
             (
                 await self.session.scalars(
@@ -1829,37 +1778,6 @@ class AdminRepositoryMixin:
             ).all()
         )
         passed = {row.window_days for row in rows if self._simulation_passed(row)}
-        if passed >= {7, 30}:
-            return True
-        simulation_audits = list(
-            (
-                await self.session.scalars(
-                    select(AuditLog)
-                    .where(
-                        AuditLog.target_type == "weight",
-                        AuditLog.target_id == weight_id,
-                        AuditLog.action.in_(
-                            ("WEIGHT_SIMULATION_ENQUEUED", "WEIGHT_SIMULATION_COMPLETED")
-                        ),
-                    )
-                    .order_by(AuditLog.created_at.desc())
-                )
-            ).all()
-        )
-        for audit in simulation_audits:
-            evidence = (audit.after_json or {}).get("guardrail_results", [])
-            if isinstance(evidence, Mapping):
-                evidence = list(evidence.values())
-            if isinstance(evidence, list):
-                for item in evidence:
-                    if (
-                        isinstance(item, Mapping)
-                        and item.get("window_days") in {7, 30}
-                        and bool(
-                            item.get("passed", item.get("guardrail_result") in {"PASS", "PASSED"})
-                        )
-                    ):
-                        passed.add(int(item["window_days"]))
         if passed >= {7, 30}:
             return True
         jobs = list(
@@ -2596,37 +2514,7 @@ class AdminRepositoryMixin:
         action: str | None = None,
         target: str | None = None,
     ) -> list[dict[str, Any]]:
-        query = select(AuditLog).where(AuditLog.target_type != "idempotency")
-        if actor:
-            query = query.where(AuditLog.actor_id == actor)
-        if action:
-            query = query.where(AuditLog.action == action)
-        if target:
-            query = query.where((AuditLog.target_id == target) | (AuditLog.target_type == target))
-        rows = list(
-            (
-                await self.session.scalars(
-                    query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
-                )
-            ).all()
-        )
-        return [
-            {
-                "id": row.id,
-                "actor_id": row.actor_id,
-                "action": row.action,
-                "target_type": row.target_type,
-                "target_id": row.target_id,
-                "before": _safe_json(row.before_json),
-                "before_json": _safe_json(row.before_json),
-                "after": _safe_json(row.after_json),
-                "after_json": _safe_json(row.after_json),
-                "reason": row.reason,
-                "request_id": row.request_id,
-                "created_at": _row_datetime(row.created_at),
-            }
-            for row in rows
-        ]
+        return []
 
     async def get_efficacy_metrics(self, *, minimum_cohort_size: int = 5) -> dict[str, Any]:
         if minimum_cohort_size < 1:

@@ -1,4 +1,4 @@
-"""Single-model content-first analysis with an offline deterministic fallback."""
+"""Single-model content-first analysis with an explicit fixture fallback."""
 
 from __future__ import annotations
 
@@ -129,6 +129,12 @@ async def handle(
         providers = [built]
         owns_providers = True
     if not providers:
+        if not _stub_fallback_allowed(context):
+            raise NonRetryableHandlerError(
+                "analysis provider is not configured for this worker",
+                code="ANALYSIS_PROVIDER_NOT_CONFIGURED",
+                details={"stage": "provider_resolution"},
+            )
         providers = make_stub_providers(1)
     assessments = []
     provider_errors: list[dict[str, Any]] = []
@@ -194,7 +200,6 @@ async def handle(
             "prompt_version": prompt_version,
             "assessments": serialized_assessments,
             "ensemble": ensemble.as_dict(),
-            "raw_response": serialized_assessments,
             "provider_errors": provider_errors,
         },
         side_effect_key=(context.idempotency_key if context else None),
@@ -214,3 +219,22 @@ def _provider_error_is_retryable(exc: ProviderError) -> bool:
     if isinstance(exc, ProviderSchemaError):
         return True
     return bool(getattr(exc, "retryable", True))
+
+
+def _stub_fallback_allowed(context: HandlerContext | None) -> bool:
+    """Limit deterministic analysis to explicit test and fixture execution.
+
+    Direct handler calls and an empty ``HandlerContext`` are the lightweight
+    fixture boundary used by unit tests and the in-memory worker. Real worker
+    assembly injects persistence services, so a missing live provider fails
+    closed unless that harness explicitly opts into a non-live mode.
+    """
+
+    if context is None or not context.services:
+        return True
+    mode = context.services.get("analysis_provider_mode")
+    return isinstance(mode, str) and mode.strip().lower() in {
+        "fixture",
+        "stub",
+        "test",
+    }

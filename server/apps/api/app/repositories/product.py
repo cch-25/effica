@@ -95,6 +95,7 @@ def _linked_assessment_summary(assessment: ModelAssessment, score: ScoreVersion 
 
 
 _TERMINAL_ISSUE_STATUSES = ("merged", "closed", "archived")
+_PUBLIC_CONTENT_MAX_AGE = timedelta(days=4)
 
 
 class ProductConflictError(RuntimeError):
@@ -248,6 +249,7 @@ class ProductRepositoryMixin:
     async def feed_items(
         self, *, user_id: str | None, personalized_requested: bool
     ) -> tuple[list[dict[str, Any]], bool]:
+        freshness_cutoff = utc_now() - _PUBLIC_CONTENT_MAX_AGE
         profile = None
         if user_id:
             profile = await self.session.scalar(
@@ -265,6 +267,11 @@ class ProductRepositoryMixin:
                     .outerjoin(Issue, Issue.id == IssueMembership.issue_id)
                     .where(
                         Article.current_version_id.is_not(None),
+                        Article.status == ArticleStatus.ACTIVE,
+                        Article.published_at.is_not(None),
+                        Article.published_at >= freshness_cutoff,
+                        Source.active.is_(True),
+                        Source.policy_status == SourcePolicyStatus.APPROVED,
                         or_(
                             Issue.id.is_(None),
                             Issue.status.not_in(_TERMINAL_ISSUE_STATUSES),
@@ -366,7 +373,12 @@ class ProductRepositoryMixin:
     ) -> list[dict[str, Any]]:
         # Candidate clusters are internal work-in-progress. Public issue
         # directories expose only active events and active topic collections.
-        statement = select(Issue).where(Issue.status == IssueStatus.ACTIVE)
+        now = utc_now()
+        freshness_cutoff = now - _PUBLIC_CONTENT_MAX_AGE
+        statement = select(Issue).where(
+            Issue.status == IssueStatus.ACTIVE,
+            Issue.last_activity_at >= freshness_cutoff,
+        )
         if from_time:
             statement = statement.where(Issue.last_activity_at >= from_time)
         if to_time:
@@ -387,6 +399,8 @@ class ProductRepositoryMixin:
                         Article.status.not_in(
                             (ArticleStatus.REMOVED, ArticleStatus.BLOCKED)
                         ),
+                        Article.published_at.is_not(None),
+                        Article.published_at >= freshness_cutoff,
                         Source.active.is_(True),
                         Source.policy_status == SourcePolicyStatus.APPROVED,
                     )
@@ -398,9 +412,10 @@ class ProductRepositoryMixin:
         for issue_id, article, fetched_at in memberships:
             by_issue.setdefault(issue_id, []).append((article, fetched_at))
         output: list[dict[str, Any]] = []
-        now = utc_now()
         for row in rows:
             article_rows = by_issue.get(row.id, [])
+            if not article_rows:
+                continue
             article_ids = [article.id for article, _fetched_at in article_rows]
             source_count = len({article.source_id for article, _fetched_at in article_rows})
             statuses = [
@@ -505,7 +520,13 @@ class ProductRepositoryMixin:
     async def issue_article_rows(
         self, issue_id: str, *, perspective: str = "all"
     ) -> list[dict[str, Any]] | None:
-        if await self.session.get(Issue, issue_id) is None:
+        freshness_cutoff = utc_now() - _PUBLIC_CONTENT_MAX_AGE
+        issue = await self.session.get(Issue, issue_id)
+        if (
+            issue is None
+            or _value(issue.status) != IssueStatus.ACTIVE.value
+            or issue.last_activity_at < freshness_cutoff
+        ):
             return None
         rows = list(
             (
@@ -518,6 +539,8 @@ class ProductRepositoryMixin:
                         Article.status.not_in(
                             (ArticleStatus.REMOVED, ArticleStatus.BLOCKED)
                         ),
+                        Article.published_at.is_not(None),
+                        Article.published_at >= freshness_cutoff,
                         Source.active.is_(True),
                         Source.policy_status == SourcePolicyStatus.APPROVED,
                     )
@@ -582,7 +605,12 @@ class ProductRepositoryMixin:
         """Load one reviewed comparison with batched article analysis reads."""
 
         issue = await self.session.get(Issue, issue_id)
-        if issue is None or _value(issue.status) in _TERMINAL_ISSUE_STATUSES:
+        freshness_cutoff = utc_now() - _PUBLIC_CONTENT_MAX_AGE
+        if (
+            issue is None
+            or _value(issue.status) != IssueStatus.ACTIVE.value
+            or issue.last_activity_at < freshness_cutoff
+        ):
             return None
         snapshot = await self.session.scalar(
             select(IssueComparisonSnapshot)
@@ -609,7 +637,17 @@ class ProductRepositoryMixin:
                         Article.current_version_id,
                     )
                     .join(Article, Article.id == IssueMembership.article_id)
-                    .where(IssueMembership.issue_id == issue_id)
+                    .join(Source, Source.id == Article.source_id)
+                    .where(
+                        IssueMembership.issue_id == issue_id,
+                        Article.status.not_in(
+                            (ArticleStatus.REMOVED, ArticleStatus.BLOCKED)
+                        ),
+                        Article.published_at.is_not(None),
+                        Article.published_at >= freshness_cutoff,
+                        Source.active.is_(True),
+                        Source.policy_status == SourcePolicyStatus.APPROVED,
+                    )
                 )
             ).all()
         )

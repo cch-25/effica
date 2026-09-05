@@ -116,7 +116,6 @@ async def test_admin_repository_is_durable_idempotent_and_guarded() -> None:
             "adapter_type": "RSS",
             "config_json": {"max_items": 40, "strip_html": True},
             "rate_limit": 12,
-            "raw_payload_retention_days": 7,
         }
         source = await repository.create_source(
             source_payload, actor_id=actor_id, idempotency_key="source-create-1"
@@ -132,7 +131,7 @@ async def test_admin_repository_is_durable_idempotent_and_guarded() -> None:
         assert adapter is not None
         assert adapter.config_json == {"max_items": 40, "strip_html": True}
         assert adapter.rate_limit == 12
-        assert adapter.raw_payload_retention_days == 7
+        assert not hasattr(adapter, "raw_payload_retention_days")
         updated = await repository.update_source(
             source["id"],
             {"robots_status": "APPROVED", "terms_status": "APPROVED"},
@@ -215,13 +214,7 @@ async def test_admin_repository_is_durable_idempotent_and_guarded() -> None:
             )
 
         audit = await repository.list_audit(actor=actor_id)
-        assert {row["action"] for row in audit} >= {
-            "SOURCE_CREATED",
-            "SOURCE_UPDATED",
-            "MODEL_CREATED",
-            "MODEL_UPDATED",
-            "WEIGHT_DRAFT_CREATED",
-            "WEIGHT_SIMULATION_ENQUEUED",
-            "RECOMMENDATION_APPROVED",
-        }
+        assert audit == []
+        from apps.api.app.db.models import AdminRequestReceipt
+        assert len(list((await session.scalars(select(AdminRequestReceipt))).all())) >= 7
     await engine.dispose()

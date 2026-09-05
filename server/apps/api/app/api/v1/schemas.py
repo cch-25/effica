@@ -454,7 +454,6 @@ class SourceCreate(ContractModel):
     adapter_type: Literal["API", "RSS", "CRAWLER"] | None = None
     config_json: dict[str, Any] = Field(default_factory=dict)
     rate_limit: int | None = Field(default=None, gt=0)
-    raw_payload_retention_days: int | None = Field(default=None, ge=0)
     adapter_active: bool = True
     policy_status: Literal["PENDING", "APPROVED", "REJECTED"] = "PENDING"
     robots_status: Literal["UNKNOWN", "APPROVED", "REJECTED"] = "UNKNOWN"
@@ -472,7 +471,7 @@ class ModelCreate(ContractModel):
     alias: str = "openai-default"
     provider: Literal["openai"] = "openai"
     actual_model_id: str = "gpt-5.6-luna"
-    reasoning_effort: Literal["none", "low", "medium", "high", "xhigh", "max"] = "xhigh"
+    reasoning_effort: Literal["none", "low", "medium", "high", "xhigh", "max"] = "high"
     secret_env_name: Literal["OPENAI_API_KEY"] | None = "OPENAI_API_KEY"
     status: Literal["ACTIVE", "DISABLED"] = "ACTIVE"
 

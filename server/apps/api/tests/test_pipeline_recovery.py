@@ -23,7 +23,6 @@ from apps.api.app.db.enums import (
 from apps.api.app.db.models import (
     Article,
     ArticleVersion,
-    AuditLog,
     CrawlRun,
     Issue,
     IssueMembership,
@@ -68,7 +67,6 @@ async def test_source_bootstrap_rebuilds_durable_broad_topic_collections() -> No
                 adapter_type=AdapterType.RSS,
                 config_json={"metadata_only": True},
                 rate_limit=10,
-                raw_payload_retention_days=7,
                 active=True,
             )
         )
@@ -165,7 +163,6 @@ async def test_pipeline_recovery_merges_unconfigured_duplicate_sources_safely() 
                 adapter_type=AdapterType.CRAWLER,
                 config_json={"scheduled": False},
                 rate_limit=10,
-                raw_payload_retention_days=7,
                 active=True,
             )
         )
@@ -256,8 +253,6 @@ async def _article(
         article_id=article.id,
         content_hash=__import__("hashlib").sha256(f"version:{title}".encode()).digest(),
         normalized_text_ref=blob_id,
-        raw_payload_ref=None,
-        raw_payload_expires_at=None,
         fetched_at=now,
         modified_at=None,
     )
@@ -285,7 +280,6 @@ def _assessment(
         sensationalism=20,
         confidence=Decimal("0.9000"),
         evidence_json={"summary": "근거", "evidence": []},
-        raw_response_ref=None,
         token_usage=10,
         latency_ms=20,
         status=status,
@@ -319,7 +313,6 @@ async def test_pipeline_recovery_repairs_only_trusted_safe_state_and_is_idempote
                 adapter_type=AdapterType.RSS,
                 config_json={},
                 rate_limit=5,
-                raw_payload_retention_days=7,
                 active=True,
             )
         )
@@ -500,7 +493,7 @@ async def test_pipeline_recovery_repairs_only_trusted_safe_state_and_is_idempote
         assert report["actions"]["cluster_jobs_enqueued"] == 1
         assert report["actions"]["openai_aliases_deprecated"] == 1
         assert report["actions"]["redundant_analysis_jobs_cancelled"] == 1
-        assert report["actions"]["audit_rows_written"] == 1
+        assert "audit_rows_written" not in report["actions"]
         assert pointer_article.current_version_id == pointer_version.id
         assert draft.status == ScoreStatus.ACTIVE
         assert legacy_active.status == ScoreStatus.SUPERSEDED
@@ -531,13 +524,7 @@ async def test_pipeline_recovery_repairs_only_trusted_safe_state_and_is_idempote
                 session, generation="test-generation", dry_run=False
             )
         assert sum(replay["actions"].values()) == 0
-        assert (
-            await session.scalar(
-                select(func.count()).select_from(AuditLog).where(
-                    AuditLog.action == "PIPELINE_RECOVERY_APPLIED"
-                )
-            )
-        ) == 1
+        assert "audit_logs" not in Base.metadata.tables
         assert empty_article.current_version_id is None
     await engine.dispose()
 
@@ -568,7 +555,6 @@ async def test_pipeline_recovery_dry_run_never_mutates_rows() -> None:
                 adapter_type=AdapterType.CRAWLER,
                 config_json={"discover_links": False},
                 rate_limit=None,
-                raw_payload_retention_days=None,
                 active=True,
             )
         )
@@ -594,10 +580,9 @@ async def test_pipeline_recovery_dry_run_never_mutates_rows() -> None:
                 "action": "UPSERT",
             }
         ]
-        assert report["actions"]["audit_rows_written"] == 0
+        assert "audit_rows_written" not in report["actions"]
         assert article.current_version_id is None
         assert await session.scalar(select(func.count()).select_from(Job)) == 0
-        assert await session.scalar(select(func.count()).select_from(AuditLog)) == 0
         assert await session.scalar(select(func.count()).select_from(SourceAdapter)) == 1
     await engine.dispose()
 
@@ -774,7 +759,6 @@ async def test_pipeline_recovery_blocks_homepage_placeholders_and_cancels_bad_sc
                 adapter_type=AdapterType.CRAWLER,
                 config_json={"discover_links": False},
                 rate_limit=5,
-                raw_payload_retention_days=7,
                 active=True,
             )
         )

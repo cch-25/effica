@@ -1776,7 +1776,7 @@ export interface components {
             provider: "openai";
             /**
              * Reasoning Effort
-             * @default xhigh
+             * @default high
              * @enum {string}
              */
             reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -2119,8 +2119,6 @@ export interface components {
             policy_status: "PENDING" | "APPROVED" | "REJECTED";
             /** Rate Limit */
             rate_limit?: number | null;
-            /** Raw Payload Retention Days */
-            raw_payload_retention_days?: number | null;
             /** Reason */
             reason: string;
             /**

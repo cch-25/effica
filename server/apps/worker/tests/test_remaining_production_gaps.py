@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime
 
 from apps.worker.worker.queue import Job, MariaDBQueueRepository
@@ -114,7 +115,7 @@ def test_job_result_audit_request_id_never_uses_an_unbounded_dedupe_key() -> Non
             self.params: dict = {}
 
         async def execute(self, _statement, params):
-            self.params = dict(params)
+            self.params.update(params)
             return []
 
     async def scenario() -> None:
@@ -133,10 +134,9 @@ def test_job_result_audit_request_id_never_uses_an_unbounded_dedupe_key() -> Non
             request_id=None,
         )
 
-        assert session.params["request_id"] == (
-            "build_issue_comparison:01COMPARISONRESULT00000001"
-        )
-        assert len(session.params["request_id"]) <= 128
+        assert session.params["job_id"] == job.id
+        assert json.loads(session.params["result_json"]) == {"applied": True}
+        assert "request_id" not in session.params
 
     asyncio.run(scenario())
 

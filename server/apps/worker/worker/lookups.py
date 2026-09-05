@@ -60,8 +60,7 @@ class MariaDBWorkerLookups:
             """
             SELECT s.id AS source_id, s.name, s.source_type, s.canonical_url,
                    s.policy_status, s.robots_status, s.terms_status,
-                   a.adapter_type, a.config_json, a.rate_limit,
-                   a.raw_payload_retention_days
+                   a.adapter_type, a.config_json, a.rate_limit
             FROM sources s
             LEFT JOIN source_adapters a ON a.source_id = s.id AND a.active = 1
             WHERE s.id = :identifier AND s.active = 1
@@ -360,7 +359,7 @@ class MariaDBWorkerLookups:
         if row is None:
             return None
         config = _json_value(row.pop("config_json", None), {})
-        row["reasoning_effort"] = str(config.get("reasoning_effort", "xhigh"))
+        row["reasoning_effort"] = str(config.get("reasoning_effort", "high"))
         return row
 
     async def export_records_lookup(self, identifier: Any) -> dict[str, Any]:

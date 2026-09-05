@@ -68,7 +68,15 @@ def test_d01_evidence_quote_must_be_the_exact_unicode_source_slice() -> None:
         )
 
     exact = validate_public_evidence(
-        [Evidence(article_version_id="v1", start=1, end=2, quote="😀")],
+        [
+            Evidence(
+                article_version_id="v1",
+                start=1,
+                end=2,
+                quote="😀",
+                rationale="해당 문자의 정확한 위치를 뒷받침합니다.",
+            )
+        ],
         article_version_id="v1",
         source_text="a😀b",
     )
@@ -83,7 +91,15 @@ def test_d01_evidence_quote_must_be_the_exact_unicode_source_slice() -> None:
 
 def test_d01_evidence_repairs_only_a_unique_exact_quote_location() -> None:
     repaired = validate_public_evidence(
-        [Evidence(article_version_id="v1", start=0, end=1, quote="고유 인용")],
+        [
+            Evidence(
+                article_version_id="v1",
+                start=0,
+                end=1,
+                quote="고유 인용",
+                rationale="고유한 인용문의 위치를 뒷받침합니다.",
+            )
+        ],
         article_version_id="v1",
         source_text="앞 문장. 고유 인용 뒤 문장.",
     )

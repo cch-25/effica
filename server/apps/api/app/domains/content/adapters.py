@@ -35,7 +35,6 @@ class ArticleCandidate:
     author: str | None = None
     published_at: datetime | None = None
     source_id: str | None = None
-    raw_payload: Any = None
     external_id: str | None = None
     adapter_type: AdapterType = AdapterType.API
 
@@ -123,7 +122,7 @@ class APIAdapter(SourceAdapter):
             if isinstance(attributes, Mapping):
                 candidate_item = {**dict(attributes), **dict(item)}
                 candidate_item.pop("attributes", None)
-            result.append(self._candidate(candidate_item, raw_item=item))
+            result.append(self._candidate(candidate_item))
         return _limit_items(result, self.config)
 
     def _items(self, payload: Any) -> Any:
@@ -155,8 +154,6 @@ class APIAdapter(SourceAdapter):
     def _candidate(
         self,
         item: Mapping[str, Any],
-        *,
-        raw_item: Mapping[str, Any] | None = None,
     ) -> ArticleCandidate:
         url = self._field(item, "url", "link", "canonical_url", "href")
         if not url:
@@ -175,7 +172,6 @@ class APIAdapter(SourceAdapter):
                 self._field(item, "published_at", "published", "pubDate", "date", "datePublished")
             ),
             source_id=self.source_id,
-            raw_payload=dict(raw_item if raw_item is not None else item),
             external_id=_as_optional_str(self._field(item, "id", "guid", "uuid")),
             adapter_type=self.adapter_type,
         )
@@ -266,7 +262,6 @@ class RSSAdapter(SourceAdapter):
                         )
                     ),
                     source_id=self.source_id,
-                    raw_payload=ElementTree.tostring(node, encoding="unicode"),
                     external_id=_first_nonempty(fields.get("guid"), fields.get("id")) or None,
                     adapter_type=self.adapter_type,
                 )
@@ -548,7 +543,6 @@ class CrawlerAdapter(SourceAdapter):
             author=author or None,
             published_at=parse_datetime(published),
             source_id=self.source_id,
-            raw_payload=raw,
             adapter_type=self.adapter_type,
         )
         if not _as_bool(self.config.get("discover_links"), default=True) or body:
@@ -608,7 +602,6 @@ class CrawlerAdapter(SourceAdapter):
                     url=canonical,
                     title=link_title,
                     source_id=self.source_id,
-                    raw_payload=None,
                     adapter_type=self.adapter_type,
                 )
             )

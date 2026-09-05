@@ -453,10 +453,9 @@ async def _insert_articles(connection: Any, articles: list[dict[str, Any]]) -> N
             text(
                 """
                 INSERT INTO article_versions
-                  (id, article_id, content_hash, normalized_text_ref, raw_payload_ref,
-                   raw_payload_expires_at, fetched_at, modified_at)
+                  (id, article_id, content_hash, normalized_text_ref, fetched_at, modified_at)
                 VALUES
-                  (:id, :article_id, :content_hash, :blob_id, NULL, NULL, :fetched_at, NULL)
+                  (:id, :article_id, :content_hash, :blob_id, :fetched_at, NULL)
                 """
             ),
             {
@@ -490,11 +489,11 @@ async def _insert_articles(connection: Any, articles: list[dict[str, Any]]) -> N
                 """
                 INSERT INTO model_assessments
                   (id, article_version_id, model_alias_id, prompt_version, x, y, z,
-                   sensationalism, confidence, evidence_json, raw_response_ref,
+                   sensationalism, confidence, evidence_json,
                    token_usage, latency_ms, status, created_at)
                 VALUES
                   (:id, :version_id, :model_alias_id, :prompt_version, :bias, 0, 0,
-                   :sensationalism, :confidence, :evidence, NULL,
+                   :sensationalism, :confidence, :evidence,
                    :token_usage, :latency_ms, 'SUCCEEDED', :created_at)
                 """
             ),

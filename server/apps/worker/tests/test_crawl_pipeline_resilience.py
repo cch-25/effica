@@ -17,6 +17,7 @@ from apps.worker.worker.source_fetcher import (
     SourceFetchResponse,
     SourceFetchService,
 )
+from db.seeds.source_feeds import SCHEDULED_RSS_MAX_ITEMS, scheduled_rss_config
 
 
 def test_job_url_still_loads_adapter_config_and_paginates_with_partial_items() -> None:
@@ -283,6 +284,134 @@ def test_opt_in_rss_hydration_fetches_same_origin_body_and_preserves_skipped_ite
         ("https://news.test/feed.xml", "RSS"),
         ("https://news.test/local", "CRAWLER"),
     ]
+
+
+def test_scheduled_rss_hydrates_approved_article_domain_with_bounded_partial_success() -> None:
+    config = scheduled_rss_config("https://www.newsis.com/")
+    assert config is not None
+    assert config["hydrate_article_links"] is True
+    assert config["require_hydrated_body"] is True
+    assert config["metadata_only"] is False
+    assert config["max_hydration_fetches"] == SCHEDULED_RSS_MAX_ITEMS
+    assert config["max_items"] == SCHEDULED_RSS_MAX_ITEMS
+    assert config["allowed_domains"] == ["newsis.com"]
+
+    feed = b"""<?xml version="1.0" encoding="utf-8"?>
+    <rss><channel>
+      <item><title>Good</title><link>https://www.newsis.com/view/good</link>
+        <description>short good summary</description></item>
+      <item><title>Failed</title><link>https://www.newsis.com/view/failed</link>
+        <description>short fallback summary</description></item>
+      <item><title>Outside limit</title><link>https://www.newsis.com/view/third</link>
+        <description>must not be persisted</description></item>
+    </channel></rss>"""
+    fetched: list[tuple[str, str, int]] = []
+
+    async def source_fetcher(source: dict[str, object]) -> SourceFetchResponse:
+        url = str(source["url"])
+        rate_limit = source.get("rate_limit")
+        assert isinstance(rate_limit, int)
+        fetched.append((url, str(source["source_type"]), rate_limit))
+        if url.endswith("sokbo.xml"):
+            return SourceFetchResponse(
+                url=url,
+                status_code=200,
+                headers={"content-type": "application/rss+xml"},
+                body=feed,
+            )
+        if url.endswith("/failed"):
+            raise SourceFetchError(
+                "temporary article failure",
+                code="SOURCE_FETCH_TIMEOUT",
+                retryable=True,
+            )
+        return SourceFetchResponse(
+            url=url,
+            status_code=200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            body=(
+                b"<html><head><title>Hydrated headline</title></head><article>"
+                b"<p>Complete approved publisher article body for analysis.</p>"
+                b"</article></html>"
+            ),
+        )
+
+    async def scenario() -> None:
+        result = await handle(
+            {
+                "source_id": "scheduled-newsis",
+                "url": str(config["feed_url"]),
+                "source_type": "RSS",
+                "mode": "live",
+                "policy_status": "APPROVED",
+                "robots_status": "APPROVED",
+                "terms_status": "APPROVED",
+                "rate_limit": 10,
+                "config": {**config, "max_items": 2, "max_hydration_fetches": 2},
+            },
+            HandlerContext(services={"source_fetcher": source_fetcher}),
+        )
+        assert len(result.value["articles"]) == 1
+        assert "Complete approved publisher" in result.value["articles"][0]["content"]
+        assert result.value["stats"]["hydration_attempted"] == 2
+        assert result.value["stats"]["hydration_succeeded"] == 1
+        assert result.value["stats"]["hydration_failed"] == 1
+        assert result.value["stats"]["hydration_failure_counts"] == {
+            "SOURCE_FETCH_TIMEOUT": 1
+        }
+
+    asyncio.run(scenario())
+    assert fetched == [
+        (str(config["feed_url"]), "RSS", 10),
+        ("https://www.newsis.com/view/good", "CRAWLER", 10),
+        ("https://www.newsis.com/view/failed", "CRAWLER", 10),
+    ]
+
+
+def test_required_rss_hydration_raises_retryable_error_when_every_article_fails() -> None:
+    feed = b"""<rss><channel><item><title>Failed</title>
+    <link>https://news.test/failed</link><description>short summary</description>
+    </item></channel></rss>"""
+
+    async def source_fetcher(source: dict[str, object]) -> SourceFetchResponse:
+        url = str(source["url"])
+        if url.endswith("feed.xml"):
+            return SourceFetchResponse(
+                url=url,
+                status_code=200,
+                headers={"content-type": "application/rss+xml"},
+                body=feed,
+            )
+        raise SourceFetchError(
+            "temporary article failure",
+            code="SOURCE_FETCH_TIMEOUT",
+            retryable=True,
+        )
+
+    async def scenario() -> None:
+        with pytest.raises(RetryableHandlerError) as raised:
+            await handle(
+                {
+                    "source_id": "required-rss",
+                    "url": "https://news.test/feed.xml",
+                    "source_type": "RSS",
+                    "mode": "live",
+                    "policy_status": "APPROVED",
+                    "robots_status": "APPROVED",
+                    "terms_status": "APPROVED",
+                    "config": {
+                        "hydrate_article_links": True,
+                        "require_hydrated_body": True,
+                    },
+                },
+                HandlerContext(services={"source_fetcher": source_fetcher}),
+            )
+        assert raised.value.code == "RSS_HYDRATION_FAILED"
+        assert raised.value.details == {
+            "failure_counts": {"SOURCE_FETCH_TIMEOUT": 1}
+        }
+
+    asyncio.run(scenario())
 
 
 def test_crawler_all_discovered_fetches_failed_is_retryable_not_empty_success() -> None:

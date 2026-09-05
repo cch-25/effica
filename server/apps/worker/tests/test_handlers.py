@@ -161,6 +161,36 @@ def test_analysis_uses_one_dynamically_configured_openai_model():
     asyncio.run(scenario())
 
 
+def test_analysis_fails_closed_when_worker_services_have_no_provider():
+    async def scenario():
+        analyze = build_default_registry().require_async("analyze")
+        with pytest.raises(NonRetryableHandlerError) as raised:
+            await analyze(
+                {"text": "분석할 기사 본문"},
+                HandlerContext(services={"analysis_model_lookup": object()}),
+            )
+
+        assert raised.value.code == "ANALYSIS_PROVIDER_NOT_CONFIGURED"
+        assert raised.value.retryable is False
+        assert raised.value.details == {"stage": "provider_resolution"}
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("mode", ["test", "stub", "fixture"])
+def test_analysis_stub_fallback_requires_an_explicit_non_live_mode(mode):
+    async def scenario():
+        analyze = build_default_registry().require_async("analyze")
+        result = await analyze(
+            {"text": "fixture article body"},
+            HandlerContext(services={"analysis_provider_mode": mode}),
+        )
+
+        assert result.value["assessments"][0]["provider"] == "deterministic-stub"
+
+    asyncio.run(scenario())
+
+
 def test_render_share_card_marks_unmeasured_sensationalism_without_a_point(monkeypatch):
     draws = []
     original_draw = render_share_card_module.ImageDraw.Draw

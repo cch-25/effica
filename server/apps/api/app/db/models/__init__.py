@@ -287,6 +287,8 @@ class UserProfile(Base):
 class Source(Base):
     __tablename__ = "sources"
 
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+
     id: Mapped[str] = _id()
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     source_type: Mapped[SourceType] = _enum(SourceType, length=16)
@@ -320,19 +322,11 @@ class SourceAdapter(Base):
     adapter_type: Mapped[AdapterType] = _enum(AdapterType, length=16)
     config_json: Mapped[dict[str, Any]] = _json()
     rate_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # A nullable value means the adapter's configured/default retention policy
-    # applies.  The explicit field keeps retention auditable instead of hiding
-    # it in an opaque adapter config payload.
-    raw_payload_retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     __table_args__ = (
         UniqueConstraint("source_id", "adapter_type", name="uq_source_adapters_source_type"),
         CheckConstraint("rate_limit IS NULL OR rate_limit > 0", name="positive_rate_limit"),
-        CheckConstraint(
-            "raw_payload_retention_days IS NULL OR raw_payload_retention_days >= 0",
-            name="nonnegative_raw_payload_retention_days",
-        ),
         _json_check("config_json"),
     )
 
@@ -385,6 +379,13 @@ class Article(Base):
     )
 
 
+class ArticleRetentionTombstone(Base):
+    __tablename__ = "article_retention_tombstones"
+
+    canonical_url_hash: Mapped[bytes] = mapped_column(_HASH, primary_key=True)
+    retired_at: Mapped[datetime] = _timestamp()
+
+
 class ArticleVersion(Base):
     __tablename__ = "article_versions"
 
@@ -395,8 +396,6 @@ class ArticleVersion(Base):
     # Raw adapter payloads may be retained in an object/blob store.  Keep a
     # stable reference and the expiry decision alongside the article version;
     # the payload itself is intentionally not duplicated in this table.
-    raw_payload_ref: Mapped[str | None] = mapped_column(String(1024), nullable=True)
-    raw_payload_expires_at: Mapped[datetime | None] = _timestamp(nullable=True, default=None)
     fetched_at: Mapped[datetime] = _timestamp()
     modified_at: Mapped[datetime | None] = _timestamp(nullable=True, default=None)
 
@@ -516,6 +515,8 @@ class FactCheckReference(Base):
 class ModelAlias(Base):
     __tablename__ = "model_aliases"
 
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+
     id: Mapped[str] = _id()
     alias: Mapped[str] = mapped_column(String(100), nullable=False)
     provider: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -542,7 +543,6 @@ class ModelAssessment(Base):
     sensationalism: Mapped[int] = mapped_column(TinyIntType(), nullable=False)
     confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
     evidence_json: Mapped[dict[str, Any]] = _json()
-    raw_response_ref: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     token_usage: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[AssessmentStatus] = _enum(
@@ -958,6 +958,23 @@ class Job(Base):
     )
 
 
+class JobReceipt(Base):
+    __tablename__ = "job_receipts"
+
+    job_id: Mapped[str] = mapped_column(ULIDType(), ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True)
+    job_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    result_json: Mapped[dict[str, Any]] = _json()
+    applied_at: Mapped[datetime] = _timestamp()
+
+
+class AdminRequestReceipt(Base):
+    __tablename__ = "admin_request_receipts"
+
+    key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    data_json: Mapped[dict[str, Any]] = _json()
+    created_at: Mapped[datetime] = _timestamp()
+
+
 class ShareCard(Base):
     __tablename__ = "share_cards"
 
@@ -1004,29 +1021,6 @@ class StoredBlob(Base):
     )
 
 
-class AuditLog(Base):
-    __tablename__ = "audit_logs"
-
-    id: Mapped[str] = _id()
-    actor_id: Mapped[str | None] = _fk("users.id", ondelete="SET NULL", nullable=True)
-    action: Mapped[str] = mapped_column(String(128), nullable=False)
-    target_type: Mapped[str] = mapped_column(String(128), nullable=False)
-    # Audit targets are polymorphic: normal rows use ULIDs, while singleton
-    # resources (for example the Auto Pilot settings) use stable text keys.
-    target_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    before_json: Mapped[dict[str, Any] | None] = _json(nullable=True)
-    after_json: Mapped[dict[str, Any] | None] = _json(nullable=True)
-    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    request_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    created_at: Mapped[datetime] = _timestamp()
-
-    __table_args__ = (
-        Index("ix_audit_logs_target_created", "target_type", "target_id", "created_at"),
-        _json_check("before_json"),
-        _json_check("after_json"),
-    )
-
-
 # Public aliases used by callers that prefer the table's pluralized domain
 # name.  The canonical class names remain singular SQLAlchemy entities.
 
@@ -1034,7 +1028,6 @@ class AuditLog(Base):
 __all__ = [
     "Article",
     "ArticleVersion",
-    "AuditLog",
     "AutopilotSetting",
     "ConsentVersion",
     "CrawlRun",

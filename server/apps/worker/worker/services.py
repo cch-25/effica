@@ -2,7 +2,7 @@
 
 Handlers intentionally return serialisable values.  This module is the
 side-effect boundary that turns those values into MariaDB rows in one
-transaction, records a job-linked audit event, and makes replay safe.  It
+transaction, records a compact completion receipt, and makes replay safe. It
 uses SQL text rather than importing API ORM models so the worker can start
 without constructing the FastAPI application and so SQL contract tests can
 run with tiny fake sessions.
@@ -15,7 +15,6 @@ import hashlib
 import inspect
 import json
 import math
-import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -96,16 +95,6 @@ def _json_mapping(value: Any) -> dict[str, Any]:
             return {}
         return dict(parsed) if isinstance(parsed, Mapping) else {}
     return {}
-
-
-def _audit_request_id(value: Any, *, fallback: str) -> str:
-    """Fit an audit correlation key into the schema without losing identity."""
-
-    candidate = str(value or fallback)
-    if len(candidate) <= 128:
-        return candidate
-    digest = hashlib.sha256(candidate.encode("utf-8")).hexdigest()[:16]
-    return f"{candidate[:111]}:{digest}"
 
 
 def _json(value: Any) -> str:
@@ -388,7 +377,6 @@ class MariaDBCrawlScheduler:
             f"""
             SELECT s.id, s.canonical_url,
                    a.adapter_type, a.config_json, a.rate_limit,
-                   a.raw_payload_retention_days,
                    s.policy_status, s.robots_status, s.terms_status
             FROM sources s
             JOIN source_adapters a
@@ -508,13 +496,8 @@ class MariaDBCrawlScheduler:
                                 "schedule_bucket": bucket,
                             }
                             rate_limit = _row(source, "rate_limit")
-                            retention_days = _row(source, "raw_payload_retention_days")
                             if rate_limit is not None:
                                 payload_value["rate_limit"] = int(rate_limit)
-                            if retention_days is not None:
-                                payload_value["raw_payload_retention_days"] = int(
-                                    retention_days
-                                )
                             payload = validate_job_payload(
                                 "crawl",
                                 payload_value,
@@ -529,7 +512,7 @@ class MariaDBCrawlScheduler:
                                            attempts, max_attempts, payload_json,
                                            last_error_json, created_at, updated_at)
                                         VALUES
-                                          (:id, 'crawl', :dedupe_key, 'PENDING', 10,
+                                          (:id, 'crawl', :dedupe_key, 'PENDING', -10,
                                            :available_at, NULL, NULL, 0, :max_attempts,
                                            :payload_json, NULL, :created_at, :updated_at)
                                         ON DUPLICATE KEY UPDATE id = id
@@ -583,30 +566,24 @@ class MariaDBCrawlScheduler:
 
 
 class MariaDBIdempotencyStore:
-    """Durable replay lookup backed by job-linked audit rows.
+    """Durable replay lookup backed by compact job receipts.
 
-    The 0001 schema has no result column on ``jobs``.  A successful result is
-    therefore indexed through the immutable ``JOB_RESULT_APPLIED`` audit
-    record.  The row lock taken by :class:`MariaDBResultApplier` serialises
-    replay with the original application; newer schemas may add a dedicated
-    result table without changing this read contract.
+    The row lock taken by :class:`MariaDBResultApplier` serialises replay with
+    the original application. Receipts expire alongside completed jobs.
     """
 
     def __init__(self, session_factory: Callable[[], Any]) -> None:
         self.session_factory = session_factory
 
     async def begin(self, key: str) -> tuple[str, Any]:
-        # Keys are ``job_type:dedupe_key``.  The audit target is the job id, so
-        # use the dedupe suffix as a fallback target lookup as well.
+        # Keys are ``job_type:dedupe_key``; also accept a direct job identifier.
         token = uuid.uuid4().hex
         suffix = key.split(":", 1)[1] if ":" in key else key
         query = _sql(
             """
-            SELECT after_json FROM audit_logs
-            WHERE action = 'JOB_RESULT_APPLIED'
-              AND target_type = 'job'
-              AND (target_id = :target_id OR request_id = :idempotency_key)
-            ORDER BY created_at DESC, id DESC
+            SELECT r.result_json FROM job_receipts r JOIN jobs j ON j.id = r.job_id
+            WHERE j.job_type = :job_type AND (j.id = :target_id OR j.dedupe_key = :target_id)
+            ORDER BY r.applied_at DESC, r.job_id DESC
             LIMIT 1
             """.strip()
         )
@@ -616,11 +593,11 @@ class MariaDBIdempotencyStore:
             # exists; treating it as a cache miss would permit a replayed
             # domain side effect during a DB outage.
             result = await _maybe_await(
-                session.execute(query, {"target_id": suffix, "idempotency_key": key})
+                session.execute(query, {"target_id": suffix, "job_type": key.split(":", 1)[0]})
             )
             rows = _rows(result)
         if rows:
-            value = _row(rows[0], "after_json")
+            value = _row(rows[0], "result_json")
             if isinstance(value, str):
                 try:
                     value = json.loads(value)
@@ -641,20 +618,14 @@ class MariaDBIdempotencyStore:
 class MariaDBResultApplier:
     """Apply every built-in handler result inside one MariaDB transaction."""
 
-    _SAFE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
     def __init__(
         self,
         session_factory: Callable[[], Any],
         *,
         clock: Callable[[], datetime] = utc_now,
-        result_table: str | None = None,
     ) -> None:
-        if result_table is not None and not self._SAFE_IDENTIFIER.fullmatch(result_table):
-            raise ValueError("unsafe result table name")
         self.session_factory = session_factory
         self.clock = clock
-        self.result_table = result_table
 
     async def apply(
         self,
@@ -701,10 +672,8 @@ class MariaDBResultApplier:
     async def _existing_result(self, session: Any, job_id: str) -> Any | None:
         query = _sql(
             """
-            SELECT after_json FROM audit_logs
-            WHERE action = 'JOB_RESULT_APPLIED'
-              AND target_type = 'job' AND target_id = :job_id
-            ORDER BY created_at DESC, id DESC
+            SELECT result_json FROM job_receipts
+            WHERE job_id = :job_id
             LIMIT 1 FOR UPDATE
             """.strip()
         )
@@ -712,7 +681,7 @@ class MariaDBResultApplier:
         rows = _rows(result)
         if not rows:
             return None
-        value = _row(rows[0], "after_json")
+        value = _row(rows[0], "result_json")
         if isinstance(value, str):
             try:
                 value = json.loads(value)
@@ -731,61 +700,31 @@ class MariaDBResultApplier:
         now: datetime,
         request_id: str | None,
     ) -> None:
-        record = {
-            "job_id": job.id,
-            "job_type": job.job_type,
-            "idempotency_key": f"{job.job_type}:{job.dedupe_key or job.id}",
-            "result": dict(value),
-        }
-        # Existing schema support: audit_logs is the durable job result index
-        # and keeps request_id/job_id linkage visible to operations tooling.
+        from apps.api.app.domains.content.storage import compact_job_payload, job_receipt
+
+        record = job_receipt(job.job_type, value)
+        # Store completion metadata without duplicating article or model data.
         await _maybe_await(
             session.execute(
                 _sql(
                     """
-                    INSERT INTO audit_logs
-                      (id, actor_id, action, target_type, target_id,
-                       before_json, after_json, reason, request_id, created_at)
-                    VALUES
-                      (:id, NULL, 'JOB_RESULT_APPLIED', 'job', :target_id,
-                       NULL, :after_json, :reason, :request_id, :created_at)
+                    INSERT INTO job_receipts (job_id, job_type, result_json, applied_at)
+                    VALUES (:job_id, :job_type, :result_json, :applied_at)
                     """.strip()
                 ),
                 {
-                    "id": _new_id(),
-                    "target_id": job.id,
-                    "after_json": _json(record),
-                    "reason": f"worker result applied: {job.job_type}",
-                    "request_id": _audit_request_id(
-                        request_id or job.payload.get("request_id"),
-                        fallback=f"{job.job_type}:{job.id}",
-                    ),
-                    "created_at": now,
+                    "job_id": job.id,
+                    "job_type": job.job_type,
+                    "result_json": _json(record),
+                    "applied_at": now,
                 },
             )
         )
-        if self.result_table is not None:
-            # Optional additive 0002 table.  It is opt-in so the worker stays
-            # compatible with 0001 while deployments can persist a compact
-            # result projection in addition to the audit record.
-            await _maybe_await(
-                session.execute(
-                    _sql(
-                        f"""
-                        INSERT INTO {self.result_table}
-                          (job_id, job_type, result_json, applied_at)
-                        VALUES (:job_id, :job_type, :result_json, :applied_at)
-                        ON DUPLICATE KEY UPDATE result_json = VALUES(result_json), applied_at = VALUES(applied_at)
-                        """.strip()
-                    ),
-                    {
-                        "job_id": job.id,
-                        "job_type": job.job_type,
-                        "result_json": _json(value),
-                        "applied_at": now,
-                    },
-                )
-            )
+        await self._execute(
+            session,
+            "UPDATE jobs SET payload_json = :payload_json WHERE id = :job_id",
+            {"job_id": job.id, "payload_json": _json(compact_job_payload(job.payload))},
+        )
 
     async def _apply_domain(
         self,
@@ -1062,6 +1001,19 @@ class MariaDBResultApplier:
             title = str(article.get("title") or "Untitled article")[:500]
             if not url:
                 continue
+            from apps.api.app.domains.content.retention import skip_ingestion
+
+            if await skip_ingestion(session, article, url, now):
+                continue
+            content: str | bytes | None = None
+            for candidate in (article.get("content"), article.get("text")):
+                if isinstance(candidate, str) and candidate.strip():
+                    content = candidate
+                    break
+                if isinstance(candidate, (bytes, bytearray)) and bytes(candidate).strip():
+                    content = bytes(candidate)
+                    break
+            article_status = "active" if content is not None else "blocked"
             canonical_hash = hashlib.sha256(url.encode("utf-8")).digest()
             article_id = str(article.get("article_id") or article.get("id") or _stable_id(f"article:{url}"))
             await self._execute(
@@ -1072,8 +1024,15 @@ class MariaDBResultApplier:
                    published_at, current_version_id, status, created_at, updated_at)
                 VALUES
                   (:id, :source_id, :url, :url_hash, :title, :author, :published_at,
-                   NULL, 'active', :created_at, :updated_at)
-                ON DUPLICATE KEY UPDATE title = VALUES(title), author = VALUES(author), updated_at = VALUES(updated_at)
+                   NULL, :status, :created_at, :updated_at)
+                ON DUPLICATE KEY UPDATE title = VALUES(title), author = VALUES(author),
+                  published_at = COALESCE(VALUES(published_at), published_at),
+                  status = CASE
+                    WHEN status = 'removed' THEN status
+                    WHEN VALUES(status) = 'active' THEN 'active'
+                    ELSE status
+                  END,
+                  updated_at = VALUES(updated_at)
                 """,
                 {
                     "id": article_id,
@@ -1082,7 +1041,8 @@ class MariaDBResultApplier:
                     "url_hash": canonical_hash,
                     "title": title,
                     "author": article.get("author"),
-                    "published_at": article.get("published_at"),
+                    "published_at": _database_timestamp(article.get("published_at")),
+                    "status": article_status,
                     "created_at": now,
                     "updated_at": now,
                 },
@@ -1095,20 +1055,7 @@ class MariaDBResultApplier:
             article_rows = _rows(existing_article)
             if article_rows:
                 article_id = str(_row(article_rows[0], "id", article_id))
-            persisted_article_ids.append(article_id)
-            content = article.get("content") or article.get("text")
-            await self._upsert_topic_membership(
-                session,
-                article_id=article_id,
-                title=title,
-                summary=str(content or article.get("summary") or "")[:1000],
-                now=now,
-            )
-            if (
-                content is None
-                and article.get("raw_payload_ref") is None
-                and article.get("raw_payload") is None
-            ):
+            if content is None:
                 continue
             version_id = str(article.get("article_version_id") or article.get("version_id") or _new_id())
             normalized_ref = None
@@ -1116,37 +1063,16 @@ class MariaDBResultApplier:
                 normalized_ref = await self._store_blob(
                     session, _bytes(content), mime_type="text/plain; charset=utf-8"
                 )
-            existing_raw_ref = article.get("raw_payload_ref")
-            raw_payload = article.get("raw_payload")
-            if existing_raw_ref is not None:
-                raw_ref = str(existing_raw_ref)
-            elif raw_payload is not None:
-                is_json = isinstance(raw_payload, (Mapping, list, tuple))
-                raw_bytes = _bytes(_json(raw_payload) if is_json else raw_payload)
-                raw_ref = await self._store_blob(
-                    session,
-                    raw_bytes,
-                    mime_type=(
-                        "application/json" if is_json else str(article.get("raw_mime_type") or "application/octet-stream")
-                    ),
-                    expires_at=article.get("raw_payload_expires_at"),
-                )
-            else:
-                raw_ref = None
             content_hash = hashlib.sha256(
-                _bytes(content if content is not None else raw_payload or raw_ref or "")
+                _bytes(content)
             ).digest()
             await self._execute(
                 session,
                 """
                 INSERT INTO article_versions
-                  (id, article_id, content_hash, normalized_text_ref, raw_payload_ref,
-                   raw_payload_expires_at, fetched_at, modified_at)
-                VALUES (:id, :article_id, :content_hash, :normalized_ref, :raw_ref,
-                        :raw_expires_at, :fetched_at, :modified_at)
+                  (id, article_id, content_hash, normalized_text_ref, fetched_at, modified_at)
+                VALUES (:id, :article_id, :content_hash, :normalized_ref, :fetched_at, :modified_at)
                 ON DUPLICATE KEY UPDATE normalized_text_ref = VALUES(normalized_text_ref),
-                  raw_payload_ref = VALUES(raw_payload_ref),
-                  raw_payload_expires_at = VALUES(raw_payload_expires_at),
                   modified_at = VALUES(modified_at)
                 """,
                 {
@@ -1154,8 +1080,6 @@ class MariaDBResultApplier:
                     "article_id": article_id,
                     "content_hash": content_hash,
                     "normalized_ref": normalized_ref,
-                    "raw_ref": raw_ref,
-                    "raw_expires_at": article.get("raw_payload_expires_at"),
                     "fetched_at": now,
                     "modified_at": now,
                 },
@@ -1177,9 +1101,19 @@ class MariaDBResultApplier:
             # An identifier-only analysis job is valid, but it can only be
             # useful when a normalized article body was persisted.  Raw-only
             # adapter payloads remain available for retention/export without
-            # creating a guaranteed-to-fail analysis job.
-            if normalized_ref is not None and str(content or "").strip():
-                analyzable_version_ids.append(version_id)
+            # creating a guaranteed-to-fail analysis or clustering job, or a
+            # public topic membership for a metadata-only article.
+            if normalized_ref is None:
+                continue
+            persisted_article_ids.append(article_id)
+            analyzable_version_ids.append(version_id)
+            await self._upsert_topic_membership(
+                session,
+                article_id=article_id,
+                title=title,
+                summary=str(content)[:1000],
+                now=now,
+            )
 
         request_id = self._request_id(job, result)
         for version_id in sorted(set(analyzable_version_ids)):
@@ -1574,10 +1508,6 @@ class MariaDBResultApplier:
         assessments = result.get("assessments") or []
         if not isinstance(assessments, (list, tuple)):
             raise ResultApplicationError("analysis assessments must be a list")
-        raw_ref: str | None = None
-        raw_response = result.get("raw_response")
-        if raw_response is not None:
-            raw_ref = await self._store_blob(session, _bytes(_json(raw_response)), mime_type="application/json")
         assessment_ids: list[str] = []
         for assessment_index, item in enumerate(assessments):
             if not isinstance(item, Mapping):
@@ -1639,15 +1569,15 @@ class MariaDBResultApplier:
                 """
                 INSERT INTO model_assessments
                   (id, article_version_id, model_alias_id, prompt_version, x, y, z,
-                   sensationalism, confidence, evidence_json, raw_response_ref,
+                   sensationalism, confidence, evidence_json,
                    token_usage, latency_ms, status, created_at)
                 VALUES
                   (:id, :version_id, :alias_id, :prompt_version, :x, :y, :z,
-                   :sensationalism, :confidence, :evidence_json, :raw_ref,
+                   :sensationalism, :confidence, :evidence_json,
                    :token_usage, :latency_ms, :status, :created_at)
                 ON DUPLICATE KEY UPDATE x = VALUES(x), y = VALUES(y), z = VALUES(z),
                   sensationalism = VALUES(sensationalism), confidence = VALUES(confidence),
-                  evidence_json = VALUES(evidence_json), raw_response_ref = VALUES(raw_response_ref),
+                  evidence_json = VALUES(evidence_json),
                   token_usage = VALUES(token_usage), latency_ms = VALUES(latency_ms), status = VALUES(status)
                 """,
                 {
@@ -1661,7 +1591,6 @@ class MariaDBResultApplier:
                     "sensationalism": int(item.get("sensationalism", 0)),
                     "confidence": _database_confidence(item.get("confidence", 0)),
                     "evidence_json": _json(evidence),
-                    "raw_ref": str(item.get("raw_response_ref") or raw_ref) if (item.get("raw_response_ref") or raw_ref) else None,
                     "token_usage": int(item.get("token_usage", 0)),
                     "latency_ms": int(item.get("latency_ms", 0)),
                     "status": str(item.get("status", "SUCCEEDED")).upper(),
@@ -2042,15 +1971,13 @@ class MariaDBResultApplier:
             raise ResultApplicationError("export result requires user_id")
         artifact = result.get("artifact") or result.get("manifest") or result
         payload = _bytes(_json(artifact))
-        blob_id = await self._store_blob(session, payload, mime_type="application/json")
+        blob_id = await self._store_blob(session, payload, mime_type="application/json", expires_at=now + timedelta(days=7))
         artifact_ref = result.get("artifact_ref") or result.get("export_key") or blob_id
         # There is intentionally no mutable export table in 0001.  The audit
         # result record is the durable, user-scoped artifact pointer.
-        await self._execute(
-            session,
-            "INSERT INTO audit_logs (id, actor_id, action, target_type, target_id, before_json, after_json, reason, request_id, created_at) VALUES (:id, NULL, 'USER_EXPORT_READY', 'user', :target_id, NULL, :after_json, :reason, :request_id, :created_at)",
-            {"id": _new_id(), "target_id": user_id, "after_json": _json({"artifact_ref": artifact_ref, "blob_id": blob_id, "user_id": user_id}), "reason": f"export artifact for job {job.id}", "request_id": job.payload.get("request_id") or job.id, "created_at": now},
-        )
+        if isinstance(result, dict):
+            result.clear()
+            result.update({"artifact_ref": artifact_ref, "blob_id": blob_id, "user_id": user_id})
 
     async def _apply_delete(self, session: Any, job: Job, result: Mapping[str, Any], now: datetime) -> None:
         user_id = str(result.get("user_id") or job.payload.get("user_id") or "")
@@ -2130,11 +2057,6 @@ class MariaDBResultApplier:
                   AND NOT EXISTS (
                     SELECT 1 FROM article_versions versions
                     WHERE versions.normalized_text_ref = stored_blobs.id
-                       OR versions.raw_payload_ref = stored_blobs.id
-                  )
-                  AND NOT EXISTS (
-                    SELECT 1 FROM model_assessments assessments
-                    WHERE assessments.raw_response_ref = stored_blobs.id
                   )
                 """,
                 {"user_id": user_id},
@@ -2150,11 +2072,6 @@ class MariaDBResultApplier:
             session,
             "UPDATE user_consents SET withdrawn_at = COALESCE(withdrawn_at, :now) WHERE user_id = :user_id",
             {"user_id": user_id, "now": now},
-        )
-        await self._execute(
-            session,
-            "UPDATE audit_logs SET actor_id = NULL WHERE actor_id = :user_id",
-            {"user_id": user_id},
         )
         await self._execute(
             session,

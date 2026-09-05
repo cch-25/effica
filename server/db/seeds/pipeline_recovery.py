@@ -37,7 +37,6 @@ from apps.api.app.db.enums import (
 from apps.api.app.db.models import (
     Article,
     ArticleVersion,
-    AuditLog,
     CrawlRun,
     Issue,
     IssueMembership,
@@ -169,7 +168,6 @@ def _new_report(*, generation: str, dry_run: bool) -> dict[str, Any]:
             "redundant_analysis_jobs_cancelled": 0,
             "stale_comparison_jobs_cancelled": 0,
             "comparison_jobs_requeued": 0,
-            "audit_rows_written": 0,
         },
         "deferred": {
             "articles_without_versions": 0,
@@ -515,7 +513,6 @@ async def recover_pipeline(
             (
                 not rss_adapter.active,
                 rss_adapter.rate_limit != 10,
-                rss_adapter.raw_payload_retention_days != 7,
                 any(
                     (rss_adapter.config_json or {}).get(key) != value
                     for key, value in expected_rss.items()
@@ -545,7 +542,6 @@ async def recover_pipeline(
                     adapter_type=AdapterType.RSS,
                     config_json=expected_rss,
                     rate_limit=10,
-                    raw_payload_retention_days=7,
                     active=True,
                 )
                 session.add(rss_adapter)
@@ -557,7 +553,6 @@ async def recover_pipeline(
                     **expected_rss,
                 }
                 rss_adapter.rate_limit = 10
-                rss_adapter.raw_payload_retention_days = 7
                 rss_adapter.active = True
 
     articles = list((await session.scalars(select(Article).order_by(Article.id))).all())
@@ -1295,35 +1290,6 @@ async def recover_pipeline(
         set(cluster_article_ids) & actively_clustering_articles
     )
 
-    material_actions = sum(
-        count for name, count in actions.items() if name != "audit_rows_written"
-    )
-    if not dry_run and material_actions:
-        audit_summary = {
-            "generation": generation,
-            "actions": dict(actions),
-            "deferred": dict(deferred),
-            "diagnostic_totals": {
-                key: value
-                for key, value in diagnostics.items()
-                if isinstance(value, int)
-            },
-        }
-        session.add(
-            AuditLog(
-                id=new_ulid(),
-                actor_id=None,
-                action="PIPELINE_RECOVERY_APPLIED",
-                target_type="content_pipeline",
-                target_id=generation,
-                before_json=None,
-                after_json=audit_summary,
-                reason="idempotent persisted content-pipeline recovery",
-                request_id=f"pipeline-recovery:{generation}",
-                created_at=utc_now(),
-            )
-        )
-        actions["audit_rows_written"] = 1
     return report
 
 

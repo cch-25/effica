@@ -11,7 +11,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from app.db.base import metadata
 from app.db.models import CreditLedger, ScoreVersion
-from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, UniqueConstraint
 
 from apps.api.app.main import EXPECTED_DB_REVISION
 
@@ -32,7 +32,8 @@ def test_readiness_revision_matches_the_single_migration_head() -> None:
 
 
 def test_schema_preserves_initial_tables_and_adds_evidence_snapshot() -> None:
-    assert len(metadata.tables) == 39
+    assert len(metadata.tables) == 41
+    assert "article_retention_tombstones" in metadata.tables
     assert "weight_evidence_snapshots" in metadata.tables
     assert "issue_comparison_snapshots" in metadata.tables
     assert {
@@ -44,11 +45,12 @@ def test_schema_preserves_initial_tables_and_adds_evidence_snapshot() -> None:
         "autopilot_settings",
         "runtime_controls",
         "stored_blobs",
-        "audit_logs",
+        "job_receipts",
+        "admin_request_receipts",
     } <= set(metadata.tables)
 
 
-def test_source_policy_and_raw_payload_retention_are_persisted() -> None:
+def test_source_policy_survives_without_obsolete_raw_storage() -> None:
     sources = metadata.tables["sources"]
     assert sources.c.robots_status.nullable is False
     assert sources.c.terms_status.nullable is False
@@ -56,16 +58,12 @@ def test_source_policy_and_raw_payload_retention_are_persisted() -> None:
     assert any("terms_status" in expression for expression in _checks("sources").values())
 
     adapters = metadata.tables["source_adapters"]
-    assert adapters.c.raw_payload_retention_days.nullable is True
-    assert any(
-        "raw_payload_retention_days" in expression
-        and ">=" in expression
-        for expression in _checks("source_adapters").values()
-    )
+    assert "raw_payload_retention_days" not in adapters.c
 
     versions = metadata.tables["article_versions"]
-    assert versions.c.raw_payload_ref.nullable is True
-    assert versions.c.raw_payload_expires_at.nullable is True
+    assert "raw_payload_ref" not in versions.c
+    assert "raw_payload_expires_at" not in versions.c
+    assert "raw_response_ref" not in metadata.tables["model_assessments"].c
 
 
 def test_read_session_expiry_and_client_elapsed_are_physical_columns() -> None:
@@ -122,10 +120,10 @@ def test_score_recalculation_is_not_blocked_by_pair_uniqueness() -> None:
     assert any(index.name == "ix_score_versions_article_weight_created" for index in ScoreVersion.__table__.indexes)
 
 
-def test_audit_target_id_accepts_ulids_and_singleton_labels() -> None:
-    column = metadata.tables["audit_logs"].c.target_id
-    assert isinstance(column.type, String)
-    assert column.type.length == 128
+def test_audit_table_is_removed_and_replay_receipts_remain() -> None:
+    assert "audit_logs" not in metadata.tables
+    assert "job_receipts" in metadata.tables
+    assert "admin_request_receipts" in metadata.tables
 
 
 def test_credit_ledger_matches_append_only_reversal_contract() -> None:

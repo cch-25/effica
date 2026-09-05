@@ -312,24 +312,25 @@ def test_mariadb_queue_processes_observable_jobs_in_two_worker_processes() -> No
                 async with engine.connect() as connection:
                     result = await connection.execute(
                         text(
-                            "SELECT target_id, after_json FROM audit_logs "
-                            "WHERE action = 'JOB_RESULT_APPLIED' AND target_type = 'job' "
-                            f"AND target_id IN ({placeholders})"
+                            "SELECT job_id, result_json FROM job_receipts "
+                            f"WHERE job_id IN ({placeholders})"
                         ),
                         params,
                     )
                     values: set[str] = set()
                     for row in result.mappings().all():
-                        payload = row["after_json"]
+                        payload = row["result_json"]
                         if isinstance(payload, str):
                             payload = json.loads(payload)
-                        values.add(str(payload["result"]["worker_id"]))
+                        assert payload == {"applied": True}
+                        values.add(str(row["job_id"]))
                     return values
 
             observed_workers = asyncio.run(read_results())
         finally:
             asyncio.run(engine.dispose())
-        assert observed_workers == set(worker_ids)
+        assert observed_workers == set(job_ids)
+        assert {worker_id for worker_id, processed in results if processed} == set(worker_ids)
     finally:
         async def cleanup() -> None:
             engine = create_async_engine(DATABASE_URL, pool_pre_ping=True)
@@ -337,13 +338,6 @@ def test_mariadb_queue_processes_observable_jobs_in_two_worker_processes() -> No
                 placeholders = ", ".join(f":id{index}" for index in range(len(job_ids)))
                 params = {f"id{index}": job_id for index, job_id in enumerate(job_ids)}
                 async with engine.begin() as connection:
-                    await connection.execute(
-                        text(
-                            f"DELETE FROM audit_logs WHERE target_type = 'job' "
-                            f"AND target_id IN ({placeholders})"
-                        ),
-                        params,
-                    )
                     await connection.execute(text(f"DELETE FROM jobs WHERE id IN ({placeholders})"), params)
             finally:
                 await engine.dispose()

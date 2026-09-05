@@ -31,7 +31,6 @@ from apps.api.app.db.enums import (
 from apps.api.app.db.models import (
     Article,
     ArticleVersion,
-    AuditLog,
     Issue,
     IssueComparisonSnapshot,
     IssueMembership,
@@ -54,7 +53,7 @@ from apps.api.app.domains.content.trust import (
 from db.seeds.source_feeds import scheduled_rss_config
 
 DEFAULT_MANIFEST = Path(__file__).with_name("demo_showcase.json")
-REQUIRED_DB_REVISION = "0013_runtime_llm_control"
+REQUIRED_DB_REVISION = "0017_remove_obsolete_storage"
 _GENERIC_TITLES = frozenset({"정치", "경제", "사회", "국제", "문화", "과학", "기술"})
 
 
@@ -398,7 +397,6 @@ async def _get_or_create_source(
                             "policy_reference": article.policy_reference,
                         },
                         rate_limit=10,
-                        raw_payload_retention_days=7,
                         active=True,
                     )
                 )
@@ -409,7 +407,6 @@ async def _get_or_create_source(
                     "policy_reference": article.policy_reference,
                 }
                 adapter.rate_limit = adapter.rate_limit or 10
-                adapter.raw_payload_retention_days = 7
                 adapter.active = True
         if scheduled_config is not None:
             scheduled_adapter = await session.scalar(
@@ -422,7 +419,6 @@ async def _get_or_create_source(
                 (
                     not scheduled_adapter.active,
                     scheduled_adapter.rate_limit != 10,
-                    scheduled_adapter.raw_payload_retention_days != 7,
                     any(
                         (scheduled_adapter.config_json or {}).get(key) != value
                         for key, value in scheduled_config.items()
@@ -446,7 +442,6 @@ async def _get_or_create_source(
                             adapter_type=AdapterType.RSS,
                             config_json=scheduled_config,
                             rate_limit=10,
-                            raw_payload_retention_days=7,
                             active=True,
                         )
                     )
@@ -456,7 +451,6 @@ async def _get_or_create_source(
                         **scheduled_config,
                     }
                     scheduled_adapter.rate_limit = 10
-                    scheduled_adapter.raw_payload_retention_days = 7
                     scheduled_adapter.active = True
         return source
     if article.source_home_url not in planned_source_urls:
@@ -489,7 +483,6 @@ async def _get_or_create_source(
             adapter_type=AdapterType(article.source_type),
             config_json={"discover_links": False, "policy_reference": article.policy_reference},
             rate_limit=10,
-            raw_payload_retention_days=7,
             active=True,
         )
     )
@@ -501,7 +494,6 @@ async def _get_or_create_source(
                 adapter_type=AdapterType.RSS,
                 config_json=scheduled_config,
                 rate_limit=10,
-                raw_payload_retention_days=7,
                 active=True,
             )
         )
@@ -849,24 +841,6 @@ async def refresh_showcase(
                     summary.comparison_jobs_enqueued += 1
 
     if apply:
-        session.add(
-            AuditLog(
-                id=new_ulid(),
-                actor_id=None,
-                action="DEMO_SHOWCASE_REFRESH",
-                target_type="showcase_manifest",
-                target_id=manifest.version,
-                before_json=None,
-                after_json={
-                    "manifest_version": manifest.version,
-                    "backup_reference": backup_reference,
-                    "summary": summary.as_dict(),
-                },
-                reason="Reviewed showcase refresh",
-                request_id=request_id,
-                created_at=utc_now(),
-            )
-        )
         await session.commit()
     else:
         await session.rollback()

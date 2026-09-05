@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -51,12 +52,163 @@ def test_crawl_result_keeps_new_articles_in_a_canonical_topic_bucket() -> None:
     asyncio.run(scenario())
 
 
+def test_crawl_blocks_raw_only_article_and_reactivates_it_after_body_hydration() -> None:
+    class Session:
+        def __init__(self) -> None:
+            self.article_status: dict[bytes, str] = {}
+            self.article_queries: list[str] = []
+            self.version_ids: dict[bytes, str] = {}
+
+        async def execute(self, statement, params=None):
+            query = str(statement)
+            values = dict(params or {})
+            lowered = query.lower()
+            if "insert into articles" in lowered:
+                self.article_queries.append(query)
+                self.article_status[values["url_hash"]] = values["status"]
+                return []
+            if "select id from articles" in lowered:
+                return [{"id": "article-1"}]
+            if "insert into article_versions" in lowered:
+                self.version_ids[values["content_hash"]] = values["id"]
+                return []
+            if "select id from article_versions" in lowered:
+                return [{"id": self.version_ids[values["content_hash"]]}]
+            return []
+
+    async def scenario() -> None:
+        session = Session()
+        applier = MariaDBResultApplier(lambda: None)
+        enqueued: list[tuple[str, dict[str, Any]]] = []
+        memberships: list[str] = []
+        cluster_seeds: list[list[str]] = []
+
+        async def store_blob(session, payload, **kwargs):
+            return f"blob-{len(session.version_ids) + 1}"
+
+        async def enqueue_job(session, job_type, payload, **kwargs):
+            enqueued.append((job_type, dict(payload)))
+            return "job-1"
+
+        async def upsert_topic(session, *, article_id, **kwargs):
+            memberships.append(article_id)
+
+        async def rolling_cluster(session, article_ids, **kwargs):
+            cluster_seeds.append(list(article_ids))
+            return []
+
+        applier._store_blob = store_blob  # type: ignore[method-assign]
+        applier._enqueue_job = enqueue_job  # type: ignore[method-assign]
+        applier._upsert_topic_membership = upsert_topic  # type: ignore[method-assign]
+        applier._rolling_cluster_ids = rolling_cluster  # type: ignore[method-assign,assignment]
+
+        url = "https://example.test/article"
+        now = datetime(2026, 9, 4, tzinfo=UTC)
+        await applier._apply_crawl(
+            session,
+            Job(id="crawl-raw", job_type="crawl", payload={"source_id": "source-1"}),
+            {
+                "source_id": "source-1",
+                "articles": [
+                    {
+                        "article_id": "article-1",
+                        "article_version_id": "version-raw",
+                        "url": url,
+                        "title": "Metadata only",
+                        "content": "  ",
+                        "raw_payload": {"title": "Metadata only"},
+                    }
+                ],
+            },
+            now,
+        )
+
+        url_hash = hashlib.sha256(url.encode("utf-8")).digest()
+        assert session.article_status[url_hash] == "blocked"
+        assert memberships == []
+        assert enqueued == []
+        assert cluster_seeds == [[]]
+
+        await applier._apply_crawl(
+            session,
+            Job(id="crawl-body", job_type="crawl", payload={"source_id": "source-1"}),
+            {
+                "source_id": "source-1",
+                "articles": [
+                    {
+                        "article_id": "article-new-id-is-ignored",
+                        "article_version_id": "version-body",
+                        "url": url,
+                        "title": "Hydrated article",
+                        "content": "Substantive normalized article body.",
+                        "raw_payload": {"title": "Hydrated article"},
+                    }
+                ],
+            },
+            now,
+        )
+
+        assert session.article_status[url_hash] == "active"
+        assert memberships == ["article-1"]
+        assert enqueued == [
+            ("analyze", {"article_version_id": "version-body", "crawl_job_id": "crawl-body"})
+        ]
+        assert cluster_seeds == [[], ["article-1"]]
+        assert all("WHEN VALUES(status) = 'active' THEN 'active'" in query for query in session.article_queries)
+        assert all("published_at = COALESCE(VALUES(published_at), published_at)" in query for query in session.article_queries)
+
+    asyncio.run(scenario())
+
+
 def test_database_timestamp_normalizes_iso_offsets_for_mariadb() -> None:
     normalized = _database_timestamp("2026-08-26T21:30:45.123456+09:00")
 
     assert normalized is not None
     assert normalized.isoformat() == "2026-08-26T12:30:45.123456"
     assert normalized.tzinfo is None
+
+
+def test_crawl_result_normalizes_publisher_timezone_before_text_sql_binding() -> None:
+    class Session:
+        def __init__(self) -> None:
+            self.article_params: list[dict[str, Any]] = []
+
+        async def execute(self, statement, params=None):
+            query = str(statement).lower()
+            values = dict(params or {})
+            if "insert into articles" in query:
+                self.article_params.append(values)
+                return []
+            if "select id from articles" in query:
+                return [{"id": "article-1"}]
+            if "select id from article_versions" in query:
+                return []
+            return []
+
+    async def scenario() -> None:
+        session = Session()
+        applier = MariaDBResultApplier(lambda: None)
+        await applier._apply_crawl(
+            session,
+            Job(id="crawl-timezone", job_type="crawl", payload={"source_id": "source-1"}),
+            {
+                "source_id": "source-1",
+                "articles": [
+                    {
+                        "url": "https://example.test/timezone",
+                        "title": "발행시각 정규화",
+                        "published_at": "2026-09-04T21:31:09+09:00",
+                    }
+                ],
+            },
+            datetime(2026, 9, 4, tzinfo=UTC),
+        )
+
+        assert session.article_params[0]["published_at"] == datetime(
+            2026, 9, 4, 12, 31, 9
+        )
+
+    asyncio.run(scenario())
 
 
 def test_database_confidence_matches_numeric_column_precision() -> None:
@@ -352,9 +504,9 @@ def test_analysis_result_enqueues_score_without_singleton_cluster_job() -> None:
             values = dict(params or {})
             self.statements.append((query, values))
             lowered = query.lower()
-            if "select after_json" in lowered:
+            if "select result_json" in lowered:
                 audit = self.audit.get(str(values.get("job_id")))
-                return [] if audit is None else [{"after_json": audit}]
+                return [] if audit is None else [{"result_json": audit}]
             if "select id from model_aliases" in lowered:
                 return [{"id": "alias-1"}]
             if "select article_id from article_versions" in lowered:
@@ -362,8 +514,8 @@ def test_analysis_result_enqueues_score_without_singleton_cluster_job() -> None:
             if "insert into jobs" in lowered:
                 key = (str(values["job_type"]), str(values["dedupe_key"]))
                 self.jobs.setdefault(key, {**values, "status": "PENDING"})
-            if "insert into audit_logs" in lowered and "job_result_applied" in lowered:
-                self.audit[str(values["target_id"])] = values["after_json"]
+            if "insert into job_receipts" in lowered:
+                self.audit[str(values["job_id"])] = values["result_json"]
             return []
 
     async def scenario() -> None:

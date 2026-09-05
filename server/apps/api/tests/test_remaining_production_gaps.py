@@ -258,7 +258,7 @@ async def test_d11_durable_merge_creates_target_and_audits_enqueue(repository_se
     assert getattr(target.status, "value", target.status) == IssueStatus.CANDIDATE.value
     assert target.title == "Source issue"
     audit = await repository.list_audit(actor=actor_id, action="ISSUE_MERGE_ENQUEUED")
-    assert audit and audit[0]["after"]["target_created"] is True
+    assert audit == []
 
 
 @pytest.mark.asyncio

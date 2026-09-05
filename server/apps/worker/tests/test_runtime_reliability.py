@@ -196,7 +196,6 @@ def test_crawl_scheduler_is_leader_safe_bounded_and_interval_deduplicated() -> N
                     "feed_url": f"https://feeds.example/source-{index}.xml",
                 },
                 "rate_limit": 12,
-                "raw_payload_retention_days": 7,
                 "policy_status": "APPROVED",
                 "robots_status": "APPROVED",
                 "terms_status": "APPROVED",
@@ -236,6 +235,10 @@ def test_crawl_scheduler_is_leader_safe_bounded_and_interval_deduplicated() -> N
             for query, params in state["statements"]
             if "INSERT INTO jobs" in query
         ]
+        insert_statements = [
+            query for query, _params in state["statements"] if "INSERT INTO jobs" in query
+        ]
+        assert all("'PENDING', -10" in query for query in insert_statements)
         assert all(params["max_attempts"] == 5 for params in inserted)
         assert {params["dedupe_key"] for params in inserted} == state["jobs"]
         scheduled_payload = json.loads(inserted[0]["payload_json"])
@@ -243,7 +246,7 @@ def test_crawl_scheduler_is_leader_safe_bounded_and_interval_deduplicated() -> N
         assert scheduled_payload["url"].startswith("https://feeds.example/")
         assert scheduled_payload["config"]["scheduled"] is True
         assert scheduled_payload["rate_limit"] == 12
-        assert scheduled_payload["raw_payload_retention_days"] == 7
+        assert "raw_payload_retention_days" not in scheduled_payload
 
         state["lock_available"] = 0
         assert await scheduler.tick("worker-c") == 0
@@ -308,9 +311,9 @@ def test_score_promotion_is_serialized_active_and_job_replay_is_idempotent() -> 
             values = dict(params or {})
             if "select id from jobs" in lowered:
                 return _Result([{"id": values["job_id"]}])
-            if "select after_json from audit_logs" in lowered:
+            if "select result_json from job_receipts" in lowered:
                 value = self.audit.get(values["job_id"])
-                return _Result([] if value is None else [{"after_json": value}])
+                return _Result([] if value is None else [{"result_json": value}])
             if "select id from article_versions" in lowered:
                 return _Result([{"id": values["version_id"]}])
             if "insert into score_versions" in lowered:
@@ -341,8 +344,8 @@ def test_score_promotion_is_serialized_active_and_job_replay_is_idempotent() -> 
                     return _Result(rowcount=0)
                 row["status"] = "active"
                 return _Result(rowcount=1)
-            if "insert into audit_logs" in lowered:
-                self.audit[values["target_id"]] = values["after_json"]
+            if "insert into job_receipts" in lowered:
+                self.audit[values["job_id"]] = values["result_json"]
                 return _Result(rowcount=1)
             return _Result()
 
@@ -478,7 +481,7 @@ def test_failed_score_activation_rolls_back_previous_active_score() -> None:
             values = dict(params or {})
             if "select id from jobs" in lowered:
                 return _Result([{"id": values["job_id"]}])
-            if "select after_json from audit_logs" in lowered:
+            if "select result_json from job_receipts" in lowered:
                 return _Result()
             if "select id from article_versions" in lowered:
                 return _Result([{"id": "version-1"}])

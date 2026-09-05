@@ -26,6 +26,7 @@ from db.seeds.demo_showcase import (
     preflight_showcase,
     refresh_showcase,
 )
+from db.seeds.source_feeds import SCHEDULED_RSS_MAX_ITEMS
 
 
 def _approved_manifest() -> ShowcaseManifest:
@@ -282,9 +283,11 @@ async def test_showcase_refresh_is_idempotent_and_audit_fails_closed() -> None:
         }
         assert all(
             adapter.config_json["scheduled"] is True
-            and adapter.config_json["hydrate_article_links"] is False
-            and adapter.config_json["metadata_only"] is True
-            and adapter.config_json["max_items"] == 80
+            and adapter.config_json["hydrate_article_links"] is True
+            and adapter.config_json["require_hydrated_body"] is True
+            and adapter.config_json["metadata_only"] is False
+            and adapter.config_json["max_hydration_fetches"] == SCHEDULED_RSS_MAX_ITEMS
+            and adapter.config_json["max_items"] == SCHEDULED_RSS_MAX_ITEMS
             for adapter in scheduled_adapters
         )
         assert await session.scalar(select(func.count()).select_from(Job)) == 9

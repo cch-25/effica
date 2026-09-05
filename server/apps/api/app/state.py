@@ -81,7 +81,6 @@ class PlatformState:
     simulations: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     autopilot: dict[str, Any] = field(default_factory=dict)
     llm_usage: dict[str, Any] = field(default_factory=dict)
-    audit: list[dict[str, Any]] = field(default_factory=list)
     idempotency: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -320,7 +319,7 @@ class PlatformState:
             "alias": "openai-default",
             "provider": "openai",
             "actual_model_id": "gpt-5.6-luna",
-            "reasoning_effort": "xhigh",
+            "reasoning_effort": "high",
             "secret_env_name": "OPENAI_API_KEY",
             "status": "ACTIVE",
             "version": 1,
@@ -372,32 +371,6 @@ class PlatformState:
             }
             self.jobs[job_id] = job
             return job
-
-    def audit_action(
-        self,
-        actor_id: str,
-        action: str,
-        target_type: str,
-        target_id: str,
-        before: Any,
-        after: Any,
-        reason: str,
-        request_id: str,
-    ) -> None:
-        self.audit.append(
-            {
-                "id": new_id(),
-                "actor_id": actor_id,
-                "action": action,
-                "target_type": target_type,
-                "target_id": target_id,
-                "before": before,
-                "after": after,
-                "reason": reason,
-                "request_id": request_id,
-                "created_at": utcnow(),
-            }
-        )
 
     def create_share_card(
         self,

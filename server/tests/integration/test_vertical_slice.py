@@ -235,6 +235,7 @@ def test_external_network_free_full_vertical_slice() -> None:
             headers={**reviewer, "Idempotency-Key": "recommendation-review-1"},
         )
         assert approved.json()["status"] == "APPROVED"
-        assert state.audit
+        assert not hasattr(state, "audit")
+        assert client.get("/api/v1/admin/audit", headers=reviewer).json()["items"] == []
 
     app.dependency_overrides.clear()

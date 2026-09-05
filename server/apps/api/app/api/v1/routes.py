@@ -2193,16 +2193,6 @@ async def admin_create_source(
         source_id = new_id()
         result = {"id": source_id, **body.model_dump(exclude={"reason"}), "version": 1}
         platform.sources[source_id] = result
-        platform.audit_action(
-            principal.user_id,
-            "SOURCE_CREATED",
-            "source",
-            source_id,
-            None,
-            result,
-            body.reason,
-            request.state.request_id,
-        )
         return result
 
     return _idempotent(platform, "admin:create-source", key, body.model_dump(), create)
@@ -2242,20 +2232,9 @@ async def admin_patch_source(
         raise ApiError(409, "VERSION_CONFLICT", "If-Match does not match the source version.")
 
     def patch() -> dict[str, Any]:
-        before = deepcopy(source)
         allowed = {"name", "policy_status", "robots_status", "terms_status", "active"}
         source.update({key: value for key, value in body.values.items() if key in allowed})
         source["version"] += 1
-        platform.audit_action(
-            principal.user_id,
-            "SOURCE_UPDATED",
-            "source",
-            source_id,
-            before,
-            source,
-            body.reason,
-            request.state.request_id,
-        )
         return source
 
     return _idempotent(platform, f"admin:source:{source_id}", key, body.model_dump(), patch)
@@ -2313,16 +2292,6 @@ async def admin_crawl_source(
             "reason": body.reason,
             "mode": "fixture",
         },
-    )
-    platform.audit_action(
-        principal.user_id,
-        "CRAWL_ENQUEUED",
-        "source",
-        source_id,
-        None,
-        {"job_id": job["id"], "status": "PENDING"},
-        body.reason,
-        request.state.request_id,
     )
     return {"job_id": job["id"], "status": "PENDING"}
 
@@ -2405,21 +2374,6 @@ async def admin_merge_issue(
             if target_created:
                 platform.issues.pop(body.target_issue_id, None)
             raise
-        platform.audit_action(
-            principal.user_id,
-            "ISSUE_MERGE_ENQUEUED",
-            "issue",
-            issue_id,
-            None,
-            {
-                "job": job,
-                "source_issue_id": issue_id,
-                "target_issue_id": body.target_issue_id,
-                "target_created": target_created,
-            },
-            body.reason,
-            request.state.request_id,
-        )
     return {"job_id": job["id"], "status": "PENDING"}
 
 
@@ -2458,16 +2412,6 @@ async def admin_split_issue(
         f"{issue_id}:{stable_hash('|'.join(sorted(body.article_ids)))}:{key}",
         {"issue_id": issue_id, "article_ids": body.article_ids, "actor_id": principal.user_id, "reason": body.reason},
     )
-    platform.audit_action(
-        principal.user_id,
-        "ISSUE_SPLIT_ENQUEUED",
-        "issue",
-        issue_id,
-        None,
-        {"job": job, "issue_id": issue_id, "article_ids": body.article_ids},
-        body.reason,
-        request.state.request_id,
-    )
     return {"job_id": job["id"], "status": "PENDING"}
 
 
@@ -2505,7 +2449,6 @@ async def admin_patch_issue(
         raise ApiError(409, "VERSION_CONFLICT", "If-Match does not match the issue version.")
 
     def patch() -> dict[str, Any]:
-        before = deepcopy(issue)
         issue.update(
             {
                 key: value
@@ -2514,16 +2457,6 @@ async def admin_patch_issue(
             }
         )
         issue["version"] += 1
-        platform.audit_action(
-            principal.user_id,
-            "ISSUE_UPDATED",
-            "issue",
-            issue_id,
-            before,
-            issue,
-            body.reason,
-            request.state.request_id,
-        )
         return issue
 
     return _idempotent(platform, f"admin:issue:{issue_id}", key, body.model_dump(), patch)
@@ -2654,16 +2587,6 @@ async def admin_review_issue_comparison(
             "reviewed_at": snapshot["reviewed_at"],
             "reviewed_by": snapshot["reviewed_by"],
         }
-        platform.audit_action(
-            principal.user_id,
-            "ISSUE_COMPARISON_REVIEWED",
-            "issue_comparison_snapshot",
-            snapshot["id"],
-            None,
-            result,
-            body.reason,
-            request.state.request_id,
-        )
         return result
 
     return _idempotent(
@@ -2730,16 +2653,6 @@ async def admin_create_model(
         model_id = new_id()
         result = {"id": model_id, **body.model_dump(), "version": 1}
         platform.models[model_id] = result
-        platform.audit_action(
-            principal.user_id,
-            "MODEL_CREATED",
-            "model",
-            model_id,
-            None,
-            result,
-            "create model alias",
-            request.state.request_id,
-        )
         return result
 
     return _idempotent(platform, "admin:create-model", key, body.model_dump(), create)
@@ -2779,7 +2692,6 @@ async def admin_patch_model(
         raise ApiError(409, "VERSION_CONFLICT", "If-Match does not match the model version.")
 
     def patch() -> dict[str, Any]:
-        before = deepcopy(model)
         candidate = {
             **model,
             **{
@@ -2804,7 +2716,7 @@ async def admin_patch_model(
                 "ADMIN_VALIDATION_ERROR",
                 "actual_model_id must be an OpenAI GPT model ID.",
             )
-        if candidate.get("reasoning_effort", "xhigh") not in {
+        if candidate.get("reasoning_effort", "high") not in {
             "none",
             "low",
             "medium",
@@ -2819,16 +2731,6 @@ async def admin_patch_model(
             )
         model.update(candidate)
         model["version"] += 1
-        platform.audit_action(
-            principal.user_id,
-            "MODEL_UPDATED",
-            "model",
-            model_id,
-            before,
-            model,
-            body.reason,
-            request.state.request_id,
-        )
         return model
 
     return _idempotent(platform, f"admin:model:{model_id}", key, body.model_dump(), patch)
@@ -2947,16 +2849,6 @@ async def admin_create_weight(
             "published_at": None,
         }
         platform.weights[weight_id] = row
-        platform.audit_action(
-            principal.user_id,
-            "WEIGHT_DRAFT_CREATED",
-            "weight",
-            weight_id,
-            None,
-            row,
-            "create immutable weight draft",
-            request.state.request_id,
-        )
         return row
 
     return _idempotent(platform, "admin:create-weight", key, body.model_dump(), create)
@@ -3035,16 +2927,6 @@ async def admin_simulate_weight(
             "reason": body.reason,
         },
     )
-    platform.audit_action(
-        principal.user_id,
-        "WEIGHT_SIMULATION_ENQUEUED",
-        "weight",
-        weight_id,
-        None,
-        {"job_id": job["id"], "status": "PENDING", "windows": body.windows},
-        body.reason,
-        request.state.request_id,
-    )
     return {"job_id": job["id"], "status": "PENDING"}
 
 
@@ -3101,25 +2983,12 @@ async def admin_publish_weight(
         )
 
     def publish() -> dict[str, Any]:
-        before = next(
-            (deepcopy(row) for row in platform.weights.values() if row["status"] == "active"), None
-        )
         for row in platform.weights.values():
             if row["status"] == "active":
                 row["status"] = "archived"
         weight["status"], weight["published_at"] = "active", utcnow()
         recommendation["status"] = "PUBLISHED"
         platform.autopilot["version"] += 1
-        platform.audit_action(
-            principal.user_id,
-            "WEIGHT_PUBLISHED",
-            "weight",
-            weight_id,
-            before,
-            weight,
-            body.reason,
-            request.state.request_id,
-        )
         return weight
 
     return _idempotent(platform, f"admin:publish:{weight_id}", key, body.model_dump(), publish)
@@ -3212,16 +3081,6 @@ async def admin_rollback_weight(
         active["status"] = "archived"
         platform.weights[new_weight_id] = row
         platform.autopilot["version"] += 1
-        platform.audit_action(
-            principal.user_id,
-            "WEIGHT_ROLLED_BACK",
-            "weight",
-            new_weight_id,
-            active,
-            row,
-            body.reason,
-            request.state.request_id,
-        )
         return row
 
     return _idempotent(platform, f"admin:rollback:{weight_id}", key, body.model_dump(), rollback)
@@ -3304,7 +3163,6 @@ def _review_recommendation(
             raise ApiError(
                 409, "RECOMMENDATION_ALREADY_REVIEWED", "Recommendation review is immutable."
             )
-        before = deepcopy(recommendation)
         recommendation.update(
             {
                 "status": decision,
@@ -3312,16 +3170,6 @@ def _review_recommendation(
                 "reviewed_by": principal.user_id,
                 "reviewed_at": utcnow(),
             }
-        )
-        platform.audit_action(
-            principal.user_id,
-            f"RECOMMENDATION_{decision}",
-            "recommendation",
-            recommendation_id,
-            before,
-            recommendation,
-            body.reason,
-            request.state.request_id,
         )
         return recommendation
 
@@ -3442,7 +3290,6 @@ async def admin_put_autopilot_settings(
         raise ApiError(409, "VERSION_CONFLICT", "If-Match does not match Auto Pilot settings.")
 
     def update() -> dict[str, Any]:
-        before = deepcopy(platform.autopilot)
         if body.mode == "LIMITED_AUTO" and not body.guardrails:
             raise ApiError(
                 400,
@@ -3451,16 +3298,6 @@ async def admin_put_autopilot_settings(
             )
         platform.autopilot.update(body.model_dump(exclude={"reason"}))
         platform.autopilot["version"] += 1
-        platform.audit_action(
-            principal.user_id,
-            "AUTOPILOT_SETTINGS_UPDATED",
-            "autopilot",
-            "singleton",
-            before,
-            platform.autopilot,
-            body.reason,
-            request.state.request_id,
-        )
         return platform.autopilot
 
     return _idempotent(platform, "admin:autopilot-settings", key, body.model_dump(), update)
@@ -3511,7 +3348,6 @@ async def admin_put_llm_usage(
         raise ApiError(409, "VERSION_CONFLICT", "If-Match does not match LLM usage settings.")
 
     def update() -> dict[str, Any]:
-        before = deepcopy(platform.llm_usage)
         cancelled_jobs = 0
         if not body.enabled:
             for job in platform.jobs.values():
@@ -3539,16 +3375,6 @@ async def admin_put_llm_usage(
                 "updated_by": principal.user_id,
                 "updated_at": utcnow(),
             }
-        )
-        platform.audit_action(
-            principal.user_id,
-            "LLM_USAGE_UPDATED",
-            "runtime_control",
-            "singleton",
-            before,
-            platform.llm_usage,
-            body.reason,
-            request.state.request_id,
         )
         return deepcopy(platform.llm_usage)
 
@@ -3604,7 +3430,6 @@ async def admin_retry_job(
         raise _not_found("job")
 
     def retry() -> dict[str, Any]:
-        before = deepcopy(job)
         if job["status"] not in {"FAILED", "DEAD", "CANCELLED"}:
             raise ApiError(
                 409, "JOB_NOT_RETRYABLE", "Only failed, dead, or cancelled jobs can be retried."
@@ -3620,16 +3445,6 @@ async def admin_retry_job(
                 "last_error": None,
                 "updated_at": retry_at,
             }
-        )
-        platform.audit_action(
-            principal.user_id,
-            "JOB_RETRIED",
-            "job",
-            job_id,
-            before,
-            job,
-            "manual retry",
-            request.state.request_id,
         )
         return {"job_id": job_id, "status": "PENDING"}
 
@@ -3664,20 +3479,9 @@ async def admin_cancel_job(
         raise _not_found("job")
 
     def cancel() -> dict[str, Any]:
-        before = deepcopy(job)
         if job["status"] != "PENDING":
             raise ApiError(409, "JOB_NOT_CANCELLABLE", "Only pending jobs can be cancelled.")
         job["status"] = "CANCELLED"
-        platform.audit_action(
-            principal.user_id,
-            "JOB_CANCELLED",
-            "job",
-            job_id,
-            before,
-            job,
-            "manual cancel",
-            request.state.request_id,
-        )
         return {"job_id": job_id, "status": "CANCELLED"}
 
     return _idempotent(platform, f"admin:cancel-job:{job_id}", key, {}, cancel)
@@ -3698,14 +3502,7 @@ async def admin_list_audit(
             await _admin_repo(repository.list_audit(actor=actor, action=action, target=target)),
             cursor,
         )
-    rows = list(reversed(platform.audit))
-    if actor:
-        rows = [row for row in rows if row["actor_id"] == actor]
-    if action:
-        rows = [row for row in rows if row["action"] == action]
-    if target:
-        rows = [row for row in rows if row["target_id"] == target or row["target_type"] == target]
-    return _page(rows, cursor)
+    return _page([], cursor)
 
 
 @router.get("/admin/metrics/efficacy", operation_id="admin_efficacy_metrics")

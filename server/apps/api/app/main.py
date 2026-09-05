@@ -16,7 +16,7 @@ from apps.api.app.core.logging import configure_logging
 from apps.api.app.state import new_id
 
 logger = configure_logging(logger_name="effica.api")
-EXPECTED_DB_REVISION = "0013_runtime_llm_control"
+EXPECTED_DB_REVISION = "0017_remove_obsolete_storage"
 
 
 @asynccontextmanager
