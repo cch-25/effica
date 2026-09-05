@@ -177,9 +177,12 @@
   }
 
   .site-nav__link:hover,
-  .site-nav__account:hover,
-  .site-nav__brand:hover {
+  .site-nav__account:hover {
     background: var(--effica-sky);
+  }
+
+  .site-nav__brand:hover {
+    background: transparent;
   }
 }
 

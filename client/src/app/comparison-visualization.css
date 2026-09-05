@@ -7,29 +7,36 @@
 
 .comparison-hero {
   display: block;
-  padding-bottom: var(--peer-space-6);
+  padding-bottom: clamp(2rem, 5vw, 3.5rem);
 }
 
 .comparison-hero h1 {
   max-width: 30ch;
-  margin: var(--peer-space-2) 0;
+  margin: .75rem 0 1rem;
   font-size: clamp(1.75rem, 4vw, 2.5rem);
-  line-height: 1.2;
+  line-height: 1.25;
   letter-spacing: -.025em;
+}
+
+.comparison-hero > p:not(.eyebrow):not(.comparison-hero__meta) {
+  max-width: 62ch;
+  margin: 0;
+  line-height: 1.7;
 }
 
 .comparison-hero__meta {
   display: flex;
   flex-wrap: wrap;
   gap: var(--peer-space-1) var(--peer-space-2);
-  margin: var(--peer-space-3) 0 0;
+  margin: 1.5rem 0 0;
+  padding-block: .75rem;
   color: var(--peer-color-ink-muted);
   font-size: var(--peer-text-xs);
 }
 
 .comparison-hero > a {
   width: fit-content;
-  margin-top: var(--peer-space-2);
+  margin-top: 1rem;
   color: var(--peer-color-accent);
   font-size: var(--peer-text-sm);
   font-weight: 700;
@@ -623,7 +630,10 @@
 .space-summary strong { color: var(--peer-color-ink); font-size: .6875rem; font-weight: 400; }
 .space-summary .space-summary__note { margin-left: auto; }
 
-.space-article-list { margin-top: 2rem; }
+.space-article-list {
+  margin-top: 2rem;
+  padding-inline: clamp(.75rem, 2.5vw, 2rem);
+}
 .space-article-list__heading, .space-article-list > .button { display: grid; grid-template-columns: minmax(0, 1fr) 4rem 4rem 4rem; gap: 1rem; align-items: center; }
 .space-article-list__heading { padding: .75rem 0; border-bottom: 1px solid var(--peer-color-ink); color: var(--peer-color-ink-muted); font-size: .6875rem; }
 .space-article-list__heading h3 { margin: 0; font-size: .875rem; color: var(--peer-color-ink); }
@@ -661,6 +671,7 @@
   .space-article-list__title { gap: .25rem; }
   .space-article-list__title small { display: none; }
   .space-article-list > .button > span:not(:first-child) { font-size: .6875rem; }
+  .space-article-list { padding-inline: .5rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   .perspective-workspace *, .perspective-workspace *::before, .perspective-workspace *::after { animation: none !important; transition: none !important; }

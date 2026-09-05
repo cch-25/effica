@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="client/src/app/icon.svg" width="72" height="72" alt="EFFICA logo" />
-
 # EFFICA
 
 ### Read between perspectives.
@@ -11,7 +9,7 @@
 Compare coverage of the same event side by side.<br />
 Explore the context through AI analysis and reader perspectives.
 
-<img src="https://img.shields.io/badge/Codex%20Community%20Hackathon-3rd%20Place-7586F5?style=for-the-badge&amp;labelColor=FFFFFF" border="1px black" width="454" alt="Codex Community Hackathon : 3rd Place" />
+<img src="https://img.shields.io/badge/Codex%20Community%20Hackathon-3rd%20Place-7586F5?style=for-the-badge&amp;labelColor=FFFFFF" width="454" alt="Codex Community Hackathon : 3rd Place" border="1" style="border: 1px solid #202735;" />
 
 <br />
 
@@ -27,7 +25,7 @@ Explore the context through AI analysis and reader perspectives.
 
 </div>
 
-![EFFICA home: the starting point for comparing coverage and exploring the perspective map](docs/readme/effica-home.jpg)
+![EFFICA home: the starting point for comparing coverage and exploring the perspective map](docs/readme/effica-home.png)
 
 <p align="center"><sub>A starting point for discovering different perspectives on the same issue.</sub></p>
 
@@ -49,7 +47,7 @@ The name comes from **Political Efficacy**: the sense that we can understand pol
 
 Choose **two to four articles from different sources** covering one issue. Start with the facts they share, then explore each article's framing and AI analysis in the same view.
 
-![EFFICA coverage comparison: common facts and two news outlets' perspectives and AI analyses shown side by side](docs/readme/effica-comparison.jpg)
+![EFFICA coverage comparison: common facts and two news outlets' perspectives and AI analyses shown side by side](docs/readme/effica-comparison.png)
 
 <p align="center"><sub>Start with shared facts. See where the coverage diverges.</sub></p>
 
@@ -63,7 +61,7 @@ Choose **two to four articles from different sources** covering one issue. Start
 
 The **Perspective Map** places article analyses in a shared 3D space. Explore clusters of similar coverage and articles that stand apart, then select a point to inspect its analysis.
 
-![EFFICA perspective map: a 3D article distribution alongside the selected article's analysis and distribution charts](docs/readme/effica-perspective.jpg)
+![EFFICA perspective map: a 3D article distribution alongside the selected article's analysis and distribution charts](docs/readme/effica-perspective.png)
 
 <p align="center"><sub>From the overall distribution to an individual article, connected through a single selection.</sub></p>
 
@@ -101,7 +99,7 @@ Readers can contribute assessments as well as explore the analysis. Read the ori
 
 | Name | Role |
 | :--- | :--- |
-| Seokhyun Bae | Build, Team Lead |
+| Johnny SeokHyun Bae | Build, Team Lead |
 | Junho Kim | Build |
 | Ayoung Kwak | Insight |
 

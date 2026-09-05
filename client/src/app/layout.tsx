@@ -12,6 +12,11 @@ import { isMockMode } from "@/lib/api/mode";
 export const metadata: Metadata = {
   title: { default: "EFFICA | 관점 사이를 읽다", template: "%s | EFFICA" },
   description: "같은 이슈를 여러 관점에서 읽고, 근거를 비교하는 뉴스 플랫폼",
+  icons: {
+    icon: "/effica.svg",
+    shortcut: "/effica.svg",
+    apple: "/effica.svg",
+  },
 };
 
 const MOCK_MEMBER: UserView = {
