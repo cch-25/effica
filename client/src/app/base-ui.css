@@ -1381,7 +1381,7 @@
   margin: 0;
   font-family: var(--peer-font-mono);
   font-size: var(--peer-text-xs);
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
 }
 
 .article-side {
@@ -1847,7 +1847,7 @@
   font-size: 1rem;
   line-height: 1.4;
   word-break: keep-all;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
 }
 
 .topic-issue-row__copy small {
@@ -1864,7 +1864,7 @@
   font-size: var(--peer-text-xs);
   line-height: 1.45;
   word-break: keep-all;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -2276,7 +2276,7 @@
   color: var(--peer-color-ink-muted);
   font-family: var(--peer-font-mono);
   font-size: .6875rem;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
 }
 
 /* Responsive reflow */
@@ -2345,7 +2345,7 @@
   }
 
   .data-table td {
-    overflow-wrap: anywhere;
+    overflow-wrap: normal;
   }
 
   .perspective-solid {

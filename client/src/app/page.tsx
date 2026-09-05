@@ -29,7 +29,10 @@ export default function HomePage() {
       </section>
 
       <section className="home-section home-section--issues">
-        <div className="section-head"><div><span className="section-index">01</span><h2>지금 비교할 수 있는 이슈</h2></div><Link href="/issues">이슈 전체 보기 →</Link></div>
+        <div className="section-head">
+          <div><span className="section-index">01</span><h2>지금 비교할 수 있는 이슈</h2></div>
+          <Link href="/issues">이슈 전체 보기 →</Link>
+        </div>
         <IssueGrid fallback={issues} columns={3} featuredOnly />
       </section>
 

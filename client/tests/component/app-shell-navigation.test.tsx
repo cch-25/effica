@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppShell } from "@/components/layout/app-shell";
@@ -7,8 +7,11 @@ import { HeadlineBand } from "@/components/layout/headline-band";
 import type { UserView } from "@/lib/api/contracts";
 
 const navigation = vi.hoisted(() => ({ pathname: "/" }));
+const api = vi.hoisted(() => ({ request: vi.fn() }));
 const originalApiMode = process.env.NEXT_PUBLIC_API_MODE;
 const originalMatchMedia = window.matchMedia;
+
+vi.mock("@/lib/api/client", () => ({ apiRequest: api.request }));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => navigation.pathname,
@@ -36,7 +39,9 @@ afterAll(() => {
 
 afterEach(() => {
   cleanup();
+  api.request.mockReset();
   navigation.pathname = "/";
+  process.env.NEXT_PUBLIC_API_MODE = "mock";
 });
 
 function withQueryClient(children: ReactNode) {
@@ -124,13 +129,67 @@ describe("app shell navigation", () => {
 });
 
 describe("headline band", () => {
-  it("keeps the latest article label visible and identifies an external destination", () => {
+  it("shows an honest unavailable state in mock mode without a stale link", () => {
     render(withQueryClient(<HeadlineBand />));
 
     const band = screen.getByRole("banner", { name: "최신 기사" });
     expect(within(band).getByText("최신 기사")).toBeVisible();
-    const story = within(band).getByRole("link", { name: /외부 기사.*새 창에서 열림/ });
-    expect(story).toHaveAttribute("target", "_blank");
-    expect(story).toHaveAttribute("rel", "noreferrer");
+    expect(within(band).getByRole("status")).toHaveTextContent("현재 표시할 최신 기사가 없습니다.");
+    expect(within(band).queryByRole("link")).not.toBeInTheDocument();
+    expect(api.request).not.toHaveBeenCalled();
+  });
+
+  it("shows loading while the live feed request is pending", () => {
+    process.env.NEXT_PUBLIC_API_MODE = "real";
+    api.request.mockImplementation(() => new Promise(() => undefined));
+
+    render(withQueryClient(<HeadlineBand />));
+
+    expect(screen.getByRole("status")).toHaveTextContent("최신 기사를 불러오는 중입니다.");
+  });
+
+  it("keeps an empty live feed empty instead of substituting old news", async () => {
+    process.env.NEXT_PUBLIC_API_MODE = "real";
+    api.request.mockResolvedValue({ items: [], next_cursor: null, personalized: false });
+
+    render(withQueryClient(<HeadlineBand />));
+
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("현재 표시할 최신 기사가 없습니다."));
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("reports a live feed error without substituting old news", async () => {
+    process.env.NEXT_PUBLIC_API_MODE = "real";
+    api.request.mockRejectedValue(new Error("feed unavailable"));
+
+    render(withQueryClient(<HeadlineBand />));
+
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("최신 기사를 불러오지 못했습니다."));
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("links a live feed headline to its article page", async () => {
+    process.env.NEXT_PUBLIC_API_MODE = "real";
+    api.request.mockResolvedValue({
+      items: [{
+        analysis_provider: "openai",
+        analysis_status: "READY",
+        article_id: "article-current",
+        coordinate: { x: 0, y: 0, z: 0 },
+        issue_id: "issue-current",
+        published_at: "2026-09-04T01:00:00Z",
+        rank: 1,
+        reason_code: "balanced",
+        score_version_id: "score-current",
+        source: "테스트 언론",
+        title: "현재 피드 헤드라인",
+      }],
+      next_cursor: null,
+      personalized: false,
+    });
+
+    render(withQueryClient(<HeadlineBand />));
+
+    await waitFor(() => expect(screen.getByRole("link", { name: "현재 피드 헤드라인" })).toHaveAttribute("href", "/articles/article-current"));
   });
 });

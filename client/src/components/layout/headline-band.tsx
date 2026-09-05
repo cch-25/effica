@@ -1,14 +1,11 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api/client";
 import { isMockMode } from "@/lib/api/mode";
 import type { FeedPageDto } from "@/lib/api/mappers";
-
-type Headline = { id: string; title: string; href: string };
 
 const NAMED_ENTITIES: Record<string, string> = {
   amp: "&",
@@ -41,34 +38,6 @@ export function decodeHeadlineEntities(value: string) {
   return decoded;
 }
 
-const VERIFIED_HEADLINES: Headline[] = [
-  {
-    id: "newstomato-20260826-approval",
-    title: "이 대통령 지지율 첫 30%대…부정평가 57.9%",
-    href: "https://www3.newstomato.com/ReadNews.aspx?no=1311426",
-  },
-  {
-    id: "sbs-20260826-police",
-    title: "\"경찰 권력에 국민 우려 커\"…민주 \"개혁 추진\"",
-    href: "https://news.sbs.co.kr/news/programMain.do?cooper=SBSNEWS&plink=GNB",
-  },
-  {
-    id: "sbs-20260826-tax",
-    title: "'황제 사택' 인테리어에 관리비까지…\"1조 9천억 탈루\"",
-    href: "https://news.sbs.co.kr/news/programMain.do?cooper=SBSNEWS&plink=GNB",
-  },
-  {
-    id: "sbs-20260826-bonus",
-    title: "\"성과급 60%는 주식\" 합의안 부결…재협상 불가피",
-    href: "https://news.sbs.co.kr/news/programMain.do?cooper=SBSNEWS&plink=GNB",
-  },
-  {
-    id: "sbs-20260826-diplomacy",
-    title: "'김정은과 찰칵' 또 올려…'비핵화' 피한 한미 통화",
-    href: "https://news.sbs.co.kr/news/programMain.do?cooper=SBSNEWS&plink=GNB",
-  },
-];
-
 export function HeadlineBand() {
   const mock = isMockMode();
   const feed = useQuery({
@@ -82,7 +51,7 @@ export function HeadlineBand() {
     .sort((a, b) => (b.published_at ?? "").localeCompare(a.published_at ?? ""))
     .slice(0, 5)
     .map((item) => ({ id: item.article_id, title: decodeHeadlineEntities(item.title), href: `/articles/${item.article_id}` }));
-  const headlines = latest?.length ? latest : VERIFIED_HEADLINES;
+  const headlines = latest ?? [];
   const [activeIndex, setActiveIndex] = useState(0);
 
   useEffect(() => {
@@ -91,16 +60,24 @@ export function HeadlineBand() {
     return () => window.clearInterval(timer);
   }, [headlines.length]);
 
-  const active = headlines[activeIndex % headlines.length];
-  const text = <span key={`${active.id}-${activeIndex}`} className="headline-band__story-text">{active.title}</span>;
+  const active = headlines.length ? headlines[activeIndex % headlines.length] : undefined;
+  const statusMessage = mock || (!feed.isPending && !feed.isError)
+    ? "현재 표시할 최신 기사가 없습니다."
+    : feed.isError
+      ? "최신 기사를 불러오지 못했습니다."
+      : "최신 기사를 불러오는 중입니다.";
 
   return (
     <header className="headline-band" aria-label="최신 기사">
       <span className="headline-band__label">최신 기사</span>
-      {active.href.startsWith("http") ? (
-        <a className="headline-band__story" href={active.href} target="_blank" rel="noreferrer">{text}<span className="headline-band__destination">외부 기사</span><ExternalLink size={13} aria-hidden="true" /><span className="sr-only">새 창에서 열림</span></a>
+      {active ? (
+        <Link className="headline-band__story" href={active.href}>
+          <span key={`${active.id}-${activeIndex}`} className="headline-band__story-text">{active.title}</span>
+        </Link>
       ) : (
-        <Link className="headline-band__story" href={active.href}>{text}</Link>
+        <span className="headline-band__story" role="status" aria-live="polite">
+          <span className="headline-band__story-text">{statusMessage}</span>
+        </span>
       )}
     </header>
   );

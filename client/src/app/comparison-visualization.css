@@ -334,7 +334,7 @@
   font-size: var(--peer-text-sm);
   line-height: 1.5;
   word-break: keep-all;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
 }
 
 .comparison-column__analysis details {
@@ -473,7 +473,7 @@
   color: var(--peer-color-ink-muted);
   font-family: var(--peer-font-mono);
   font-size: .6875rem;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
 }
 
 @media (max-width: 900px) {

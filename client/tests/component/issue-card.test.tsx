@@ -9,6 +9,9 @@ describe("issue card destination", () => {
   it("promises article comparison only when enough analyzed articles and sources are ready", () => {
     render(<IssueCard issue={issues[0]} />);
 
+    expect(screen.getByText("경제")).toBeVisible();
+    expect(screen.getByText("8월 16일 기준")).toBeVisible();
+    expect(screen.getByText("기사 3개 / 출처 3곳")).toBeVisible();
     expect(screen.getByRole("link", { name: "보도 비교하기 →" })).toHaveAttribute(
       "href",
       "/issues/issue-housing",

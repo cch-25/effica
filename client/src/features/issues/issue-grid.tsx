@@ -12,8 +12,18 @@ export function IssueGrid({ fallback, columns = 2, featuredOnly = false }: { fal
   if (query.isError && !isMockMode()) return <StatePanel state="error" onRetry={() => void query.refetch()} />;
   const source = query.data?.items ?? (isMockMode() ? fallback : []);
   const issues = featuredOnly
-    ? source.filter((issue) => issue.kind === "EVENT" && issue.analysisStatus === "READY" && issue.sourceCount >= 3)
+    ? source
+        .filter((issue) => issue.kind === "EVENT" && issue.analysisStatus === "READY" && issue.freshnessStatus === "CURRENT" && issue.sourceCount >= 3)
+        .sort((left, right) => {
+          const rightTime = new Date(right.dataAsOf ?? right.updatedAt).getTime();
+          const leftTime = new Date(left.dataAsOf ?? left.updatedAt).getTime();
+          return rightTime - leftTime || (left.editorialPriority ?? Number.MAX_SAFE_INTEGER) - (right.editorialPriority ?? Number.MAX_SAFE_INTEGER);
+        })
     : source;
   if (issues.length === 0) return <StatePanel state="empty" />;
-  return <div className={`grid grid--${columns}`}>{issues.map((issue) => <IssueCard key={issue.id} issue={issue} />)}</div>;
+  return (
+    <ol className={`issue-list issue-list--${columns}`}>
+      {issues.map((issue) => <li key={issue.id}><IssueCard issue={issue} /></li>)}
+    </ol>
+  );
 }
