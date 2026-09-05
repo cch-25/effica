@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     openai_endpoint: str = "https://api.openai.com/v1/responses"
     llm_model: str = "gpt-5.6-luna"
     llm_model_alias: str = "openai-default"
-    llm_reasoning_effort: str = "xhigh"
+    llm_reasoning_effort: str = "high"
     llm_timeout_seconds: float = Field(default=180.0, gt=0, le=300)
     # The durable queue is the retry authority. Keeping provider-local retries
     # at zero prevents one slow request from occupying a worker slot for

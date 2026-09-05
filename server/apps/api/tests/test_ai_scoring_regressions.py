@@ -37,10 +37,10 @@ def test_analysis_request_bounds_pathological_crawl_content_without_changing_off
                         "start": 0,
                         "end": 7,
                         "quote": "opening",
-                        "rationale": "opening evidence",
+                        "rationale": "기사 도입부의 근거입니다.",
                     }
                 ],
-                "rationale_summary": "bounded assessment",
+                "rationale_summary": "입력 길이를 제한한 기사 분석입니다.",
             },
             request=request,
         )
