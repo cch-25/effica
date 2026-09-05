@@ -78,8 +78,10 @@ async def compact(session) -> dict[str, int]:
 
     await execute("superseded_scores", "DELETE FROM score_versions WHERE status = 'superseded'")
     cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=7)
-    await execute("finished_jobs", "DELETE FROM jobs WHERE status NOT IN ('PENDING','LEASED') AND updated_at < :cutoff", cutoff=cutoff)
-    await execute("crawl_history", "DELETE FROM crawl_runs WHERE status NOT IN ('PENDING','RUNNING') AND finished_at < :cutoff", cutoff=cutoff)
+    history_cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=2)
+    await execute("finished_jobs", "DELETE FROM jobs WHERE job_type IN ('crawl','analyze','cluster','calculate_score','build_issue_comparison') AND status NOT IN ('PENDING','LEASED') AND updated_at < :cutoff", cutoff=history_cutoff)
+    await execute("older_jobs", "DELETE FROM jobs WHERE status NOT IN ('PENDING','LEASED') AND updated_at < :cutoff", cutoff=cutoff)
+    await execute("crawl_history", "DELETE FROM crawl_runs WHERE status NOT IN ('PENDING','RUNNING') AND finished_at < :cutoff", cutoff=history_cutoff)
     await execute("admin_receipts", "DELETE FROM admin_request_receipts WHERE created_at < :cutoff", cutoff=cutoff)
     await execute("expired_sessions", "DELETE FROM sessions WHERE expires_at < :now", now=datetime.now(UTC).replace(tzinfo=None))
     for job in await rows(session, "SELECT id, payload_json FROM jobs WHERE status NOT IN ('PENDING','LEASED')"):
