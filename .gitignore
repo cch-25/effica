@@ -22,3 +22,8 @@ client/node_modules/
 AGENTS.md
 output/
 .ops/
+
+/AGENTS.md
+/.env
+/HANDOFF.md
+/.ops/
