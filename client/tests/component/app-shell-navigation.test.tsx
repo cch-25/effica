@@ -133,7 +133,7 @@ describe("headline band", () => {
     render(withQueryClient(<HeadlineBand />));
 
     const band = screen.getByRole("banner", { name: "최신 기사" });
-    expect(within(band).getByText("최신 기사")).toBeVisible();
+    expect(within(band).queryByText("최신 기사")).not.toBeInTheDocument();
     expect(within(band).getByRole("status")).toHaveTextContent("현재 표시할 최신 기사가 없습니다.");
     expect(within(band).queryByRole("link")).not.toBeInTheDocument();
     expect(api.request).not.toHaveBeenCalled();

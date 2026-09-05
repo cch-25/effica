@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => ({ useVisualizationPointsQuery: vi.fn(), useViewe
 
 vi.mock("@/lib/api/queries", () => ({ useVisualizationPointsQuery: mocks.useVisualizationPointsQuery, useViewerQuery: mocks.useViewerQuery }));
 
+vi.mock("@/features/visualization/space-renderer", () => ({
+  createSpace: vi.fn(() => { throw new Error("WebGL unavailable in this test environment"); }),
+}));
+
 const point: VisualizationPoint = {
   id: "article-1",
   label: "한국어 기사",
@@ -26,21 +30,21 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("두 기준 화면", () => {
-  it("시각화에서 편향성과 과장성만 핵심 기준으로 안내한다", () => {
+describe("관점 분석 화면", () => {
+  it("시각화에서 편향성과 과장성에 분석 신뢰도를 더한 3D 좌표를 안내한다", () => {
     mocks.useVisualizationPointsQuery.mockReturnValue({ data: { items: [point] } });
     mocks.useViewerQuery.mockReturnValue({ error: { status: 401 } });
 
     render(<VisualizationExplorer />);
 
-    expect(screen.getByRole("heading", { name: /두 기준으로 읽는/ })).toBeVisible();
+    expect(screen.getByRole("heading", { name: /세 기준으로 읽는/ })).toBeVisible();
     expect(screen.getAllByText("편향성").length).toBeGreaterThan(0);
     expect(screen.getAllByText("과장성").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /편향성: 기사의 주장과 강조점/ })).toBeVisible();
     expect(screen.getByRole("button", { name: /분석 신뢰도: 현재 근거로/ })).toBeVisible();
     expect(screen.getByRole("button", { name: /평균 신뢰도: 현재 표시된 기사들의/ })).toBeVisible();
     expect(screen.queryByText(/경제|사회문화|국가.*대외/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/세 가지 핵심 값|3축/)).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /깊이는 분석 신뢰도인 3D 그래프/ })).toBeVisible();
   });
 
   it("공유 카드가 실제 활동 스냅샷의 두 점수만 노출한다", () => {

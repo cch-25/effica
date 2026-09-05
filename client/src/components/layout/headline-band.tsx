@@ -69,7 +69,6 @@ export function HeadlineBand() {
 
   return (
     <header className="headline-band" aria-label="최신 기사">
-      <span className="headline-band__label">최신 기사</span>
       {active ? (
         <Link className="headline-band__story" href={active.href}>
           <span key={`${active.id}-${activeIndex}`} className="headline-band__story-text">{active.title}</span>

@@ -1,3 +1,13 @@
+/* Use the Bold face for Latin text at every UI weight, preserving Korean fallbacks. */
+@font-face {
+  font-family: "EFFICA Alliance";
+  src: local("Alliance No.1 Bold"), local("AllianceNo1-Bold");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  unicode-range: U+0000-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+
 :root {
   color-scheme: light;
 
@@ -21,7 +31,7 @@
   --effica-sky: #b8d9ec;
   --effica-cream: #fff1d6;
 
-  --peer-font-sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --peer-font-sans: "EFFICA Alliance", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --peer-font-display: var(--peer-font-sans);
   --peer-font-mono: var(--peer-font-sans);
   --peer-text-xs: .75rem;

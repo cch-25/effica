@@ -1,202 +1,139 @@
 "use client";
 
-import { useId } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Box, ChevronLeft, ChevronRight, Minus, Move, Plus, RotateCcw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { VisualizationPoint } from "@/lib/api/types";
+import { clamp, makeSpaceData, signed } from "./field-model";
+import type { SpaceCamera, createSpace } from "./space-renderer";
 
-type PerspectiveFieldProps = {
+export type { FieldView } from "./field-model";
+type SpaceRuntime = ReturnType<typeof createSpace>;
+const initialCamera = (): SpaceCamera => ({ alpha: 21, beta: 34, distance: 215, center: [0, 0, 0] });
+
+type Props = {
   points: VisualizationPoint[];
   selectedId: string;
   anchorId: string | undefined;
   title: string;
+  onSelect: (id: string) => void;
 };
 
-export const GRAPH_BOUNDS = {
-  width: 640,
-  height: 500,
-  left: 76,
-  right: 616,
-  top: 72,
-  bottom: 418,
-} as const;
-
-const BIAS_EXTENT = 100;
-const SENSATIONALISM_MAX = 100;
-const BIAS_BANDWIDTH = 24;
-const SENSATIONALISM_BANDWIDTH = 18;
-const X_TICKS = [-100, -50, 0, 50, 100];
-const Y_TICKS = [0, 25, 50, 75, 100];
-
-function clamp(value: number, minimum: number, maximum: number) {
-  return Math.min(maximum, Math.max(minimum, value));
-}
-
-function articleSensationalism(point: VisualizationPoint) {
-  return point.type === "user" ? 0 : clamp(point.sensationalism ?? 0, 0, SENSATIONALISM_MAX);
-}
-
-function xPosition(value: number) {
-  const ratio = (clamp(value, -BIAS_EXTENT, BIAS_EXTENT) + BIAS_EXTENT) / (BIAS_EXTENT * 2);
-  return GRAPH_BOUNDS.left + ratio * (GRAPH_BOUNDS.right - GRAPH_BOUNDS.left);
-}
-
-function yPosition(value: number) {
-  const ratio = clamp(value, 0, SENSATIONALISM_MAX) / SENSATIONALISM_MAX;
-  return GRAPH_BOUNDS.bottom - ratio * (GRAPH_BOUNDS.bottom - GRAPH_BOUNDS.top);
-}
-
-export function getGraphCoordinates(point: VisualizationPoint) {
-  return {
-    x: xPosition(point.x),
-    y: yPosition(articleSensationalism(point)),
-  };
-}
-
-function densityAt(bias: number, sensationalism: number, articles: VisualizationPoint[]) {
-  return articles.reduce((sum, article) => {
-    const biasDistance = (bias - article.x) / BIAS_BANDWIDTH;
-    const sensationalismDistance = (sensationalism - articleSensationalism(article)) / SENSATIONALISM_BANDWIDTH;
-    return sum + Math.exp(-0.5 * (biasDistance ** 2 + sensationalismDistance ** 2));
-  }, 0);
-}
-
-function signed(value: number) {
-  if (value > 0) return `+${Math.round(value)}`;
-  return `${Math.round(value)}`;
-}
-
-function pointValue(point: VisualizationPoint) {
-  if (point.type === "user") return `나의 편향 기준 ${signed(point.x)}`;
-  const sensationalism = point.sensationalism === null ? "미측정" : Math.round(point.sensationalism);
-  return `편향 ${signed(point.x)}, 과장 ${sensationalism}`;
-}
-
-function selectedLabelPosition(x: number, y: number) {
-  const width = 174;
-  const height = 48;
-  const placeLeft = x > (GRAPH_BOUNDS.left + GRAPH_BOUNDS.right) / 2;
-  return {
-    x: clamp(placeLeft ? x - width - 18 : x + 18, GRAPH_BOUNDS.left + 5, GRAPH_BOUNDS.right - width - 5),
-    y: clamp(y - height - 18, GRAPH_BOUNDS.top + 5, GRAPH_BOUNDS.bottom - height - 8),
-    width,
-    height,
-  };
-}
-
-export function PerspectiveField({ points, selectedId, anchorId, title }: PerspectiveFieldProps) {
-  const gradientPrefix = useId().replaceAll(":", "");
-  const articles = points.filter((point) => point.type === "article");
-  const sources = points.filter((point) => point.type === "source");
-  const selected = points.find((point) => point.id === selectedId) ?? points[0];
-  const selectedIndex = points.findIndex((point) => point.id === selected.id);
-  const selectedPosition = getGraphCoordinates(selected);
-  const label = selectedLabelPosition(selectedPosition.x, selectedPosition.y);
+export function PerspectiveField({ points, selectedId, anchorId, title, onSelect }: Props) {
+  const element = useRef<HTMLDivElement>(null);
+  const runtime = useRef<SpaceRuntime | null>(null);
+  const camera = useRef(initialCamera());
+  const cameraScale = useRef(1);
+  const latest = useRef({ points, selectedId, onSelect });
+  const [status, setStatus] = useState<"loading" | "ready" | "unavailable">("loading");
+  const [rotate, setRotate] = useState(false);
+  const data = useMemo(() => makeSpaceData(points), [points]);
+  const measured = points.filter((point) => point.type !== "user" && point.sensationalism !== null);
+  const selected = points.find((point) => point.id === selectedId);
+  const index = measured.findIndex((point) => point.id === selectedId);
   const anchor = points.find((point) => point.id === anchorId && point.type === "user");
-  const anchorX = anchor ? xPosition(anchor.x) : null;
-  const densityMaximum = Math.max(0, ...articles.map((article) => densityAt(article.x, articleSensationalism(article), articles)));
-  const densityRadiusX = ((GRAPH_BOUNDS.right - GRAPH_BOUNDS.left) * BIAS_BANDWIDTH) / (BIAS_EXTENT * 2) * 1.65;
-  const densityRadiusY = ((GRAPH_BOUNDS.bottom - GRAPH_BOUNDS.top) * SENSATIONALISM_BANDWIDTH) / SENSATIONALISM_MAX * 1.65;
+
+  useEffect(() => { latest.current = { points, selectedId, onSelect }; }, [points, selectedId, onSelect]);
+
+  useEffect(() => {
+    const node = element.current;
+    if (!node) return;
+    let cancelled = false;
+    let observer: ResizeObserver | undefined;
+    const fitScale = () => Math.max(1, 500 / Math.max(1, node.clientWidth));
+    cameraScale.current = fitScale();
+    const unavailable = (event: Event) => { event.preventDefault(); setStatus("unavailable"); };
+    node.addEventListener("webglcontextlost", unavailable, true);
+    void import("./space-renderer").then((module) => {
+      if (cancelled) return;
+      const space = module.createSpace(node, { ...camera.current, distance: camera.current.distance * fitScale() }, (datum) => {
+        const activeIndex = datum.ids.indexOf(latest.current.selectedId);
+        latest.current.onSelect(datum.ids[(activeIndex + 1) % datum.ids.length]);
+      }, (next) => {
+        camera.current = { ...next, distance: next.distance / cameraScale.current };
+        node.dataset.camera = `${camera.current.alpha},${camera.current.beta},${camera.current.distance}`;
+      });
+      runtime.current = space;
+      const canRotate = matchMedia("(pointer: fine)").matches;
+      setRotate(canRotate);
+      space.chart.setOption({ grid3D: { viewControl: { rotateSensitivity: canRotate ? 1 : 0, minDistance: 150 * cameraScale.current, maxDistance: 340 * cameraScale.current } } });
+      let previousWidth = node.clientWidth;
+      observer = new ResizeObserver(() => {
+        space.chart.resize();
+        if (node.clientWidth !== previousWidth) {
+          previousWidth = node.clientWidth;
+          cameraScale.current = fitScale();
+          space.chart.setOption({ grid3D: { viewControl: {
+            ...camera.current,
+            distance: camera.current.distance * fitScale(),
+            minDistance: 150 * fitScale(),
+            maxDistance: 340 * fitScale(),
+          } } });
+        }
+      });
+      observer.observe(node);
+      setStatus("ready");
+    }).catch(() => { if (!cancelled) setStatus("unavailable"); });
+    return () => {
+      cancelled = true;
+      observer?.disconnect();
+      node.removeEventListener("webglcontextlost", unavailable, true);
+      runtime.current?.dispose();
+      runtime.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (status !== "ready" || !runtime.current) return;
+    const space = runtime.current;
+    void import("./space-renderer").then(({ spaceSeries }) => {
+      if (space.chart.isDisposed()) return;
+      space.chart.setOption({ series: spaceSeries(data, selectedId, space.colors) });
+    });
+  }, [data, selectedId, status]);
+
+  function moveCamera(next: Partial<SpaceCamera>) {
+    camera.current = { ...camera.current, ...next };
+    const scale = cameraScale.current;
+    runtime.current?.chart.setOption({ grid3D: { viewControl: { ...camera.current, distance: camera.current.distance * scale, minDistance: 150 * scale, maxDistance: 340 * scale } } });
+    if (element.current) element.current.dataset.camera = `${camera.current.alpha},${camera.current.beta},${camera.current.distance}`;
+  }
 
   return (
-    <div className="perspective-field">
-      <div className="perspective-field__header">
-        <div>
-          <strong>기사 좌표 분포</strong>
-          <p>점 하나는 기사 한 건입니다. 가까이 모인 곳일수록 배경이 진해집니다.</p>
+    <div className="article-space" data-status={status}>
+      <div className="article-space__topline">
+        <span><Box size={14} /> 관점 공간</span>
+        <span>{measured.length}개 자료{anchor ? ` / 나의 편향 ${signed(anchor.x)}` : ""}</span>
+      </div>
+      <div className="article-space__viewport" data-rotate={rotate || undefined}>
+        <div ref={element} className="article-space__canvas" role="img" aria-label={title} tabIndex={0} aria-describedby="space-instructions"
+          onKeyDown={(event) => {
+            if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home"].includes(event.key)) return;
+            event.preventDefault();
+            if (event.key === "Home") moveCamera(initialCamera());
+            else if (event.key === "ArrowLeft" || event.key === "ArrowRight") moveCamera({ beta: camera.current.beta + (event.key === "ArrowLeft" ? -15 : 15) });
+            else moveCamera({ alpha: clamp(camera.current.alpha + (event.key === "ArrowUp" ? 10 : -10), 5, 80) });
+          }} />
+        {status !== "ready" ? <div className="article-space__fallback" role="status"><Box size={24} /><strong>{status === "loading" ? "3D 관점 공간을 불러오는 중" : "이 브라우저에서는 3D를 표시할 수 없습니다."}</strong>{status === "unavailable" ? <span>아래 자료 목록에서 분석 수치를 확인할 수 있습니다.</span> : null}</div> : null}
+        {status === "ready" && !measured.length ? <p className="article-space__empty">좌표를 표시할 측정 자료가 없습니다.</p> : null}
+        {selected && selected.type !== "user" ? <dl className="article-space__readout" aria-label="선택한 자료의 공간 좌표">
+          <div><dt>편향</dt><dd>{signed(selected.x)}</dd></div>
+          <div><dt>과장</dt><dd>{selected.sensationalism === null ? "미측정" : Math.round(selected.sensationalism)}</dd></div>
+          <div><dt>신뢰도</dt><dd>{Math.round(selected.confidence * 100)}%</dd></div>
+        </dl> : null}
+        <div className="article-space__tools" role="group" aria-label="3D 시점 조절">
+          <Button variant="ghost" aria-label="마우스와 터치로 회전" aria-pressed={rotate} disabled={status !== "ready"} onClick={() => { setRotate(!rotate); runtime.current?.chart.setOption({ grid3D: { viewControl: { rotateSensitivity: rotate ? 0 : 1 } } }); }}><Move size={15} /></Button>
+          <Button variant="ghost" aria-label="확대" disabled={status !== "ready"} onClick={() => moveCamera({ distance: clamp(camera.current.distance - 25, 150, 340) })}><Plus size={15} /></Button>
+          <Button variant="ghost" aria-label="축소" disabled={status !== "ready"} onClick={() => moveCamera({ distance: clamp(camera.current.distance + 25, 150, 340) })}><Minus size={15} /></Button>
+          <Button variant="ghost" aria-label="처음 시점으로" disabled={status !== "ready"} onClick={() => moveCamera(initialCamera())}><RotateCcw size={15} /></Button>
         </div>
-        <span>기사 {articles.length}건</span>
+        <nav className="article-space__navigation" aria-label="그래프 자료 선택">
+          <span>{index < 0 ? "0" : index + 1} / {measured.length}</span>
+          <Button variant="ghost" aria-label="이전 자료" disabled={index <= 0} onClick={() => measured[index - 1] && onSelect(measured[index - 1].id)}><ChevronLeft size={17} /></Button>
+          <Button variant="ghost" aria-label="다음 자료" disabled={index >= measured.length - 1} onClick={() => measured[index + 1] && onSelect(measured[index + 1].id)}><ChevronRight size={17} /></Button>
+        </nav>
       </div>
-
-      <svg className="perspective-field__chart" viewBox={`0 0 ${GRAPH_BOUNDS.width} ${GRAPH_BOUNDS.height}`} role="img" aria-label={title}>
-        <title>{title}</title>
-        <desc>가로축은 마이너스 100 좌편향부터 플러스 100 우편향, 세로축은 0부터 100까지의 기사 과장성입니다. 모든 기사 점은 실제 분석 좌표에 놓이고 배경의 진하기는 기사 밀도를 나타냅니다.</desc>
-        <defs>
-          <clipPath id={`${gradientPrefix}-plot`}>
-            <rect x={GRAPH_BOUNDS.left} y={GRAPH_BOUNDS.top} width={GRAPH_BOUNDS.right - GRAPH_BOUNDS.left} height={GRAPH_BOUNDS.bottom - GRAPH_BOUNDS.top} />
-          </clipPath>
-          {articles.map((article, index) => {
-            const density = densityAt(article.x, articleSensationalism(article), articles);
-            const strength = densityMaximum > 0 ? density / densityMaximum : 0;
-            return (
-              <radialGradient key={article.id} id={`${gradientPrefix}-density-${index}`}>
-                <stop offset="0" stopColor="#16867f" stopOpacity={0.3 + strength * 0.28} />
-                <stop offset="0.62" stopColor="#5baaa5" stopOpacity={0.13 + strength * 0.12} />
-                <stop offset="1" stopColor="#5baaa5" stopOpacity="0" />
-              </radialGradient>
-            );
-          })}
-        </defs>
-
-        <rect className="perspective-field__plot-background" x={GRAPH_BOUNDS.left} y={GRAPH_BOUNDS.top} width={GRAPH_BOUNDS.right - GRAPH_BOUNDS.left} height={GRAPH_BOUNDS.bottom - GRAPH_BOUNDS.top} />
-        <rect className="perspective-field__neutral-zone" x={xPosition(-10)} y={GRAPH_BOUNDS.top} width={xPosition(10) - xPosition(-10)} height={GRAPH_BOUNDS.bottom - GRAPH_BOUNDS.top} />
-
-        {Y_TICKS.map((tick) => {
-          const y = yPosition(tick);
-          return (
-            <g key={`y-${tick}`}>
-              <line className="perspective-field__grid-line" x1={GRAPH_BOUNDS.left} y1={y} x2={GRAPH_BOUNDS.right} y2={y} />
-              <text className="perspective-field__tick" x={GRAPH_BOUNDS.left - 14} y={y + 5} textAnchor="end">{tick}</text>
-            </g>
-          );
-        })}
-        {X_TICKS.map((tick) => {
-          const x = xPosition(tick);
-          return (
-            <g key={`x-${tick}`}>
-              <line className={tick === 0 ? "perspective-field__zero-line" : "perspective-field__grid-line"} x1={x} y1={GRAPH_BOUNDS.top} x2={x} y2={GRAPH_BOUNDS.bottom} />
-              <text className="perspective-field__tick" x={x} y={GRAPH_BOUNDS.bottom + 25} textAnchor="middle">{signed(tick)}</text>
-            </g>
-          );
-        })}
-
-        <g clipPath={`url(#${gradientPrefix}-plot)`}>
-          {articles.map((article, index) => {
-            const position = getGraphCoordinates(article);
-            return <ellipse key={article.id} cx={position.x} cy={position.y} rx={densityRadiusX} ry={densityRadiusY} fill={`url(#${gradientPrefix}-density-${index})`} />;
-          })}
-        </g>
-
-        {anchorX !== null ? (
-          <g className="perspective-field__personal-marker">
-            <line x1={anchorX} y1={GRAPH_BOUNDS.top} x2={anchorX} y2={GRAPH_BOUNDS.bottom} />
-            <path d={`M ${anchorX} ${GRAPH_BOUNDS.bottom - 3} l -8 -13 h 16 z`} />
-            <text x={anchorX} y={GRAPH_BOUNDS.top - 15} textAnchor="middle">나 {signed(anchor?.x ?? 0)}</text>
-          </g>
-        ) : null}
-
-        {articles.map((article) => {
-          const position = getGraphCoordinates(article);
-          return <circle key={article.id} className="perspective-field__article-point" cx={position.x} cy={position.y} r="5.5" />;
-        })}
-        {sources.map((source) => {
-          const position = getGraphCoordinates(source);
-          return <rect key={source.id} className="perspective-field__source-point" x={position.x - 5} y={position.y - 5} width="10" height="10" transform={`rotate(45 ${position.x} ${position.y})`} />;
-        })}
-
-        {selected.type === "user" ? (
-          <circle className="perspective-field__selection-ring" cx={selectedPosition.x} cy={GRAPH_BOUNDS.bottom - 10} r="14" />
-        ) : (
-          <circle className="perspective-field__selection-ring" cx={selectedPosition.x} cy={selectedPosition.y} r="13" />
-        )}
-        <g className="perspective-field__selected-label">
-          <line x1={selectedPosition.x} y1={selected.type === "user" ? GRAPH_BOUNDS.bottom - 10 : selectedPosition.y} x2={label.x + (selectedPosition.x > label.x ? label.width : 0)} y2={label.y + label.height / 2} />
-          <rect x={label.x} y={label.y} width={label.width} height={label.height} />
-          <text x={label.x + 12} y={label.y + 19}>선택 {String(selectedIndex + 1).padStart(2, "0")}</text>
-          <text className="perspective-field__selected-value" x={label.x + 12} y={label.y + 38}>{pointValue(selected)}</text>
-        </g>
-
-        <line className="perspective-field__axis-line" x1={GRAPH_BOUNDS.left} y1={GRAPH_BOUNDS.bottom} x2={GRAPH_BOUNDS.right} y2={GRAPH_BOUNDS.bottom} />
-        <line className="perspective-field__axis-line" x1={GRAPH_BOUNDS.left} y1={GRAPH_BOUNDS.top} x2={GRAPH_BOUNDS.left} y2={GRAPH_BOUNDS.bottom} />
-        <text className="perspective-field__axis-title" x={(GRAPH_BOUNDS.left + GRAPH_BOUNDS.right) / 2} y={GRAPH_BOUNDS.height - 18} textAnchor="middle">기사의 편향성: 좌편향 ← 0 → 우편향</text>
-        <text className="perspective-field__axis-title" x="18" y={(GRAPH_BOUNDS.top + GRAPH_BOUNDS.bottom) / 2} textAnchor="middle" transform={`rotate(-90 18 ${(GRAPH_BOUNDS.top + GRAPH_BOUNDS.bottom) / 2})`}>기사의 과장성: 높을수록 자극적</text>
-        <text className="perspective-field__neutral-label" x={xPosition(0)} y={GRAPH_BOUNDS.top + 21} textAnchor="middle">중립 구간</text>
-      </svg>
-
-      <div className="perspective-field__key" aria-hidden="true">
-        <span><i className="perspective-field__key-article" />기사</span>
-        <span><i className="perspective-field__key-source" />출처 평균</span>
-        {anchor ? <span><i className="perspective-field__key-personal" />나의 편향 기준</span> : null}
-        <span><i className="perspective-field__key-density" />기사 밀집 영역</span>
-      </div>
+      <div className="article-space__caption"><span><i /> 자료 <i className="is-selected" /> 선택</span><p id="space-instructions">{rotate ? "드래그로 회전" : "회전 버튼으로 조작 활성화"} / 방향키로 시점 이동 / 숫자는 동일 좌표의 자료 수</p></div>
     </div>
   );
 }

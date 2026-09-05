@@ -3,15 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { visualizationPoints as fixturePoints } from "@/mocks/fixtures/content";
 import { useViewerQuery, useVisualizationPointsQuery } from "@/lib/api/queries";
-import { formatBiasScore, formatSensationalismScore } from "@/lib/api/formatters";
 import { isMockMode } from "@/lib/api/mode";
 import { StatePanel } from "@/components/ui/state-panel";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { ApiError, apiRequest } from "@/lib/api/client";
 import type { VisualizationPoint } from "@/lib/api/types";
-import { PerspectiveField } from "./perspective-field";
+import { PerspectiveField, type FieldView } from "./perspective-field";
+import { ArrowUpRight, Check } from "lucide-react";
 import { DefinitionTooltip } from "@/components/ui/definition-tooltip";
 import { analysisTerms } from "@/lib/content/analysis-terms";
+import { DistributionCharts, SelectedBiasChart, SelectedScoreChart } from "./distribution-charts";
+import { signed } from "./field-model";
 
 export function VisualizationExplorer() {
   const pointsQuery = useVisualizationPointsQuery();
@@ -72,7 +74,7 @@ function SelectedArticleLinks({ articleId }: { articleId: string }) {
 
   return (
     <div className="form-actions" aria-label="선택한 기사에서 이어서 보기">
-      <ButtonLink href={`/articles/${articleId}`}>선택한 기사 분석 보기</ButtonLink>
+      <ButtonLink href={`/articles/${articleId}`}>선택한 기사 분석 보기<ArrowUpRight size={15} aria-hidden="true" /></ButtonLink>
       {issueId ? <ButtonLink variant="secondary" href={`/issues/${issueId}`}>관련 이슈에서 다른 보도 비교하기</ButtonLink> : null}
     </div>
   );
@@ -80,21 +82,27 @@ function SelectedArticleLinks({ articleId }: { articleId: string }) {
 
 function VisualizationFieldContent({ points, initialPointId, personalPointId }: { points: VisualizationPoint[]; initialPointId: string; personalPointId?: string }) {
   const [selectedId, setSelectedId] = useState(initialPointId);
-  const current = points.find((point) => point.id === selectedId) ?? points[0];
+  const [view, setView] = useState<FieldView>(points.find((point) => point.id === initialPointId)?.type === "source" ? "source" : "article");
+  function selectPoint(id: string) {
+    setSelectedId(id);
+    const point = points.find((item) => item.id === id);
+    if (point && point.type !== "user") setView(point.type);
+  }
+  function changeView(nextView: FieldView) {
+    setView(nextView);
+    const first = points.find((point) => point.type === nextView);
+    if (first) setSelectedId(first.id);
+  }
+  const current = points.find((point) => point.id === selectedId) ?? points.find((point) => point.id === initialPointId) ?? points[0];
   const personalPoint = points.find((point) => point.id === personalPointId);
   const personal = current.type === "user";
-  const sensationalismLabel = personal || current.sensationalism === null ? "해당 없음" : formatSensationalismScore(current.sensationalism);
   const currentDistance = personalPoint && current.type === "article" ? perspectiveDistance(current, personalPoint) : null;
-  const counts = points.reduce((result, point) => {
-    result[point.type] += 1;
-    return result;
-  }, { article: 0, source: 0, user: 0 });
-
   const distribution = useMemo(() => {
     const articles = points.filter((point) => point.type === "article");
     const measurable = articles.filter((point) => point.sensationalism !== null);
     const biasValues = articles.map((point) => point.x);
     return {
+      averageBias: articles.length ? articles.reduce((sum, point) => sum + point.x, 0) / articles.length : null,
       averageConfidence: articles.length ? articles.reduce((sum, point) => sum + point.confidence, 0) / articles.length : 0,
       averageSensationalism: measurable.length ? measurable.reduce((sum, point) => sum + (point.sensationalism ?? 0), 0) / measurable.length : null,
       biasMin: biasValues.length ? Math.min(...biasValues) : 0,
@@ -102,68 +110,47 @@ function VisualizationFieldContent({ points, initialPointId, personalPointId }: 
     };
   }, [points]);
 
-  const graphTitle = `${personalPoint ? "나의 편향 기준과 " : ""}기사 편향성과 과장성 좌표 분포`;
+  const graphTitle = `${personalPoint ? "나의 편향 기준과 " : ""}기사 편향성과 과장성 좌표 분포, 깊이는 분석 신뢰도인 3D 그래프`;
+  const visiblePoints = points.filter((point) => point.type === view);
 
   return (
-    <section className="perspective-solid" aria-labelledby="perspective-solid-title">
-      <div className="perspective-solid__visual">
-        <PerspectiveField points={points} selectedId={current.id} anchorId={personalPoint?.id} title={graphTitle} />
+    <section className="perspective-workspace" aria-labelledby="perspective-solid-title">
+      <h2 id="perspective-solid-title" className="sr-only">{personalPoint ? "나의 편향 기준으로 읽는 기사 좌표" : "세 기준으로 읽는 기사 좌표"}</h2>
+      <div className="perspective-workspace__toolbar">
+        <div className="space-view-switch" role="group" aria-label="지도에 표시할 자료">
+          <Button variant="ghost" aria-pressed={view === "article"} onClick={() => changeView("article")}>기사 <span>{points.filter((point) => point.type === "article").length}</span></Button>
+          <Button variant="ghost" aria-pressed={view === "source"} onClick={() => changeView("source")}>출처 평균 <span>{points.filter((point) => point.type === "source").length}</span></Button>
+        </div>
+        <span>가로: 편향 / 높이: 과장 / 깊이: 신뢰도</span>
       </div>
-
-      <div className="perspective-solid__summary">
-        <p className="eyebrow">{personal ? "자기보고 기준점" : current.type === "source" ? "출처 집계" : "선택한 기사"}</p>
-        <h2 id="perspective-solid-title">{personalPoint ? "나의 편향 기준으로 읽는 기사 좌표" : "두 기준으로 읽는 기사 좌표"}</h2>
-        <p className="perspective-solid__selection">{current.label}</p>
-        {personalPoint && currentDistance !== null ? (
-          <div className="perspective-solid__personal">
-            <strong>{distanceLabel(currentDistance)}</strong>
-            <span>{personalPoint.label}과의 편향 거리 {Math.round(currentDistance)}. 붉은 선은 나의 편향 기준이고 검은 테두리는 선택 자료입니다.</span>
-          </div>
-        ) : null}
-        <p className="perspective-solid__intro">모든 점은 실제 분석 수치에 놓입니다. 배경 형태는 전체 기사 좌표로 계산하며, 기사를 선택해도 분포 자체를 왜곡하지 않습니다.</p>
-
-        <dl className="perspective-solid__readout">
-          <div>
-            <dt><DefinitionTooltip {...analysisTerms.bias} /></dt>
-            <dd>{formatBiasScore(current.x)}</dd>
-          </div>
-          <div>
-            <dt><DefinitionTooltip {...analysisTerms.sensationalism} /></dt>
-            <dd>{sensationalismLabel}</dd>
-          </div>
-          <div>
-            <dt><DefinitionTooltip {...analysisTerms.confidence} /></dt>
-            <dd>{Math.round(current.confidence * 100)}%</dd>
-          </div>
-        </dl>
-
-        <dl className="perspective-solid__distribution" aria-label="기사 분석 분포 요약">
-          <div><dt><DefinitionTooltip {...analysisTerms.biasRange} /></dt><dd>{formatBiasScore(distribution.biasMin)}에서 {formatBiasScore(distribution.biasMax)}까지</dd></div>
-          <div><dt><DefinitionTooltip {...analysisTerms.averageSensationalism} /></dt><dd>{distribution.averageSensationalism === null ? "미측정" : Math.round(distribution.averageSensationalism)}</dd></div>
-          <div><dt><DefinitionTooltip {...analysisTerms.averageConfidence} /></dt><dd>{Math.round(distribution.averageConfidence * 100)}%</dd></div>
-        </dl>
-        {current.type === "article" ? <SelectedArticleLinks key={current.id} articleId={current.id} /> : null}
+      <div className="perspective-workspace__main">
+        <PerspectiveField points={[...visiblePoints, ...points.filter((point) => point.type === "user")]} selectedId={current.id} anchorId={personalPoint?.id} title={graphTitle} onSelect={selectPoint} />
+        <aside className="space-inspector" aria-label="선택한 자료 분석">
+          <header className="space-inspector__header">
+            <span>{personal ? "나의 기준" : current.type === "source" ? "출처 평균" : "선택한 기사"}</span>
+            <h3 className="space-inspector__title">{current.label}</h3>
+          </header>
+          <SelectedBiasChart point={current} average={distribution.averageBias} />
+          <SelectedScoreChart point={current} />
+          {currentDistance !== null ? <p className="space-inspector__personal">{distanceLabel(currentDistance)} <strong>차이 {Math.round(currentDistance)}점</strong></p> : null}
+          {current.type === "article" ? <SelectedArticleLinks key={current.id} articleId={current.id} /> : null}
+        </aside>
       </div>
-
-      <div className="perspective-solid__scope" aria-label="시각화에 포함된 자료">
-        <span>기사 <strong>{counts.article}</strong></span>
-        <span>출처 <strong>{counts.source}</strong></span>
-        <span>자기보고 <strong>{counts.user}</strong></span>
-        <span className="perspective-solid__legend">분포 배경이 진할수록 기사가 많이 모인 구간</span>
+      <DistributionCharts points={points} current={current} />
+      <div className="space-summary" aria-label="기사 분석 분포 요약">
+        <span><DefinitionTooltip {...analysisTerms.biasRange} /><strong>{signed(distribution.biasMin)} ~ {signed(distribution.biasMax)}</strong></span>
+        <span><DefinitionTooltip {...analysisTerms.averageSensationalism} /><strong>{distribution.averageSensationalism === null ? "미측정" : Math.round(distribution.averageSensationalism)}</strong></span>
+        <span><DefinitionTooltip {...analysisTerms.averageConfidence} /><strong>{Math.round(distribution.averageConfidence * 100)}%</strong></span>
+        <span className="space-summary__note">숫자가 있는 점은 같은 좌표의 자료입니다.</span>
       </div>
-
-      <div className="perspective-solid__index" role="group" aria-label="그래프에서 확인할 자료">
-        {points.map((point, index) => (
-          <Button
-            key={point.id}
-            variant="ghost"
-            aria-pressed={current.id === point.id}
-            data-selected={current.id === point.id ? "" : undefined}
-            onClick={() => setSelectedId(point.id)}
-          >
-            <span>{String(index + 1).padStart(2, "0")}</span>
-            <strong>{point.label}</strong>
-            <small>{point.type === "user" ? point.label : personalPoint && point.type === "article" ? distanceLabel(perspectiveDistance(point, personalPoint)) : `${formatBiasScore(point.x)}, 과장 ${point.sensationalism ?? "미측정"}`}</small>
+      <div className="space-article-list" role="group" aria-label="그래프에서 확인할 자료" id="space-article-list">
+        <div className="space-article-list__heading"><h3>{view === "article" ? "기사 목록" : "출처 목록"}</h3><span>편향</span><span>과장</span><span>신뢰도</span></div>
+        {points.filter((point) => point.type === view || point.type === "user").map((point) => (
+          <Button key={point.id} variant="ghost" aria-pressed={current.id === point.id} onClick={() => selectPoint(point.id)}>
+            <span className="space-article-list__title"><i aria-hidden="true">{current.id === point.id ? <Check size={13} /> : null}</i><strong>{point.label}</strong>{point.type === "user" ? <small>나의 기준</small> : null}</span>
+            <span>{signed(point.x)}</span>
+            <span>{point.type === "user" ? "해당 없음" : point.sensationalism === null ? "미측정" : Math.round(point.sensationalism)}</span>
+            <span>{Math.round(point.confidence * 100)}%</span>
           </Button>
         ))}
       </div>
