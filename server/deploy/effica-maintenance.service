@@ -1,0 +1,9 @@
+[Unit]
+Description=Effica essential data and seven-day retention
+After=mariadb.service
+Requires=mariadb.service
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/perspective-news/current/deploy/run-maintenance.sh
+TimeoutStartSec=30min
+Nice=10

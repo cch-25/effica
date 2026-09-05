@@ -34,6 +34,8 @@ apps/api/app/domains/content/__init__.py
 apps/api/app/domains/content/adapters.py
 apps/api/app/domains/content/canonical.py
 apps/api/app/domains/content/policy.py
+apps/api/app/domains/content/retention.py
+apps/api/app/domains/content/storage.py
 apps/api/app/domains/content/trust.py
 apps/api/app/domains/content/versioning.py
 apps/api/app/domains/efficacy/__init__.py
@@ -89,6 +91,16 @@ apps/worker/worker/queue.py
 apps/worker/worker/services.py
 apps/worker/worker/source_fetcher.py
 db/__init__.py
+db/article_retention.py
+db/storage_maintenance.py
+deploy/run-maintenance.sh
+deploy/effica-maintenance.service
+deploy/effica-maintenance.timer
+deploy/perspective-api.service
+deploy/perspective-worker.service
+deploy/nginx.conf
+deploy/journald.conf
+deploy/nginx-logrotate.conf
 db/alembic.ini
 db/alembic/env.py
 db/alembic/script.py.mako
@@ -105,6 +117,10 @@ db/alembic/versions/0010_issue_comparison_snapshots.py
 db/alembic/versions/0011_issue_topics.py
 db/alembic/versions/0012_share_card_recovery.py
 db/alembic/versions/0013_runtime_llm_control.py
+db/alembic/versions/0014_luna_high_reasoning.py
+db/alembic/versions/0015_article_retention.py
+db/alembic/versions/0016_essential_storage.py
+db/alembic/versions/0017_remove_obsolete_storage.py
 db/seeds/__init__.py
 db/seeds/analyze_articles.py
 db/seeds/articles.json

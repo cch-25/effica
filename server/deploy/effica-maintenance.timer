@@ -1,0 +1,8 @@
+[Unit]
+Description=Daily Effica data maintenance at 04:10 Asia/Seoul
+[Timer]
+OnCalendar=*-*-* 19:10:00 UTC
+Persistent=true
+Unit=effica-maintenance.service
+[Install]
+WantedBy=timers.target

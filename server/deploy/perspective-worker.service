@@ -1,0 +1,20 @@
+[Unit]
+Description=Effica content worker
+After=network-online.target mariadb.service perspective-api.service
+Requires=mariadb.service
+[Service]
+User=perspective
+Group=perspective
+WorkingDirectory=/opt/perspective-news/current
+EnvironmentFile=/opt/perspective-news/current/.env
+ExecStart=/opt/perspective-news/current/.venv/bin/python -m apps.worker.worker.main
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=210
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+UMask=0077
+[Install]
+WantedBy=multi-user.target

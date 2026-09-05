@@ -14,7 +14,7 @@ AI 분석과 독자의 판단을 함께 보여주는 **정치 뉴스 큐레이�
 [![MariaDB](https://img.shields.io/badge/MariaDB_10.6+-003545?style=flat-square&logo=mariadb&logoColor=white)](https://mariadb.org/)
 [![OpenAI](https://img.shields.io/badge/OpenAI_Responses_API-412991?style=flat-square&logo=openai&logoColor=white)](https://platform.openai.com/docs/api-reference/responses)
 
-[**서비스 바로가기**](https://effica.vercel.app) | [**발표 자료**](docs/SLIDES.pdf) | [**데모 영상**](docs/DEMO_VIDEO.mp4) | [**API 명세**](client/src/lib/api/generated/openapi.json)
+[**서비스 바로가기**](https://www.effica.forum) | [**발표 자료**](docs/SLIDES.pdf) | [**데모 영상**](docs/DEMO_VIDEO.mp4) | [**API 명세**](client/src/lib/api/generated/openapi.json)
 
 </div>
 
@@ -49,7 +49,7 @@ AI 분석과 독자의 판단을 함께 보여주는 **정치 뉴스 큐레이�
 | **다양성 보정 피드** | 사용자가 덜 본 출처와 보완 관점을 우선하며, 각 기사의 추천 이유를 표시합니다. |
 | **독자 참여 평가** | 독자의 투표와 읽기 행동을 분석 결과에 연결해 일방적인 AI 판정을 보완합니다. |
 | **나의 관점 지도** | 설문과 서비스 내 활동을 바탕으로 관점 변화를 시각화하고 공유 카드로 만들 수 있습니다. |
-| **운영 관리 도구** | 출처, 수집 정책, 분석 작업, LLM 모델과 점수 가중치를 관리하고 모든 변경에 감사 기록을 남깁니다. |
+| **운영 관리 도구** | 뉴스 출처와 수집 정책을 설정하고 AI 분석과 점수 가중치를 관리합니다. |
 
 <a id="experience"></a>
 
@@ -67,7 +67,7 @@ AI 분석과 독자의 판단을 함께 보여주는 **정치 뉴스 큐레이�
 ```mermaid
 flowchart LR
     U[사용자 브라우저] -->|HTTPS| W[Next.js Web<br/>Vercel]
-    W -->|same-origin /api/v1| N[nginx<br/>AWS EC2]
+    W -->|same-origin /api/v1| N[nginx<br/>Vultr VPS]
     N --> A[FastAPI]
     A <--> D[(MariaDB)]
     D <--> Q[Async Worker]
@@ -75,8 +75,8 @@ flowchart LR
     Q --> S[뉴스 출처 및 공식 API]
 ```
 
-- 웹은 **Vercel**, API와 비동기 워커 및 MariaDB는 **AWS EC2**에서 분리 운영합니다.
-- 브라우저 요청은 Vercel의 same-origin `/api/v1/*` rewrite를 거쳐 EC2의 TLS API로 전달됩니다.
+- 웹은 **Vercel**, API와 비동기 워커 및 MariaDB는 **Vultr VPS**에서 분리 운영합니다.
+- 브라우저 요청은 Vercel의 same-origin `/api/v1/*` rewrite를 거쳐 Vultr의 TLS API로 전달됩니다.
 - 기사 수집, 정규화, 이슈 군집화, LLM 분석처럼 재시도가 필요한 작업은 MariaDB 기반 비동기 워커가 처리합니다.
 - LLM 호출에는 시간 제한, 제한된 재시도, 속도 제어, 회로 차단, 출력 스키마 검증과 민감 정보 마스킹을 적용합니다.
 
@@ -92,7 +92,20 @@ flowchart LR
 | AI | OpenAI Responses API, 동적 모델과 reasoning 설정, 구조화된 출력 검증 |
 | Auth | Google OAuth, opaque session, CSRF protection |
 | Quality | Pytest, Ruff, Mypy, Vitest, Playwright, axe-core |
-| Infrastructure | Vercel, AWS EC2, nginx, TLS, SSH tunnel |
+| Infrastructure | Vercel, Vultr VPS, nginx, TLS, SSH tunnel |
+
+## 데이터 보관
+
+기사는 최근 7일을 보관하며 매일 한국시간 오전 4시 10분에 자동 정리합니다.
+투표나 읽기 기록 등 사용자 활동에 연결된 기사는 기록 보존을 위해 예외로 남깁니다.
+사이트에 필요한 정규화 본문과 분석 결과를 저장하며 수집 원본과 AI 원본 응답은 저장하지 않습니다.
+감사로그를 생성하지 않고 중복 실행 방지에 필요한 최소 기록만 유지합니다.
+완료 작업과 수집 실행 기록도 7일 후 정리합니다.
+
+실행과 검증은 `.ops/run.sh`, 배포는 `.ops/deploy.sh`를 사용합니다.
+운영 서버 연결은 `.env`의 `VULTR_IPV4_PUBLIC_ADDRESS`와 `VULTR_PASSWORD`를 사용합니다.
+정리 코드와 배포용 서비스 정의는 저장소에서 관리합니다.
+상세 보관 기준과 백업 절차는 [데이터 보관 정책](server/db/ARTICLE_RETENTION.md)을 참고하세요.
 
 ## Team EFFICA
 
