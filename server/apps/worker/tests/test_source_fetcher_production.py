@@ -115,6 +115,38 @@ def test_fetcher_preserves_crawler_policy_guard() -> None:
     asyncio.run(scenario())
 
 
+def test_waiting_publisher_does_not_block_another_source() -> None:
+    async def scenario() -> None:
+        waiting = asyncio.Event()
+        release = asyncio.Event()
+
+        async def sleep(delay: float) -> None:
+            waiting.set()
+            await release.wait()
+
+        service = SourceFetchService(
+            transport=httpx.MockTransport(lambda _: httpx.Response(200, content=b"ok")),
+            sleep=sleep,
+            clock=lambda: 0.0,
+        )
+        first = {"source_id": "one", "url": "https://example.test/a",
+                 "config": {"rate_limit_per_minute": 10, "max_retries": 0}}
+        await service.fetch(first)
+        delayed = asyncio.create_task(service.fetch(first))
+        try:
+            await asyncio.wait_for(waiting.wait(), 1)
+            response = await asyncio.wait_for(
+                service.fetch({**first, "source_id": "two"}), 1
+            )
+            assert response.status_code == 200
+            assert not delayed.done()
+        finally:
+            release.set()
+            await delayed
+
+    asyncio.run(scenario())
+
+
 def test_fetcher_blocks_private_addresses_credentials_and_redirect_targets() -> None:
     seen: list[str] = []
 

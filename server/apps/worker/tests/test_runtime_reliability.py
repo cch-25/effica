@@ -8,6 +8,9 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
+
+from apps.worker.worker.handlers.base import RetryableHandlerError
 from apps.worker.worker.handlers.registry import HandlerRegistry
 from apps.worker.worker.main import WorkerConfig, WorkerRuntime
 from apps.worker.worker.queue import Job, JobStatus, MariaDBQueueRepository, MemoryQueueRepository
@@ -35,6 +38,44 @@ def test_worker_package_does_not_preload_module_entrypoint() -> None:
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stderr == ""
+
+
+@pytest.mark.parametrize("slow", [False, True])
+def test_scheduled_crawl_failure_moves_on_to_other_source(slow: bool) -> None:
+    async def scenario() -> None:
+        jobs = [
+            Job(id="first", job_type="crawl", payload={"source_id": "broken", "schedule_bucket": 1},
+                max_attempts=5),
+            Job(id="second", job_type="crawl", payload={"source_id": "healthy", "schedule_bucket": 1}),
+        ]
+        repo = MemoryQueueRepository(jobs)
+        calls = []
+
+        async def crawl(payload, context):
+            calls.append(payload["source_id"])
+            if payload["source_id"] == "broken":
+                if slow:
+                    await asyncio.Event().wait()
+                raise RetryableHandlerError("publisher unavailable", code="SOURCE_FETCH_TIMEOUT")
+            return {"articles": []}
+
+        runtime = WorkerRuntime(
+            repo, registry=HandlerRegistry({"crawl": crawl}),
+            config=WorkerConfig(scheduled_crawl_timeout_seconds=0.01),
+        )
+        assert await runtime.process_one()
+        assert await runtime.process_one()
+        assert not await runtime.process_one()
+        assert calls == ["broken", "healthy"]
+        failed = await repo.get("first")
+        assert failed is not None and failed.status == JobStatus.FAILED
+        assert failed.attempts == 1
+        if slow:
+            assert failed.last_error["code"] == "CRAWL_TIME_BUDGET_EXCEEDED"
+        healthy = await repo.get("second")
+        assert healthy is not None and healthy.status == JobStatus.SUCCEEDED
+
+    asyncio.run(scenario())
 
 
 class _Result:
@@ -238,7 +279,7 @@ def test_crawl_scheduler_is_leader_safe_bounded_and_interval_deduplicated() -> N
         insert_statements = [
             query for query, _params in state["statements"] if "INSERT INTO jobs" in query
         ]
-        assert all("'PENDING', -10" in query for query in insert_statements)
+        assert all("'PENDING', 0" in query for query in insert_statements)
         assert all(params["max_attempts"] == 5 for params in inserted)
         assert {params["dedupe_key"] for params in inserted} == state["jobs"]
         scheduled_payload = json.loads(inserted[0]["payload_json"])

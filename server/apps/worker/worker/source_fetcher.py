@@ -256,7 +256,7 @@ class SourceFetchService:
         self.sleep = sleep
         self.clock = clock
         self._rate_next: dict[str, float] = {}
-        self._rate_lock: asyncio.Lock | None = None
+        self._rate_locks: dict[str, asyncio.Lock] = {}
         self.follow_redirects = bool(follow_redirects)
         if isinstance(max_redirects, bool) or not isinstance(max_redirects, int) or max_redirects < 0:
             raise ValueError("max_redirects must be a non-negative integer")
@@ -1064,9 +1064,9 @@ class SourceFetchService:
         interval = settings.min_interval_seconds
         if interval <= 0:
             return
-        if self._rate_lock is None:
-            self._rate_lock = asyncio.Lock()
-        async with self._rate_lock:
+        # A publisher's polite delay must not hold up unrelated publishers.
+        lock = self._rate_locks.setdefault(key, asyncio.Lock())
+        async with lock:
             now = self.clock()
             available = self._rate_next.get(key, now)
             delay = max(0.0, available - now)

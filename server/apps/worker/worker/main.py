@@ -57,6 +57,7 @@ class WorkerConfig:
     poll_interval_seconds: float = 1.0
     shutdown_grace_seconds: float = 30.0
     max_concurrency: int = 1
+    scheduled_crawl_timeout_seconds: float = 90.0
     backoff_base_seconds: float = 1.0
     backoff_max_seconds: float = 300.0
     backoff_jitter_ratio: float = 0.2
@@ -76,6 +77,8 @@ class WorkerConfig:
             raise ValueError("shutdown_grace_seconds must be non-negative")
         if self.max_concurrency < 1:
             raise ValueError("max_concurrency must be at least 1")
+        if self.scheduled_crawl_timeout_seconds <= 0:
+            raise ValueError("scheduled crawl timeout must be positive")
         if self.heartbeat_interval >= self.lease_seconds / 2:
             raise ValueError("heartbeat interval must be less than half the lease")
         if self.queue_error_backoff_base_seconds <= 0:
@@ -312,7 +315,18 @@ class WorkerRuntime:
                         details={"job_type": job.job_type},
                         retryable=False,
                     )
-                result = await invoke_handler(handler, job.payload, context)
+                if job.job_type == "crawl" and "schedule_bucket" in job.payload:
+                    try:
+                        async with asyncio.timeout(self.config.scheduled_crawl_timeout_seconds):
+                            result = await invoke_handler(handler, job.payload, context)
+                    except TimeoutError as exc:
+                        raise HandlerError(
+                            "scheduled source exceeded its crawl time budget",
+                            code="CRAWL_TIME_BUDGET_EXCEEDED",
+                            retryable=False,
+                        ) from exc
+                else:
+                    result = await invoke_handler(handler, job.payload, context)
                 # The durable side effect must commit before the queue
                 # transition; a lost lease can then safely replay an
                 # idempotent application.
@@ -469,6 +483,10 @@ class WorkerRuntime:
         return f"{job.job_type}:{job.dedupe_key or job.id}"
 
     async def _fail(self, job: Job, error: Mapping[str, Any], *, retryable: bool) -> JobStatus:
+        # Freshness comes from the next scheduled refresh, not repeated
+        # attempts at one unavailable publisher while other sources wait.
+        if job.job_type == "crawl" and "schedule_bucket" in job.payload:
+            retryable = False
         # ResultApplicationError defaults to retryable=False so apply conflicts
         # (0 share rows, stale aggregates) become FAILED instead of PENDING.
         delay = self.backoff.delay(job.attempts) if retryable else 0.0
@@ -501,7 +519,7 @@ class WorkerRuntime:
     def _record_claim(self, job: Job) -> None:
         self._claimed_count += 1
         self._last_job_id = job.id
-        logger.info(
+        logger.debug(
             "job_claimed",
             extra={
                 "event": "job_claimed",
@@ -516,7 +534,7 @@ class WorkerRuntime:
     def _record_success(self, job: Job, *, cached: bool = False) -> None:
         self._succeeded_count += 1
         self._last_job_id = job.id
-        logger.info(
+        logger.debug(
             "job_succeeded",
             extra={
                 "event": "job_succeeded",

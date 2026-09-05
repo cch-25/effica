@@ -88,10 +88,8 @@ _SOURCES_BY_HOME = {
 SCHEDULED_RSS_FEEDS = {
     source.home_url: source.feed_url for source in SCHEDULED_RSS_SOURCES
 }
-# Eight scheduled publishers run every 15 minutes with a polite per-source
-# request rate. Thirty fully hydrated articles per source keeps one cycle well
-# inside the schedule while still providing a broad, fresh homepage corpus.
-SCHEDULED_RSS_MAX_ITEMS = 30
+# A small fresh batch leaves capacity for other publishers and analysis.
+SCHEDULED_RSS_MAX_ITEMS = 8
 
 
 def bootstrap_scheduled_rss_sources() -> tuple[ScheduledRSSSource, ...]:
@@ -117,6 +115,8 @@ def scheduled_rss_config(
         "allowed_domains": [article_domain],
         "metadata_only": False,
         "max_items": SCHEDULED_RSS_MAX_ITEMS,
+        "max_retries": 0,
+        "timeout_seconds": 10,
         "allow_empty_result": False,
         "policy_reference": policy_reference or source.policy_reference,
     }

@@ -349,7 +349,7 @@ class MariaDBCrawlScheduler:
         *,
         interval_seconds: float = 900.0,
         batch_size: int = 50,
-        max_attempts: int = 5,
+        max_attempts: int = 1,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
         if interval_seconds < 1:
@@ -400,7 +400,8 @@ class MariaDBCrawlScheduler:
               SELECT JSON_UNQUOTE(JSON_EXTRACT(
                        payload_json, '$.source_id'
                      )) AS source_id,
-                     MAX(created_at) AS last_scheduled_at
+                     MAX(created_at) AS last_scheduled_at,
+                     SUM(status IN ('PENDING', 'LEASED')) AS active_jobs
               FROM jobs
               WHERE job_type = 'crawl'
               GROUP BY JSON_UNQUOTE(JSON_EXTRACT(
@@ -412,6 +413,7 @@ class MariaDBCrawlScheduler:
               AND s.robots_status = 'APPROVED'
               AND s.terms_status = 'APPROVED'
               AND j.id IS NULL
+              AND COALESCE(history.active_jobs, 0) = 0
             ORDER BY history.last_scheduled_at IS NOT NULL,
                      history.last_scheduled_at, s.id
             LIMIT {self.batch_size}
@@ -512,7 +514,7 @@ class MariaDBCrawlScheduler:
                                            attempts, max_attempts, payload_json,
                                            last_error_json, created_at, updated_at)
                                         VALUES
-                                          (:id, 'crawl', :dedupe_key, 'PENDING', -10,
+                                          (:id, 'crawl', :dedupe_key, 'PENDING', 0,
                                            :available_at, NULL, NULL, 0, :max_attempts,
                                            :payload_json, NULL, :created_at, :updated_at)
                                         ON DUPLICATE KEY UPDATE id = id

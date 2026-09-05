@@ -167,13 +167,18 @@ async def handle(payload: Mapping[str, Any], context: HandlerContext | None = No
         fetched = await _invoke_source_fetcher(fetcher, source, url)
         response = _coerce_response(fetched, url=url, source_type=source_type)
         payload_value = _payload_for_adapter(source_type, response)
+        scheduled_rss = source_type == "RSS" and _config_bool(
+            adapter_config.get("scheduled"), default=False
+        )
+        # Read the bounded feed response before selecting its newest entries.
+        parse_config = {**adapter_config, "max_items": None} if scheduled_rss else adapter_config
         candidates, parse_stats = _parse_payload_resilient(
             source_type,
             payload_value,
             source_id=source_id,
             url=url,
             policy=_crawler_guard(source_type, source),
-            config=adapter_config,
+            config=parse_config,
         )
         candidates, pagination_stats = await _fetch_additional_pages(
             fetcher,
@@ -191,6 +196,19 @@ async def handle(payload: Mapping[str, Any], context: HandlerContext | None = No
             parse_stats[key] = parse_stats.get(key, 0) + int(pagination_stats.pop(key, 0) or 0)
         discovery_stats: dict[str, Any] = {}
         hydration_stats: dict[str, Any] = {}
+        if scheduled_rss:
+            # Feeds need not be newest-first. Select fresh entries before
+            # spending article-page requests on the bounded batch.
+            from apps.api.app.domains.content.retention import expired, utc
+
+            candidates = [
+                item for item in candidates
+                if not expired(item.published_at, response.fetched_at, response.fetched_at)
+            ]
+            candidates.sort(
+                key=lambda item: utc(item.published_at) or datetime.min.replace(tzinfo=UTC),
+                reverse=True,
+            )
         candidates = _limit_candidates(
             _deduplicate_candidates(candidates), adapter_config.get("max_items")
         )

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import socket
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 
 import httpx
 import pytest
@@ -18,6 +20,39 @@ from apps.worker.worker.source_fetcher import (
     SourceFetchService,
 )
 from db.seeds.source_feeds import SCHEDULED_RSS_MAX_ITEMS, scheduled_rss_config
+
+
+def test_scheduled_rss_selects_newest_before_hydration_limit() -> None:
+    now = datetime.now(UTC)
+    items = "".join(
+        f'<item><title>{name}</title><link>https://news.test/{name}</link>'
+        f'<pubDate>{format_datetime(now - timedelta(days=age))}</pubDate></item>'
+        for name, age in (("expired", 10), ("older", 2), ("newest", 0))
+    )
+    feed = f"<rss><channel>{items}</channel></rss>".encode()
+    fetched = []
+
+    async def source_fetcher(source):
+        url = source["url"]
+        fetched.append(url)
+        return SourceFetchResponse(
+            url=url, status_code=200,
+            headers={"content-type": "application/rss+xml" if url.endswith("/feed") else "text/html"},
+            body=feed if url.endswith("/feed") else b"<article><p>Latest article body.</p></article>",
+        )
+
+    async def scenario():
+        result = await handle(
+            {"source_id": "fresh", "source_type": "RSS", "url": "https://news.test/feed",
+             "policy_status": "APPROVED", "robots_status": "APPROVED", "terms_status": "APPROVED",
+             "config": {"scheduled": True, "hydrate_article_links": True,
+                        "require_hydrated_body": True, "max_items": 1}},
+            HandlerContext(services={"source_fetcher": source_fetcher}),
+        )
+        assert len(result.value["articles"]) == 1
+        assert fetched == ["https://news.test/feed", "https://news.test/newest"]
+
+    asyncio.run(scenario())
 
 
 def test_job_url_still_loads_adapter_config_and_paginates_with_partial_items() -> None:
