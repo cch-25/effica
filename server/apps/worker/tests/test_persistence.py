@@ -31,7 +31,7 @@ def test_crawl_result_keeps_new_articles_in_a_canonical_topic_bucket() -> None:
 
     async def scenario() -> None:
         session = Session()
-        applier = MariaDBResultApplier(lambda: None)
+        applier = MariaDBResultApplier(lambda: None, minimum_analysis_content_chars=10)
         await applier._upsert_topic_membership(
             session,
             article_id="article-1",
@@ -78,7 +78,7 @@ def test_crawl_blocks_raw_only_article_and_reactivates_it_after_body_hydration()
 
     async def scenario() -> None:
         session = Session()
-        applier = MariaDBResultApplier(lambda: None)
+        applier = MariaDBResultApplier(lambda: None, minimum_analysis_content_chars=10)
         enqueued: list[tuple[str, dict[str, Any]]] = []
         memberships: list[str] = []
         cluster_seeds: list[list[str]] = []
@@ -139,8 +139,8 @@ def test_crawl_blocks_raw_only_article_and_reactivates_it_after_body_hydration()
                         "article_id": "article-new-id-is-ignored",
                         "article_version_id": "version-body",
                         "url": url,
-                        "title": "Hydrated article",
-                        "content": "Substantive normalized article body.",
+                            "title": "국회 정책 분석 기사",
+                            "content": "국회 정책을 다룬 충분한 기사 본문입니다.",
                         "raw_payload": {"title": "Hydrated article"},
                     }
                 ],

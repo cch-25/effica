@@ -441,7 +441,7 @@ def test_crawl_analysis_dedupe_is_stable_across_crawl_generations() -> None:
             return _Result(rowcount=1)
 
     async def scenario() -> None:
-        applier = MariaDBResultApplier(lambda: None)
+        applier = MariaDBResultApplier(lambda: None, minimum_analysis_content_chars=10)
         enqueued: list[tuple[str, str]] = []
 
         async def store_blob(session, payload, **kwargs):
@@ -460,8 +460,8 @@ def test_crawl_analysis_dedupe_is_stable_across_crawl_generations() -> None:
                     "article_id": "article-1",
                     "article_version_id": "version-1",
                     "url": "https://example.test/article",
-                    "title": "Article",
-                    "content": "Substantive article body",
+                    "title": "정부 정책 분석 기사",
+                    "content": "정부 정책과 국회 논의를 다룬 충분한 기사 본문입니다.",
                 }
             ],
         }

@@ -103,7 +103,11 @@ _MAX_RETRIES = 8
 _MAX_BACKOFF_SECONDS = 60.0
 _MAX_TIMEOUT_SECONDS = 300.0
 _RETRYABLE_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
-_MAX_ARTICLE_PROMPT_CHARS = 60_000
+_MAX_ARTICLE_PROMPT_CHARS = 20_000
+_MAX_COMPARISON_ARTICLE_CHARS = 12_000
+_LUNA_MODEL_ID = "gpt-5.6-luna"
+_LUNA_INPUT_USD_PER_MILLION = 0.20
+_LUNA_OUTPUT_USD_PER_MILLION = 1.20
 
 
 @dataclass(frozen=True)
@@ -125,7 +129,8 @@ class ProviderConfig:
     max_retries: int = 2
     rate_limit_per_minute: int = 60
     endpoint: str = ""
-    reasoning_effort: str = "high"
+    reasoning_effort: str = "none"
+    max_output_tokens: int = 4_096
     model_alias_id: str | None = None
     api_key: str | None = field(default=None, repr=False)
     api_key_header: str = "Authorization"
@@ -196,6 +201,8 @@ class ProviderConfig:
             raise ValueError("provider api key header is required")
         if self.reasoning_effort not in {"none", "low", "medium", "high", "xhigh", "max"}:
             raise ValueError("provider reasoning effort is invalid")
+        if not isinstance(self.max_output_tokens, int) or not 256 <= self.max_output_tokens <= 8_192:
+            raise ValueError("provider max output tokens must be between 256 and 8192")
         normalised_headers: dict[str, str] = {}
         for key, value in self.headers.items():
             if not isinstance(key, str) or not key.strip() or not isinstance(value, str):
@@ -826,6 +833,70 @@ class HttpLLMProvider(LLMProvider):
         if self._owns_client:
             self._client.close()
 
+    def _conservative_max_cost_microusd(self, request_body: Mapping[str, Any]) -> int:
+        """Price a request before sending it, using serialized bytes as an input ceiling."""
+
+        if self.config.actual_model_id != _LUNA_MODEL_ID:
+            raise ProviderConfigurationError(
+                "paid analysis is restricted to the budgeted GPT-5.6 Luna model"
+            )
+        # A tokenizer cannot emit more tokens than the serialized request has
+        # bytes. JSON escaping is retained here to keep the estimate safely
+        # above the wire representation for Korean and other non-ASCII text.
+        maximum_input_tokens = len(
+            json.dumps(request_body, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+        )
+        input_microusd = (
+            maximum_input_tokens * _LUNA_INPUT_USD_PER_MILLION
+        )
+        output_microusd = self.config.max_output_tokens * _LUNA_OUTPUT_USD_PER_MILLION
+        # The per-million-token USD price is numerically equal to micro-USD per
+        # token. Keep a ten percent safety margin and always round upward.
+        return max(1, math.ceil((input_microusd + output_microusd) * 1.10))
+
+    def estimate_article_max_cost_microusd(
+        self, input: AssessmentInput, prompt_version: str
+    ) -> int:
+        return self._conservative_max_cost_microusd(
+            self._request_body(input, prompt_version)
+        )
+
+    def article_request_key(self, input: AssessmentInput, prompt_version: str) -> str:
+        # Version IDs are bookkeeping, not semantic input. Exact full masked
+        # content keeps cached evidence offsets safe even beyond truncation.
+        canonical = input.model_copy(update={"article_version_id": "content-addressed"})
+        return self._request_key({
+            "request": self._request_body(canonical, prompt_version),
+            "full_content": mask_source_identity(
+                input.content, input.source_name, input.source_url
+            ),
+        })
+
+    def comparison_request_key(
+        self, articles: Iterable[Mapping[str, Any]], prompt_version: str
+    ) -> str:
+        rows = sorted(
+            (dict(row, article_version_id="content-addressed") for row in articles),
+            key=lambda row: str(row["article_id"]),
+        )
+        return self._request_key(self._issue_comparison_request_body(rows, prompt_version))
+
+    def _request_key(self, body: Mapping[str, Any]) -> str:
+        value = {"cache_version": 1, "alias": self.config.alias, "request": body}
+        return hashlib.sha256(
+            json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+    def estimate_issue_comparison_max_cost_microusd(
+        self,
+        articles: Iterable[Mapping[str, Any]],
+        prompt_version: str,
+    ) -> int:
+        rows = [dict(article) for article in articles]
+        return self._conservative_max_cost_microusd(
+            self._issue_comparison_request_body(rows, prompt_version)
+        )
+
     def __enter__(self) -> HttpLLMProvider:
         return self
 
@@ -1045,9 +1116,11 @@ class HttpLLMProvider(LLMProvider):
             source_url = str(article.get("source_url") or "") or None
             title = mask_source_identity(
                 str(article.get("title") or ""), source_name, source_url
-            )
+            )[:2_000]
             content = mask_source_identity(
-                str(article.get("content") or article.get("body") or "")[:30_000],
+                str(article.get("content") or article.get("body") or "")[
+                    :_MAX_COMPARISON_ARTICLE_CHARS
+                ],
                 source_name,
                 source_url,
             )
@@ -1082,6 +1155,7 @@ class HttpLLMProvider(LLMProvider):
         return {
             "model": self.config.actual_model_id,
             "reasoning": {"effort": self.config.reasoning_effort},
+            "max_output_tokens": self.config.max_output_tokens,
             "instructions": (
                 "You are a content-first issue framing analyst. Return only the requested "
                 "structured comparison. Do not include personal data, secrets, URLs, publisher "
@@ -1148,6 +1222,7 @@ class HttpLLMProvider(LLMProvider):
         return {
             "model": self.config.actual_model_id,
             "reasoning": {"effort": self.config.reasoning_effort},
+            "max_output_tokens": self.config.max_output_tokens,
             "instructions": (
                 "You are a content-first political framing analyst. Return only the "
                 "requested structured assessment. Do not include personal data, secrets, "

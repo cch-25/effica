@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import stat
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 
@@ -37,12 +38,16 @@ class Settings(BaseSettings):
     openai_endpoint: str = "https://api.openai.com/v1/responses"
     llm_model: str = "gpt-5.6-luna"
     llm_model_alias: str = "openai-default"
-    llm_reasoning_effort: str = "high"
+    llm_reasoning_effort: str = "none"
+    llm_max_output_tokens: int = Field(default=4_096, ge=256, le=8_192)
+    llm_daily_budget_usd: Decimal = Field(default=Decimal("5.00"), gt=0, le=5)
+    llm_daily_request_limit: int = Field(default=110, ge=1, le=110)
+    llm_daily_article_limit: int = Field(default=100, ge=1, le=100)
+    llm_daily_comparison_limit: int = Field(default=10, ge=0, le=10)
+    llm_min_article_chars: int = Field(default=200, ge=200, le=20_000)
     llm_timeout_seconds: float = Field(default=180.0, gt=0, le=300)
-    # The durable queue is the retry authority. Keeping provider-local retries
-    # at zero prevents one slow request from occupying a worker slot for
-    # several timeout windows before queue backoff can restore fairness.
-    llm_max_retries: int = Field(default=0, ge=0, le=4)
+    # Possibly billed requests are never automatically resubmitted.
+    llm_max_retries: int = Field(default=0, ge=0, le=0)
     log_level: str = "INFO"
     worker_lease_seconds: float = Field(default=180.0, gt=5, le=3600)
     worker_heartbeat_seconds: float = Field(default=45.0, gt=1, le=1200)
@@ -165,6 +170,10 @@ class Settings(BaseSettings):
         ):
             raise RuntimeError(
                 "WORKER_QUEUE_ERROR_BACKOFF_MAX_SECONDS must be at least the base delay"
+            )
+        if self.llm_daily_comparison_limit > self.llm_daily_request_limit:
+            raise RuntimeError(
+                "LLM_DAILY_COMPARISON_LIMIT must not exceed LLM_DAILY_REQUEST_LIMIT"
             )
 
 

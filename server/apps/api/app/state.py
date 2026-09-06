@@ -319,7 +319,7 @@ class PlatformState:
             "alias": "openai-default",
             "provider": "openai",
             "actual_model_id": "gpt-5.6-luna",
-            "reasoning_effort": "high",
+            "reasoning_effort": "none",
             "secret_env_name": "OPENAI_API_KEY",
             "status": "ACTIVE",
             "version": 1,

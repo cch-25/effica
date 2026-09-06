@@ -77,7 +77,8 @@ class MariaDBWorkerLookups:
     async def article_version_lookup(self, identifier: Any) -> dict[str, Any] | None:
         row = await self._one(
             """
-            SELECT av.id AS article_version_id, av.article_id, a.title, a.author,
+            SELECT av.id AS article_version_id, av.article_id, a.current_version_id,
+                   a.title, a.author,
                    a.canonical_url AS source_url, s.name AS source_name,
                    b.payload AS normalized_payload
             FROM article_versions av
@@ -97,6 +98,34 @@ class MariaDBWorkerLookups:
         elif payload is not None:
             row["text"] = str(payload)
         return row
+
+    async def existing_article_analysis(self, version_id: str, prompt_version: str) -> bool:
+        rows = await self._all("""
+            SELECT ma.evidence_json
+            FROM model_assessments ma
+            JOIN model_aliases aliases ON aliases.id = ma.model_alias_id
+            WHERE ma.article_version_id = :version_id AND ma.prompt_version = :prompt_version
+              AND ma.status = 'SUCCEEDED' AND aliases.provider = 'openai'
+              AND aliases.actual_model_id LIKE 'gpt-%'
+              AND aliases.alias NOT IN ('dummy-crawl-v1', 'deterministic-stub')
+        """, {"version_id": version_id, "prompt_version": prompt_version})
+        return any(
+            not evidence_is_synthetic(_json_value(row.get("evidence_json"), {}))
+            for row in rows
+        )
+
+    async def comparison_is_current(self, issue_id: str, version_ids: Sequence[str]) -> bool:
+        rows = await self._all("""
+            SELECT a.current_version_id AS version_id
+            FROM issues i
+            JOIN issue_memberships im ON im.issue_id = i.id
+            JOIN articles a ON a.id = im.article_id
+            WHERE i.id = :issue_id AND i.issue_kind = 'EVENT' AND i.status = 'active'
+              AND a.status = 'active'
+        """, {"issue_id": issue_id})
+        return 2 <= len(rows) <= 4 and sorted(str(row["version_id"]) for row in rows) == sorted(
+            str(value) for value in version_ids
+        )
 
     async def articles_lookup(self, identifier: Any) -> list[dict[str, Any]]:
         ids = [str(value) for value in identifier] if isinstance(identifier, Sequence) and not isinstance(identifier, (str, bytes)) else [str(identifier)]
@@ -359,7 +388,7 @@ class MariaDBWorkerLookups:
         if row is None:
             return None
         config = _json_value(row.pop("config_json", None), {})
-        row["reasoning_effort"] = str(config.get("reasoning_effort", "high"))
+        row["reasoning_effort"] = str(config.get("reasoning_effort", "none"))
         return row
 
     async def export_records_lookup(self, identifier: Any) -> dict[str, Any]:
@@ -407,6 +436,7 @@ class MariaDBWorkerLookups:
         return {
             "source_lookup": self.source_lookup,
             "article_version_lookup": self.article_version_lookup,
+            "existing_article_analysis": self.existing_article_analysis,
             "articles_lookup": self.articles_lookup,
             "issue_comparison_inputs": self.issue_comparison_inputs,
             "votes_lookup": self.votes_lookup,

@@ -70,6 +70,7 @@ apps/api/app/repositories/product.py
 apps/api/app/state.py
 apps/worker/__init__.py
 apps/worker/worker/__init__.py
+apps/worker/worker/analysis_eligibility.py
 apps/worker/worker/handlers/__init__.py
 apps/worker/worker/handlers/aggregate_votes.py
 apps/worker/worker/handlers/analyze.py
@@ -86,6 +87,7 @@ apps/worker/worker/handlers/registry.py
 apps/worker/worker/handlers/render_share_card.py
 apps/worker/worker/handlers/simulate_weights.py
 apps/worker/worker/lookups.py
+apps/worker/worker/llm_budget.py
 apps/worker/worker/main.py
 apps/worker/worker/queue.py
 apps/worker/worker/services.py
@@ -121,7 +123,10 @@ db/alembic/versions/0014_luna_high_reasoning.py
 db/alembic/versions/0015_article_retention.py
 db/alembic/versions/0016_essential_storage.py
 db/alembic/versions/0017_remove_obsolete_storage.py
+db/alembic/versions/0018_llm_cost_guardrails.py
+db/alembic/versions/0019_llm_request_dedup.py
 db/seeds/__init__.py
+db/llm_audit.py
 db/seeds/analyze_articles.py
 db/seeds/articles.json
 db/seeds/demo_showcase.json

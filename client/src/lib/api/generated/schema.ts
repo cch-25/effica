@@ -1776,7 +1776,7 @@ export interface components {
             provider: "openai";
             /**
              * Reasoning Effort
-             * @default high
+             * @default none
              * @enum {string}
              */
             reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh" | "max";

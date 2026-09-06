@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from collections.abc import Mapping
 from typing import Any
 
 from apps.api.app.domains.analysis import (
     AssessmentInput,
     LLMProvider,
+    ModelAssessment,
     ProviderConfigurationError,
     ProviderError,
     ProviderHTTPError,
@@ -18,6 +20,8 @@ from apps.api.app.domains.analysis import (
     make_stub_providers,
 )
 
+from ..analysis_eligibility import assess_analysis_eligibility
+from ..llm_budget import DailyLLMBudgetExceeded, LLMRequestSuppressed
 from .base import (
     HandlerContext,
     HandlerError,
@@ -70,6 +74,21 @@ async def handle(
         source_url=str(source["source_url"]) if source.get("source_url") else None,
         author=str(source["author"]) if source.get("author") else None,
     )
+    if context is not None and context.services.get("llm_budget") is not None:
+        eligibility = assess_analysis_eligibility(
+            assessment_input.title, assessment_input.content,
+            minimum_content_chars=context.services.get("minimum_analysis_content_chars", 200),
+        )
+        skip_reason = None
+        if source.get("current_version_id") not in (None, article_version_id):
+            skip_reason = "STALE_ARTICLE_VERSION"
+        elif not eligibility.eligible:
+            skip_reason = eligibility.reason
+        if skip_reason:
+            return HandlerResult(value={
+                "article_version_id": article_version_id,
+                "status": "SKIPPED", "skip_reason": skip_reason, "assessments": [],
+            }, side_effect_key=context.idempotency_key)
     prompt_value = source.get("prompt_version", "bias-sensationalism-v1")
     if not isinstance(prompt_value, str) or not prompt_value.strip():
         raise NonRetryableHandlerError(
@@ -78,6 +97,12 @@ async def handle(
             details={"field": "prompt_version"},
         )
     prompt_version = prompt_value.strip()
+    existing = None if context is None else context.services.get("existing_article_analysis")
+    if callable(existing) and await existing(article_version_id, prompt_version):
+        return HandlerResult(value={
+            "article_version_id": article_version_id, "prompt_version": prompt_version,
+            "status": "SKIPPED", "skip_reason": "ANALYSIS_ALREADY_STORED", "assessments": [],
+        }, side_effect_key=context.idempotency_key)
     configured = None if context is None else context.services.get("analysis_providers")
     if configured is not None and (
         not isinstance(configured, (list, tuple))
@@ -138,18 +163,81 @@ async def handle(
         providers = make_stub_providers(1)
     assessments = []
     provider_errors: list[dict[str, Any]] = []
+    budget = None if context is None else context.services.get("llm_budget")
     try:
         for provider in providers:
+            reservation = None
             try:
-                assessments.append(
-                    await asyncio.to_thread(
+                if budget is not None:
+                    estimate = getattr(provider, "estimate_article_max_cost_microusd", None)
+                    reserve = getattr(budget, "reserve", None)
+                    if not callable(estimate) or not callable(reserve):
+                        raise NonRetryableHandlerError(
+                            "live analysis budget guard is invalid",
+                            code="INVALID_LLM_BUDGET_GUARD",
+                        )
+                    reservation = await reserve(
+                        category="article",
+                        request_key=provider.article_request_key(assessment_input, prompt_version),
+                        subject_key=str(source.get("article_id") or article_version_id),
+                        article_keys=[str(source.get("article_id") or article_version_id)],
+                        estimated_max_cost_microusd=estimate(
+                            assessment_input, prompt_version
+                        ),
+                    )
+                cached = None if reservation is None else reservation.cached_response
+                if cached is not None:
+                    cached = dict(cached, article_version_id=article_version_id, token_usage=0, latency_ms=0)
+                    cached["evidence"] = [
+                        dict(item, article_version_id=article_version_id)
+                        for item in cached.get("evidence", [])
+                    ]
+                    # JSON validation permits the persisted enum string while
+                    # preserving strict validation of all public evidence.
+                    assessment = ModelAssessment.model_validate_json(json.dumps(cached))
+                else:
+                    assessment = await asyncio.to_thread(
                         provider.analyze_article,
                         assessment_input,
                         prompt_version,
                     )
+                    if reservation is not None:
+                        await budget.record_response(
+                            reservation, assessment.model_dump(mode="json")
+                        )
+                assessments.append(assessment)
+                if reservation is not None and cached is None:
+                    record = getattr(budget, "record_observed_tokens", None)
+                    if callable(record):
+                        try:
+                            await record(reservation, assessment.token_usage)
+                        except Exception:
+                            # Authorization is the cost boundary. Usage totals
+                            # are observability only and must never cause a
+                            # second paid request after a successful response.
+                            pass
+            except DailyLLMBudgetExceeded:
+                return HandlerResult(
+                    value={
+                        "article_version_id": article_version_id,
+                        "prompt_version": prompt_version,
+                        "status": "SKIPPED",
+                        "skip_reason": "DAILY_LLM_BUDGET_EXCEEDED",
+                        "resets_at": "00:00 Asia/Seoul",
+                        "assessments": [],
+                    },
+                    side_effect_key=(context.idempotency_key if context else None),
                 )
+            except LLMRequestSuppressed as exc:
+                return HandlerResult(value={
+                    "article_version_id": article_version_id,
+                    "prompt_version": prompt_version,
+                    "status": "SKIPPED", "skip_reason": exc.reason, "assessments": [],
+                }, side_effect_key=(context.idempotency_key if context else None))
+            except NonRetryableHandlerError:
+                raise
             except ProviderError as exc:
-                retryable = _provider_error_is_retryable(exc)
+                retryable = reservation is None and _provider_error_is_retryable(exc)
                 provider_errors.append(
                     {
                         "model_alias": provider.config.alias,

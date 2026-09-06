@@ -418,7 +418,7 @@ class AdminRepositoryMixin:
             "alias": row.alias,
             "provider": row.provider,
             "actual_model_id": row.actual_model_id,
-            "reasoning_effort": config.get("reasoning_effort", "high"),
+            "reasoning_effort": config.get("reasoning_effort", "none"),
             "secret_env_name": configured_secret,
             "status": _value(row.status),
             "config_json": _safe_json(config),

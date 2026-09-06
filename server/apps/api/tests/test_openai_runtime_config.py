@@ -6,13 +6,19 @@ from pydantic import ValidationError
 from apps.api.app.core.config import Settings
 
 
-def test_openai_runtime_defaults_to_luna_high_and_one_key() -> None:
+def test_openai_runtime_defaults_to_luna_with_bounded_daily_cost() -> None:
     settings = Settings(_env_file=None, openai_api_key="test-key")
 
     assert settings.llm_provider_mode == "auto"
     assert settings.live_llm_enabled is True
     assert settings.llm_model == "gpt-5.6-luna"
-    assert settings.llm_reasoning_effort == "high"
+    assert settings.llm_reasoning_effort == "none"
+    assert settings.llm_max_output_tokens == 4_096
+    assert settings.llm_daily_budget_usd == 5
+    assert settings.llm_daily_request_limit == 110
+    assert settings.llm_daily_article_limit == 100
+    assert settings.llm_daily_comparison_limit == 10
+    assert settings.llm_min_article_chars == 200
     assert settings.llm_timeout_seconds == 180.0
     assert settings.llm_max_retries == 0
     assert settings.openai_endpoint == "https://api.openai.com/v1/responses"

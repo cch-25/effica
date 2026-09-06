@@ -7,7 +7,7 @@ def test_integrated_deployer_scopes_admin_and_uses_mariadb_stdin() -> None:
     deploy_script = Path(__file__).resolve().parents[4] / ".ops" / "deploy.sh"
     source = deploy_script.read_text(encoding="utf-8")
 
-    assert 'host = required("VULTR_IPV4_PUBLIC_ADDRESS")' in source
+    assert 'host = str(ipaddress.IPv4Address(required("VULTR_IPV4_PUBLIC_ADDRESS")))' in source
     assert 'ssh_password = required("VULTR_PASSWORD")' in source
     assert "GRANT ALL PRIVILEGES ON `{database}`.*" in source
     assert "GRANT ALL PRIVILEGES ON *.*" not in source

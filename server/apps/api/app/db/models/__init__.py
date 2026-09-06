@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import (
     BINARY,
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     Date,
@@ -927,6 +928,61 @@ class RuntimeControl(Base):
     __table_args__ = (
         UniqueConstraint("singleton_key", name="uq_runtime_controls_singleton_key"),
         CheckConstraint("version > 0", name="positive_runtime_control_version"),
+    )
+
+
+class LLMDailyUsage(Base):
+    __tablename__ = "llm_daily_usage"
+
+    usage_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    article_request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    comparison_request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reserved_microusd: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    observed_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    updated_at: Mapped[datetime] = _timestamp()
+
+    __table_args__ = (
+        CheckConstraint("request_count >= 0", name="nonnegative_llm_request_count"),
+        CheckConstraint(
+            "article_request_count >= 0",
+            name="nonnegative_llm_article_request_count",
+        ),
+        CheckConstraint(
+            "comparison_request_count >= 0",
+            name="nonnegative_llm_comparison_request_count",
+        ),
+        CheckConstraint(
+            "reserved_microusd >= 0", name="nonnegative_llm_reserved_microusd"
+        ),
+        CheckConstraint("observed_tokens >= 0", name="nonnegative_llm_observed_tokens"),
+    )
+
+
+class LLMDailyArticle(Base):
+    __tablename__ = "llm_daily_articles"
+
+    usage_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    article_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+
+
+class LLMRequest(Base):
+    __tablename__ = "llm_requests"
+
+    request_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    category: Mapped[str] = mapped_column(String(16), nullable=False)
+    subject_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    usage_date: Mapped[date] = mapped_column(Date, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    response_json: Mapped[dict[str, Any] | None] = _json(nullable=True)
+    created_at: Mapped[datetime] = _timestamp()
+    updated_at: Mapped[datetime] = _timestamp()
+
+    __table_args__ = (
+        Index("ix_llm_requests_subject_day", "category", "usage_date", "subject_key"),
+        CheckConstraint("category IN ('article', 'comparison')", name="valid_llm_category"),
+        CheckConstraint("state IN ('SUBMITTED', 'SUCCEEDED')", name="valid_llm_request_state"),
+        _json_check("response_json"),
     )
 
 

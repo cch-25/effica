@@ -20,6 +20,7 @@ from .handlers.base import (
     invoke_handler,
 )
 from .handlers.registry import HandlerRegistry, build_default_registry
+from .llm_budget import DailyLLMBudgetExceeded, LLMRequestSuppressed, MariaDBLLMBudget
 from .queue import ExponentialBackoff, Job, JobStatus, MariaDBQueueRepository, QueueRepository
 from .services import (
     MariaDBCrawlScheduler,
@@ -29,6 +30,7 @@ from .services import (
     MemoryResultApplier,
     ResultApplicationError,
     ResultApplier,
+    _comparison_input_fingerprint,
 )
 
 logger = logging.getLogger(__name__)
@@ -832,7 +834,10 @@ def build_mariadb_runtime(
     if idempotency_store is None:
         idempotency_store = MariaDBIdempotencyStore(session_factory)
     if result_applier is None:
-        result_applier = MariaDBResultApplier(session_factory)
+        result_applier = MariaDBResultApplier(
+            session_factory,
+            minimum_analysis_content_chars=settings.llm_min_article_chars,
+        )
     if crawl_scheduler is None and settings.worker_crawl_scheduler_enabled:
         crawl_scheduler = MariaDBCrawlScheduler(
             session_factory,
@@ -874,26 +879,28 @@ def _default_services(session_factory: Callable[[], Any]) -> dict[str, Any]:
         ProviderError,
     )
 
+    llm_budget = MariaDBLLMBudget(
+        session_factory,
+        daily_budget_usd=settings.llm_daily_budget_usd,
+        daily_request_limit=settings.llm_daily_request_limit,
+        daily_article_limit=settings.llm_daily_article_limit,
+        daily_comparison_limit=settings.llm_daily_comparison_limit,
+    )
+    services["llm_budget"] = llm_budget
+    services["minimum_analysis_content_chars"] = settings.llm_min_article_chars
+
     async def analysis_provider_factory(*, attempt: int = 1) -> HttpLLMProvider:
         configured = await lookups.analysis_model_lookup()
-        reasoning_effort = str(
-            (configured or {}).get("reasoning_effort")
-            or settings.llm_reasoning_effort
-        )
-        # Preserve the highest configured quality for normal requests. After
-        # three durable attempts, trade only the excess reasoning budget for
-        # completion so one pathological article cannot remain permanently
-        # unassessed after repeatedly reaching the request timeout.
-        reasoning_effort = _reasoning_effort_for_attempt(reasoning_effort, attempt)
         return HttpLLMProvider(
             ProviderConfig(
                 alias=str((configured or {}).get("alias") or settings.llm_model_alias),
                 actual_model_id=str(
                     (configured or {}).get("actual_model_id") or settings.llm_model
                 ),
-                reasoning_effort=reasoning_effort,
+                reasoning_effort="none",
+                max_output_tokens=settings.llm_max_output_tokens,
                 timeout_seconds=settings.llm_timeout_seconds,
-                max_retries=settings.llm_max_retries,
+                max_retries=0,
                 model_alias_id=(configured or {}).get("model_alias_id"),
                 endpoint=settings.openai_endpoint,
                 api_key=settings.openai_api_key,
@@ -902,12 +909,16 @@ def _default_services(session_factory: Callable[[], Any]) -> dict[str, Any]:
 
     services["analysis_provider_factory"] = analysis_provider_factory
 
-    async def issue_comparison_analysis(value: Any) -> dict[str, Any] | None:
+    async def issue_comparison_analysis(
+        value: Any, handler_context: HandlerContext
+    ) -> dict[str, Any] | None:
         if not isinstance(value, Mapping):
             return None
         version_ids = value.get("article_version_ids")
         if not isinstance(version_ids, (list, tuple)):
             return None
+        if not await lookups.comparison_is_current(str(value.get("issue_id") or ""), version_ids):
+            return {"status": "SKIPPED", "skip_reason": "STALE_OR_INACTIVE_COMPARISON"}
         articles = await lookups.issue_comparison_inputs(version_ids)
         if len(articles) != len(version_ids):
             # Comparison work carries immutable article-version identities.
@@ -921,13 +932,47 @@ def _default_services(session_factory: Callable[[], Any]) -> dict[str, Any]:
                 "current_article_versions": len(articles),
             }
         provider = await analysis_provider_factory()
+        prompt_version = str(value.get("prompt_version") or "issue-comparison-v1")
         try:
             try:
-                result = await asyncio.to_thread(
-                    provider.analyze_issue_comparison,
-                    articles,
-                    str(value.get("prompt_version") or "issue-comparison-v1"),
+                reservation = await llm_budget.reserve(
+                    category="comparison",
+                    request_key=provider.comparison_request_key(articles, prompt_version),
+                    subject_key=str(value.get("issue_id") or "comparison"),
+                    article_keys=[str(article["article_id"]) for article in articles],
+                    estimated_max_cost_microusd=(
+                        provider.estimate_issue_comparison_max_cost_microusd(
+                            articles,
+                            str(value.get("prompt_version") or "issue-comparison-v1"),
+                        )
+                    ),
                 )
+            except DailyLLMBudgetExceeded:
+                return {
+                    "status": "SKIPPED",
+                    "skip_reason": "DAILY_LLM_BUDGET_EXCEEDED",
+                    "resets_at": "00:00 Asia/Seoul",
+                    "job_id": handler_context.job_id,
+                    "expected_article_versions": len(version_ids),
+                    "current_article_versions": len(articles),
+                }
+            except LLMRequestSuppressed as exc:
+                return {"status": "SKIPPED", "skip_reason": exc.reason}
+            except ProviderError as exc:
+                raise HandlerError(
+                    "issue comparison provider configuration is not budgeted",
+                    code=exc.code,
+                    details={"model_alias": provider.config.alias},
+                    retryable=bool(getattr(exc, "retryable", False)),
+                ) from exc
+            try:
+                if reservation.cached_response is not None:
+                    result = dict(reservation.cached_response)
+                else:
+                    result = await asyncio.to_thread(
+                        provider.analyze_issue_comparison, articles, prompt_version,
+                    )
+                    await llm_budget.record_response(reservation, result)
             except ProviderError as exc:
                 raise HandlerError(
                     "issue comparison provider request failed",
@@ -936,14 +981,22 @@ def _default_services(session_factory: Callable[[], Any]) -> dict[str, Any]:
                         "model_alias": provider.config.alias,
                         "provider_message": str(exc)[:240],
                     },
-                    # Strict structured output still needs domain checks for
-                    # cross-article identities and evidence support. A model
-                    # can miss one of those constraints transiently, so let
-                    # the durable queue retry instead of terminally stranding
-                    # an otherwise current comparison.
-                    retryable=True,
+                    retryable=False,
                 ) from exc
+            try:
+                await llm_budget.record_observed_tokens(
+                    reservation, provider.metrics.last_token_usage
+                )
+            except Exception:
+                # The reservation already protects cost. Metrics must not
+                # replay a successful comparison request.
+                pass
             result["model_alias_id"] = provider.config.model_alias_id
+            result["input_fingerprint"] = _comparison_input_fingerprint(articles, prompt_version)
+            result["comparison_model_identity"] = {
+                "actual_model_id": provider.config.actual_model_id,
+                "reasoning_effort": provider.config.reasoning_effort,
+            }
             result["article_version_ids"] = {
                 str(article["article_id"]): str(article["article_version_id"])
                 for article in articles

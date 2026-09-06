@@ -471,7 +471,7 @@ class ModelCreate(ContractModel):
     alias: str = "openai-default"
     provider: Literal["openai"] = "openai"
     actual_model_id: str = "gpt-5.6-luna"
-    reasoning_effort: Literal["none", "low", "medium", "high", "xhigh", "max"] = "high"
+    reasoning_effort: Literal["none", "low", "medium", "high", "xhigh", "max"] = "none"
     secret_env_name: Literal["OPENAI_API_KEY"] | None = "OPENAI_API_KEY"
     status: Literal["ACTIVE", "DISABLED"] = "ACTIVE"
 

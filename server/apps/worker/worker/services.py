@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
+from .analysis_eligibility import assess_analysis_eligibility
 from .handlers.base import HandlerContext, HandlerResult
 from .queue import Job
 
@@ -105,6 +106,46 @@ def _bytes(value: Any) -> bytes:
     if isinstance(value, bytes):
         return value
     return str(value).encode("utf-8")
+
+
+def _article_input_hash(title: str, content: bytes, prior_rows: list[Any]) -> bytes:
+    if prior_rows:
+        prior = prior_rows[0]
+        old_hash = _row(prior, "content_hash")
+        if (
+            _row(prior, "title") == title
+            and _bytes(_row(prior, "normalized_payload")) == content
+            and isinstance(old_hash, (bytes, bytearray))
+        ):
+            return bytes(old_hash)
+    return hashlib.sha256(title.encode("utf-8") + b"\x00" + content).digest()
+
+
+def _comparison_input_fingerprint(
+    articles: list[Mapping[str, Any]], prompt_version: str
+) -> str:
+    """Identify comparison inputs, never the unrelated issue revision."""
+
+    return hashlib.sha256(
+        _json(
+            {
+                "prompt_version": prompt_version,
+                "articles": sorted(
+                    [
+                        {
+                            key: str(article.get(key) or "")
+                            for key in (
+                                "article_id", "article_version_id", "title",
+                                "source_name", "source_url",
+                            )
+                        }
+                        for article in articles
+                    ],
+                    key=lambda article: article["article_id"],
+                ),
+            }
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 async def _maybe_await(value: Any) -> Any:
@@ -625,9 +666,11 @@ class MariaDBResultApplier:
         session_factory: Callable[[], Any],
         *,
         clock: Callable[[], datetime] = utc_now,
+        minimum_analysis_content_chars: int = 1_200,
     ) -> None:
         self.session_factory = session_factory
         self.clock = clock
+        self.minimum_analysis_content_chars = max(1, int(minimum_analysis_content_chars))
 
     async def apply(
         self,
@@ -771,6 +814,49 @@ class MariaDBResultApplier:
             # Keep the durable job-result audit written by ``apply`` while
             # leaving the last successful comparison snapshot untouched.
             return
+        # An editorial revision may advance while the request is in flight.
+        # Rebase identical inputs without another request, but never let a
+        # stale completion demote a newer, valid snapshot.
+        current_issue = _rows(await self._execute(
+            session,
+            "SELECT version FROM issues WHERE id = :issue_id LIMIT 1 FOR UPDATE",
+            {"issue_id": issue_id},
+        ))
+        if not current_issue:
+            return
+        current_articles = await self._comparison_articles(session, issue_id)
+        current_versions = {
+            str(_row(row, "article_id")): str(_row(row, "article_version_id"))
+            for row in current_articles
+        }
+        fingerprint = str(result.get("input_fingerprint") or "")
+        if (
+            result.get("article_version_ids") != current_versions
+            or (fingerprint and fingerprint != _comparison_input_fingerprint(
+                current_articles, prompt_version
+            ))
+        ):
+            return
+        issue_version = int(_row(current_issue[0], "version"))
+        if fingerprint:
+            current_snapshots = _rows(await self._execute(
+                session,
+                """
+                SELECT article_frames_json FROM issue_comparison_snapshots
+                WHERE issue_id = :issue_id AND issue_version = :issue_version
+                  AND prompt_version = :prompt_version AND status = 'SUCCEEDED'
+                LIMIT 1
+                """,
+                {"issue_id": issue_id, "issue_version": issue_version,
+                 "prompt_version": prompt_version},
+            ))
+            if current_snapshots:
+                stored = _json_mapping(_row(current_snapshots[0], "article_frames_json"))
+                if (
+                    stored.get("input_fingerprint") == fingerprint
+                    and stored.get("comparison_model_identity") == result.get("comparison_model_identity")
+                ):
+                    return  # Preserve human review on duplicate/cache replay.
         await self._execute(
             session,
             """
@@ -818,6 +904,8 @@ class MariaDBResultApplier:
                     {
                         "article_frames": result.get("article_frames", {}),
                         "article_version_ids": result.get("article_version_ids", {}),
+                        "input_fingerprint": fingerprint,
+                        "comparison_model_identity": result.get("comparison_model_identity"),
                     }
                 ),
                 "confidence": _database_confidence(result.get("confidence", 0)),
@@ -994,7 +1082,7 @@ class MariaDBResultApplier:
         articles = result.get("articles") or job.payload.get("articles") or []
         if not isinstance(articles, (list, tuple)):
             return
-        persisted_article_ids: list[str] = []
+        eligible_article_ids: list[str] = []
         analyzable_version_ids: list[str] = []
         for article in articles:
             if not isinstance(article, Mapping):
@@ -1018,6 +1106,17 @@ class MariaDBResultApplier:
             article_status = "active" if content is not None else "blocked"
             canonical_hash = hashlib.sha256(url.encode("utf-8")).digest()
             article_id = str(article.get("article_id") or article.get("id") or _stable_id(f"article:{url}"))
+            prior_rows = _rows(await self._execute(
+                session,
+                """
+                SELECT a.title, av.content_hash, b.payload AS normalized_payload
+                FROM articles a
+                LEFT JOIN article_versions av ON av.id = a.current_version_id
+                LEFT JOIN stored_blobs b ON b.id = av.normalized_text_ref
+                WHERE a.canonical_url_hash = :url_hash LIMIT 1 FOR UPDATE
+                """,
+                {"url_hash": canonical_hash},
+            ))
             await self._execute(
                 session,
                 """
@@ -1065,9 +1164,10 @@ class MariaDBResultApplier:
                 normalized_ref = await self._store_blob(
                     session, _bytes(content), mime_type="text/plain; charset=utf-8"
                 )
-            content_hash = hashlib.sha256(
-                _bytes(content)
-            ).digest()
+            # A headline is part of the model input. Preserve legacy body-only
+            # hashes for truly unchanged current input to avoid a one-off
+            # migration reanalysis, but version real title or body changes.
+            content_hash = _article_input_hash(title, _bytes(content), prior_rows)
             await self._execute(
                 session,
                 """
@@ -1107,8 +1207,6 @@ class MariaDBResultApplier:
             # public topic membership for a metadata-only article.
             if normalized_ref is None:
                 continue
-            persisted_article_ids.append(article_id)
-            analyzable_version_ids.append(version_id)
             await self._upsert_topic_membership(
                 session,
                 article_id=article_id,
@@ -1116,6 +1214,20 @@ class MariaDBResultApplier:
                 summary=str(content)[:1000],
                 now=now,
             )
+            content_text = (
+                content.decode("utf-8", errors="replace")
+                if isinstance(content, bytes)
+                else str(content)
+            )
+            eligibility = assess_analysis_eligibility(
+                title,
+                content_text,
+                minimum_content_chars=self.minimum_analysis_content_chars,
+            )
+            if not eligibility.eligible:
+                continue
+            eligible_article_ids.append(article_id)
+            analyzable_version_ids.append(version_id)
 
         request_id = self._request_id(job, result)
         for version_id in sorted(set(analyzable_version_ids)):
@@ -1172,7 +1284,7 @@ class MariaDBResultApplier:
         # sources so one publisher can never manufacture an issue by itself.
         cluster_ids = await self._rolling_cluster_ids(
             session,
-            persisted_article_ids,
+            eligible_article_ids,
             now=now,
             window_hours=int(job.payload.get("cluster_window_hours", 72)),
         )
@@ -1268,7 +1380,7 @@ class MariaDBResultApplier:
                         FROM issue_memberships AS memberships
                         JOIN issues ON issues.id = memberships.issue_id
                         WHERE memberships.article_id = :article_id
-                          AND issues.status = 'candidate'
+                          AND issues.status IN ('candidate', 'active')
                           AND issues.issue_kind = 'EVENT'
                         ORDER BY issues.last_activity_at DESC, issues.id
                         LIMIT 1
@@ -1289,6 +1401,35 @@ class MariaDBResultApplier:
                 if len(candidate_article_ids) >= 3 and source_count >= 3
                 else "candidate"
             )
+            existing_issue = await self._execute(
+                session,
+                """
+                SELECT id, title, summary, topic, status, version
+                FROM issues WHERE id = :issue_id LIMIT 1 FOR UPDATE
+                """,
+                {"issue_id": issue_id},
+            )
+            existing_rows = _rows(existing_issue)
+            existing_members = await self._execute(
+                session,
+                "SELECT article_id FROM issue_memberships WHERE issue_id = :issue_id",
+                {"issue_id": issue_id},
+            )
+            member_ids = {str(_row(row, "article_id")) for row in _rows(existing_members)}
+            summary = candidate.get("summary")
+            topic = str(candidate.get("topic") or "일반")[:40]
+            changed = False
+            if existing_rows:
+                existing_row = existing_rows[0]
+                if _row(existing_row, "status") == "active":
+                    issue_status = "active"
+                changed = (
+                    bool(set(candidate_article_ids) - member_ids)
+                    or _row(existing_row, "title") != title
+                    or _row(existing_row, "summary") != summary
+                    or _row(existing_row, "topic") != topic
+                    or _row(existing_row, "status") != issue_status
+                )
             await self._execute(
                 session,
                 """
@@ -1300,17 +1441,20 @@ class MariaDBResultApplier:
                 ON DUPLICATE KEY UPDATE
                   title = VALUES(title), summary = VALUES(summary), topic = VALUES(topic),
                   status = IF(status = 'active', 'active', VALUES(status)),
-                  issue_kind = 'EVENT', last_activity_at = VALUES(last_activity_at),
-                  version = version + 1
+                  issue_kind = 'EVENT',
+                  last_activity_at = IF(:changed, VALUES(last_activity_at), last_activity_at),
+                  version = version + :version_increment
                 """,
                 {
                     "id": issue_id,
                     "title": title,
-                    "summary": candidate.get("summary"),
-                    "topic": str(candidate.get("topic") or "일반")[:40],
+                    "summary": summary,
+                    "topic": topic,
                     "status": issue_status,
                     "opened_at": now,
                     "last_activity_at": now,
+                    "changed": changed,
+                    "version_increment": int(changed),
                 },
             )
             for item in articles if isinstance(articles, (list, tuple)) else ():
@@ -1507,6 +1651,10 @@ class MariaDBResultApplier:
         version_id = str(result.get("article_version_id") or job.payload.get("article_version_id") or "")
         if not version_id:
             raise ResultApplicationError("analysis result is missing article_version_id")
+        if str(result.get("status") or "").strip().upper() == "SKIPPED":
+            # Budget exhaustion is a successful no-op. The provider was never
+            # called, so do not manufacture an assessment or a score.
+            return
         assessments = result.get("assessments") or []
         if not isinstance(assessments, (list, tuple)):
             raise ResultApplicationError("analysis assessments must be a list")
@@ -1685,7 +1833,8 @@ class MariaDBResultApplier:
             FROM issues i
             JOIN issue_memberships im ON im.issue_id = i.id
             WHERE im.article_id = :article_id
-              AND i.status NOT IN ('merged', 'closed', 'archived')
+              AND i.issue_kind = 'EVENT'
+              AND i.status = 'active'
             """,
             {"article_id": article_id},
         )
@@ -1694,18 +1843,7 @@ class MariaDBResultApplier:
             issue_version = int(_row(issue_row, "version", 0) or 0)
             if not issue_id or issue_version < 1:
                 continue
-            article_result = await self._execute(
-                session,
-                """
-                SELECT a.id AS article_id, a.current_version_id AS article_version_id
-                FROM issue_memberships im
-                JOIN articles a ON a.id = im.article_id
-                WHERE im.issue_id = :issue_id AND a.current_version_id IS NOT NULL
-                ORDER BY a.id
-                """,
-                {"issue_id": issue_id},
-            )
-            article_rows = _rows(article_result)
+            article_rows = await self._comparison_articles(session, issue_id)
             if not 2 <= len(article_rows) <= 4:
                 continue
             article_ids = [str(_row(row, "article_id")) for row in article_rows]
@@ -1713,12 +1851,81 @@ class MariaDBResultApplier:
             if any(not value for value in article_ids + version_ids):
                 continue
             prompt_version = "issue-comparison-v1"
+            fingerprint = _comparison_input_fingerprint(article_rows, prompt_version)
+            model_rows = _rows(await self._execute(
+                session,
+                """
+                SELECT id, actual_model_id, config_json FROM model_aliases
+                WHERE status = 'ACTIVE' AND provider = 'openai'
+                  AND actual_model_id LIKE 'gpt-%'
+                ORDER BY id DESC LIMIT 1
+                """,
+                {},
+            ))
+            model_identity = None
+            if model_rows:
+                model = model_rows[0]
+                model_identity = {
+                    "actual_model_id": str(_row(model, "actual_model_id")),
+                    "reasoning_effort": "none",
+                }
+                snapshots = _rows(await self._execute(
+                    session,
+                    """
+                    SELECT id, issue_version, article_frames_json, status
+                    FROM issue_comparison_snapshots
+                    WHERE issue_id = :issue_id AND prompt_version = :prompt_version
+                      AND model_alias_id = :model_alias_id
+                      AND status IN ('SUCCEEDED', 'SUPERSEDED')
+                    ORDER BY created_at DESC LIMIT 50
+                    """,
+                    {"issue_id": issue_id, "prompt_version": prompt_version,
+                     "model_alias_id": _row(model, "id")},
+                ))
+                matching_snapshot = next((
+                    row for row in snapshots
+                    if _json_mapping(_row(row, "article_frames_json")).get("input_fingerprint") == fingerprint
+                    and _json_mapping(_row(row, "article_frames_json")).get("comparison_model_identity") == model_identity
+                ), None)
+                if matching_snapshot is not None:
+                    if (
+                        int(_row(matching_snapshot, "issue_version")) != issue_version
+                        or _row(matching_snapshot, "status") != "SUCCEEDED"
+                    ):
+                        # Copy data, not editorial approval: the new issue
+                        # revision must still receive a human review.
+                        await self._execute(
+                            session,
+                            """
+                            INSERT INTO issue_comparison_snapshots
+                              (id, issue_id, issue_version, prompt_version, model_alias_id,
+                               common_facts_json, framing_dimensions_json, article_frames_json,
+                               confidence, status, reviewed_at, reviewed_by, created_at)
+                            SELECT :id, issue_id, :issue_version, prompt_version, model_alias_id,
+                                   common_facts_json, framing_dimensions_json, article_frames_json,
+                                   confidence, 'SUCCEEDED', NULL, NULL, :now
+                            FROM issue_comparison_snapshots WHERE id = :snapshot_id
+                            ON DUPLICATE KEY UPDATE
+                              model_alias_id = VALUES(model_alias_id),
+                              common_facts_json = VALUES(common_facts_json),
+                              framing_dimensions_json = VALUES(framing_dimensions_json),
+                              article_frames_json = VALUES(article_frames_json),
+                              confidence = VALUES(confidence), status = 'SUCCEEDED',
+                              reviewed_at = NULL, reviewed_by = NULL,
+                              created_at = VALUES(created_at)
+                            """,
+                            {"id": _stable_id(f"comparison:{issue_id}:{issue_version}:{prompt_version}"),
+                             "issue_version": issue_version, "now": now,
+                             "snapshot_id": _row(matching_snapshot, "id")},
+                        )
+                    continue
             payload: dict[str, Any] = {
                 "issue_id": issue_id,
                 "issue_version": issue_version,
                 "article_ids": article_ids,
                 "article_version_ids": version_ids,
                 "prompt_version": prompt_version,
+                "input_fingerprint": fingerprint,
             }
             if request_id is not None:
                 payload["request_id"] = request_id
@@ -1726,12 +1933,25 @@ class MariaDBResultApplier:
                 session,
                 "build_issue_comparison",
                 payload,
-                dedupe_key=(
-                    f"{issue_id}:{issue_version}:{':'.join(sorted(version_ids))}:"
-                    f"{prompt_version}"
-                ),
+                dedupe_key=f"{issue_id}:inputs:{fingerprint}:model:"
+                + hashlib.sha256(_json(model_identity).encode("utf-8")).hexdigest()[:24],
                 now=now,
             )
+
+    async def _comparison_articles(self, session: Any, issue_id: str) -> list[Any]:
+        return _rows(await self._execute(
+            session,
+            """
+            SELECT a.id AS article_id, a.current_version_id AS article_version_id,
+                   a.title, s.name AS source_name, a.canonical_url AS source_url
+            FROM issue_memberships im
+            JOIN articles a ON a.id = im.article_id
+            JOIN sources s ON s.id = a.source_id
+            WHERE im.issue_id = :issue_id AND a.current_version_id IS NOT NULL
+            ORDER BY a.id
+            """,
+            {"issue_id": issue_id},
+        ))
 
     async def _apply_aggregate(self, session: Any, job: Job, result: Mapping[str, Any], now: datetime) -> None:
         article_id = str(result.get("article_id") or job.payload.get("article_id") or "")

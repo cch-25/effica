@@ -323,9 +323,12 @@ class _FixtureHTMLParser(HTMLParser):
         re.I,
     )
     _BOILERPLATE_WORDS = re.compile(
-        r"(?:comment|related|recommend|share|social|advert|promo|banner|newsletter|breadcrumb|nav|date|time|caption|cap|func)",
+        r"(?:^|[\s_-])(?:comments?|related|recommend(?:ed|ation)?|share|sharing|social|"
+        r"advert(?:isement)?|promo|banner|newsletter|breadcrumb|nav|date|time|"
+        r"caption|cap|func|view[_-]?count|read[_-]?count|hit[_-]?count|hits)(?:[\s_-]|$)",
         re.I,
     )
+    _VOID_TAGS = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"})
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -334,9 +337,8 @@ class _FixtureHTMLParser(HTMLParser):
         self.links: list[dict[str, str]] = []
         self.json_ld: list[str] = []
         self.base_href: str | None = None
-        self._stack: list[tuple[str, dict[str, str], bool, int]] = []
+        self._stack: list[tuple[str, dict[str, str], bool, int, bool]] = []
         self._title_depth = 0
-        self._skip_depth = 0
         self._script_depth = 0
         self._script_chunks: list[str] = []
         self._block_tag: str | None = None
@@ -345,15 +347,21 @@ class _FixtureHTMLParser(HTMLParser):
         self._block_boilerplate = False
         self.blocks: list[tuple[int, str]] = []
         self.content_chunks: list[tuple[int, str]] = []
+        self.ordered_body_chunks: list[tuple[int, str]] = []
         self.headings: list[str] = []
+        self.has_article_container = False
+
+    @property
+    def _skipping(self) -> bool:
+        return bool(self._stack and self._stack[-1][4])
 
     @property
     def in_content(self) -> bool:
-        return any(item[2] for item in self._stack) and self._skip_depth == 0
+        return any(item[2] for item in self._stack) and not self._skipping
 
     @property
     def content_score(self) -> int:
-        if self._skip_depth:
+        if self._skipping:
             return 0
         return max((item[3] for item in self._stack), default=0)
 
@@ -379,9 +387,6 @@ class _FixtureHTMLParser(HTMLParser):
             self._script_chunks = []
         if tag == "title":
             self._title_depth += 1
-        skip = self._skip_depth > 0 or tag in self._SKIP_TAGS
-        if tag in self._SKIP_TAGS:
-            self._skip_depth += 1
         marker = " ".join(
             value
             for value in (attrs_d.get("id", ""), attrs_d.get("class", ""), attrs_d.get("role", ""))
@@ -389,6 +394,8 @@ class _FixtureHTMLParser(HTMLParser):
         )
         itemprop = attrs_d.get("itemprop", "").lower()
         boilerplate = bool(self._BOILERPLATE_WORDS.search(marker))
+        skip = self._skipping or tag in self._SKIP_TAGS or boilerplate
+        skip = skip or "hidden" in attrs_d or attrs_d.get("aria-hidden", "").lower() == "true"
         container_score = _html_container_score(tag, marker, itemprop)
         is_content = (
             not boilerplate
@@ -398,14 +405,16 @@ class _FixtureHTMLParser(HTMLParser):
                 or bool(self._CONTENT_WORDS.search(marker))
             )
         )
-        self._stack.append((tag, attrs_d, is_content and not skip, container_score if not skip else 0))
+        if not skip and (tag == "article" or container_score >= 12):
+            self.has_article_container = True
+        if tag in self._VOID_TAGS:
+            return
+        self._stack.append((tag, attrs_d, is_content and not skip, container_score if not skip else 0, skip))
         if not skip and tag in {"p", "h1", "h2", "h3", "h4", "blockquote", "pre", "li"}:
             self._finish_block()
             self._block_tag = tag
             self._block_chunks = []
-            score = 3 if tag == "p" else 1
-            if self.in_content and not boilerplate:
-                score += 3
+            score = max(3, self.content_score) if tag in {"p", "blockquote", "pre", "li"} else 1
             self._block_score = score
             self._block_boilerplate = boilerplate
 
@@ -432,8 +441,6 @@ class _FixtureHTMLParser(HTMLParser):
             if self._stack[index][0] == tag:
                 del self._stack[index:]
                 break
-        if tag in self._SKIP_TAGS and self._skip_depth:
-            self._skip_depth -= 1
 
     def handle_data(self, data: str) -> None:
         if not data:
@@ -443,7 +450,9 @@ class _FixtureHTMLParser(HTMLParser):
             return
         if self._title_depth:
             self.title.append(data)
-        if self._block_tag and self._skip_depth == 0:
+        if self.in_content and self._block_tag not in {"h1", "h2", "h3", "h4"}:
+            self.ordered_body_chunks.append((self.content_score, data))
+        if self._block_tag and not self._skipping:
             self._block_chunks.append(data)
         elif self.in_content:
             self.content_chunks.append((self.content_score, data))
@@ -459,7 +468,7 @@ class _FixtureHTMLParser(HTMLParser):
     def _finish_block(self) -> None:
         if self._block_tag is not None:
             text = normalize_text(" ".join(self._block_chunks))
-            if text:
+            if text and not self._block_boilerplate:
                 self.blocks.append((self._block_score, text))
                 if self._block_tag == "h1":
                     self.headings.append(text)
@@ -514,8 +523,19 @@ class CrawlerAdapter(SourceAdapter):
         )
         body = _string_value(json_article.get("articleBody"))
         if not body:
-            body = _select_html_body(parser.blocks, parser.content_chunks)
-        if not body:
+            body = _select_html_body(parser.blocks, parser.content_chunks, parser.ordered_body_chunks)
+        article_signal = bool(json_article) or parser.has_article_container or parser.meta.get("og:type", "").lower() == "article"
+        # A portal or board listing can contain long paragraphs and a meta
+        # description. Neither is evidence that it is an individual article.
+        # Leave its body empty so normal discovery can fetch the actual links.
+        generic_page_title = bool(re.fullmatch(
+            r"(?:중소벤처기업부|금융위원회|보도자료(?:\s*[-|>]\s*[^\n]+)?|"
+            r"(?:news|press releases?|latest news|home|index))",
+            normalize_text(title), re.I,
+        ))
+        if not article_signal and generic_page_title:
+            body = ""
+        if not body and article_signal:
             body = _html_to_text(
                 parser.meta.get("description") or parser.meta.get("og:description") or ""
             )
@@ -764,10 +784,17 @@ def _html_to_text(value: Any) -> str:
 def _select_html_body(
     blocks: Iterable[tuple[int, str]],
     content_chunks: Iterable[tuple[int, str]] | None = None,
+    ordered_body_chunks: Iterable[tuple[int, str]] | None = None,
 ) -> str:
+    ordered = list(ordered_body_chunks or [])
+    strongest = max((score for score, text in ordered if normalize_text(text)), default=0)
+    if strongest >= 8:
+        # Keep mixed paragraphs and direct text in document order. Lower-score
+        # surrounding page widgets must never be appended to an explicit body.
+        return normalize_text(" ".join(text for score, text in ordered if score == strongest))
     values = list(blocks)
     direct_values = list(content_chunks or [])
-    direct_scores = [score for score, _text in direct_values if score > 0]
+    direct_scores = [score for score, _text in [*direct_values, *values] if score > 0]
     strongest_direct_score = max(direct_scores, default=0)
     direct = [
         normalize_text(text)
@@ -778,14 +805,14 @@ def _select_html_body(
     if direct_text and strongest_direct_score >= 8:
         # Explicit body_txt/article-body containers are more trustworthy than
         # a surrounding news section's title/date/share controls.
-        high = [text for score, text in values if score >= 5]
+        high = [text for score, text in values if score == strongest_direct_score]
         selected = normalize_text(" ".join(_dedupe_adjacent(high)))
-        if selected and selected not in direct_text and len(selected) < len(direct_text) // 2:
+        if selected and selected not in direct_text:
             return normalize_text(f"{direct_text} {selected}")
         return direct_text
     # A high-score block is inside an article/main or an explicitly named
     # article-body container.  Keep all such paragraphs in source order.
-    high = [text for score, text in values if score >= 5]
+    high = [text for score, text in values if score == strongest_direct_score and score >= 5]
     if high:
         selected = normalize_text(" ".join(_dedupe_adjacent(high)))
         if direct_text and direct_text not in selected:
@@ -808,8 +835,10 @@ def _html_container_score(tag: str, marker: str, itemprop: str) -> int:
         return 12
     if tag == "article" or itemprop == "headline":
         return 10
-    if tag == "main" or any(token in marker_lower for token in ("article", "story", "entry", "post", "detail")):
+    if any(token in marker_lower for token in ("article", "story", "entry", "post", "detail")):
         return 8
+    if tag == "main":
+        return 4
     if any(token in marker_lower for token in ("news", "body", "text", "prose")):
         return 6
     if "content" in marker_lower and "contents" not in marker_lower:
