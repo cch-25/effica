@@ -71,6 +71,8 @@ apps/api/app/state.py
 apps/worker/__init__.py
 apps/worker/worker/__init__.py
 apps/worker/worker/analysis_eligibility.py
+apps/worker/worker/comparison_cohort.py
+apps/worker/worker/essential_analysis.py
 apps/worker/worker/handlers/__init__.py
 apps/worker/worker/handlers/aggregate_votes.py
 apps/worker/worker/handlers/analyze.py
