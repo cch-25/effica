@@ -5,6 +5,8 @@ const webBaseUrl = `http://127.0.0.1:${webPort}`;
 
 export default defineConfig({
   testDir: "./tests",
+  timeout: Number(process.env.PLAYWRIGHT_TEST_TIMEOUT_MS ?? "30000"),
+  expect: { timeout: Number(process.env.PLAYWRIGHT_EXPECT_TIMEOUT_MS ?? "5000") },
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
