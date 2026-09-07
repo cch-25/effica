@@ -22,8 +22,10 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 from .analysis_eligibility import assess_analysis_eligibility
+from .comparison_cohort import COMPARISON_ARTICLES_SQL, select_comparison_cohort
 from .handlers.base import HandlerContext, HandlerResult
 from .queue import Job
 
@@ -778,6 +780,15 @@ class MariaDBResultApplier:
         result: Mapping[str, Any],
         now: datetime,
     ) -> None:
+        if (
+            job.job_type in {"analyze", "build_issue_comparison"}
+            and result.get("status") == "SKIPPED"
+            and result.get("skip_reason") in {
+                "DAILY_LLM_BUDGET_EXCEEDED", "ESSENTIAL_LLM_BUDGET_RESERVED",
+            }
+        ):
+            await self._defer_budget_work(session, job, now)
+            return
         handlers = {
             "crawl": self._apply_crawl,
             "cluster": self._apply_cluster,
@@ -799,6 +810,27 @@ class MariaDBResultApplier:
             # they do not silently lose their output.
             return
         await handler(session, job, result, now)
+
+    async def _defer_budget_work(self, session: Any, job: Job, now: datetime) -> None:
+        """Carry unsubmitted work across KST resets without retrying paid calls."""
+        seoul = ZoneInfo("Asia/Seoul")
+        resume_at = (now.astimezone(seoul) + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ).astimezone(UTC)
+        payload = dict(job.payload)
+        deadline = _database_timestamp(payload.get("budget_defer_deadline"))
+        if deadline is None:
+            deadline = now + timedelta(days=4)
+        deadline = _utc(deadline)
+        if resume_at >= deadline:
+            return
+        payload["budget_defer_deadline"] = deadline.isoformat()
+        fingerprint = hashlib.sha256(_json(payload).encode("utf-8")).hexdigest()
+        await self._enqueue_job(
+            session, job.job_type, payload,
+            dedupe_key=f"budget:{fingerprint}:{resume_at.date().isoformat()}",
+            now=now, available_at=resume_at, priority=job.priority,
+        )
 
     async def _apply_issue_comparison(
         self, session: Any, job: Job, result: Mapping[str, Any], now: datetime
@@ -926,6 +958,7 @@ class MariaDBResultApplier:
         now: datetime,
         priority: int = 0,
         max_attempts: int = 3,
+        available_at: datetime | None = None,
     ) -> str:
         """Insert one validated downstream job in the result transaction.
 
@@ -963,7 +996,7 @@ class MariaDBResultApplier:
                 "job_type": str(job_type),
                 "dedupe_key": dedupe_key,
                 "priority": int(priority),
-                "available_at": now,
+                "available_at": available_at or now,
                 "max_attempts": int(max_attempts),
                 "payload_json": _json(validated),
                 "created_at": now,
@@ -1652,8 +1685,8 @@ class MariaDBResultApplier:
         if not version_id:
             raise ResultApplicationError("analysis result is missing article_version_id")
         if str(result.get("status") or "").strip().upper() == "SKIPPED":
-            # Budget exhaustion is a successful no-op. The provider was never
-            # called, so do not manufacture an assessment or a score.
+            # Content gates and suppressed paid requests create no analysis.
+            # Budget deferrals are handled before dispatch in _apply_domain.
             return
         assessments = result.get("assessments") or []
         if not isinstance(assessments, (list, tuple)):
@@ -1846,6 +1879,7 @@ class MariaDBResultApplier:
             article_rows = await self._comparison_articles(session, issue_id)
             if not 2 <= len(article_rows) <= 4:
                 continue
+            await self._ensure_event_article_analyses(session, article_rows, now)
             article_ids = [str(_row(row, "article_id")) for row in article_rows]
             version_ids = [str(_row(row, "article_version_id")) for row in article_rows]
             if any(not value for value in article_ids + version_ids):
@@ -1938,20 +1972,39 @@ class MariaDBResultApplier:
                 now=now,
             )
 
+    async def _ensure_event_article_analyses(
+        self, session: Any, article_rows: list[Any], now: datetime,
+    ) -> None:
+        # An unchanged crawl may already have a completed SKIPPED receipt.
+        # Becoming an event member must still unlock essential analysis;
+        # the original crawl dedupe key cannot provide that recovery.
+        day = now.astimezone(ZoneInfo("Asia/Seoul")).date().isoformat()
+        for row in article_rows:
+            version_id = str(_row(row, "article_version_id"))
+            existing = _rows(await self._execute(session, """
+                SELECT ma.id FROM model_assessments ma
+                JOIN model_aliases aliases ON aliases.id = ma.model_alias_id
+                WHERE ma.article_version_id = :version_id AND ma.status = 'SUCCEEDED'
+                  AND aliases.provider = 'openai' AND aliases.actual_model_id LIKE 'gpt-%'
+                UNION ALL
+                SELECT id FROM jobs WHERE job_type = 'analyze'
+                  AND status IN ('PENDING', 'LEASED')
+                  AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.article_version_id')) = :version_id
+                LIMIT 1
+            """, {"version_id": version_id}))
+            if existing:
+                continue
+            await self._enqueue_job(
+                session, "analyze", {"article_version_id": version_id},
+                dedupe_key=f"article-version:{version_id}:essential:{day}", now=now,
+            )
+
     async def _comparison_articles(self, session: Any, issue_id: str) -> list[Any]:
-        return _rows(await self._execute(
-            session,
-            """
-            SELECT a.id AS article_id, a.current_version_id AS article_version_id,
-                   a.title, s.name AS source_name, a.canonical_url AS source_url
-            FROM issue_memberships im
-            JOIN articles a ON a.id = im.article_id
-            JOIN sources s ON s.id = a.source_id
-            WHERE im.issue_id = :issue_id AND a.current_version_id IS NOT NULL
-            ORDER BY a.id
-            """,
-            {"issue_id": issue_id},
-        ))
+        rows = _rows(await self._execute(session, COMPARISON_ARTICLES_SQL, {"issue_id": issue_id}))
+        return select_comparison_cohort(
+            [dict(row) for row in rows],
+            minimum_content_chars=self.minimum_analysis_content_chars,
+        )
 
     async def _apply_aggregate(self, session: Any, job: Job, result: Mapping[str, Any], now: datetime) -> None:
         article_id = str(result.get("article_id") or job.payload.get("article_id") or "")

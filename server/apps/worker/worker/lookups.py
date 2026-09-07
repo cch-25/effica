@@ -13,6 +13,9 @@ from sqlalchemy import bindparam, text
 
 from apps.api.app.domains.content.trust import evidence_is_synthetic
 
+from .comparison_cohort import COMPARISON_ARTICLES_SQL, select_comparison_cohort
+from .essential_analysis import essential_article_exists
+
 
 def _json_value(value: Any, default: Any) -> Any:
     if value is None:
@@ -36,9 +39,11 @@ def _mapping(row: Any) -> dict[str, Any] | None:
 class MariaDBWorkerLookups:
     """Short-lived SQL lookups shared by all production worker handlers."""
 
-    def __init__(self, session_factory: Callable[[], Any], *, encryption_secret: str) -> None:
+    def __init__(self, session_factory: Callable[[], Any], *, encryption_secret: str,
+                 minimum_analysis_content_chars: int = 200) -> None:
         self._session_factory = session_factory
         self._encryption_key = hashlib.sha256(encryption_secret.encode()).digest()
+        self.minimum_analysis_content_chars = minimum_analysis_content_chars
 
     async def _one(self, statement: str, params: Mapping[str, Any]) -> dict[str, Any] | None:
         async with self._session_factory() as session:
@@ -79,6 +84,8 @@ class MariaDBWorkerLookups:
             """
             SELECT av.id AS article_version_id, av.article_id, a.current_version_id,
                    a.title, a.author,
+                   (a.status = 'active' AND s.active = 1 AND s.policy_status = 'approved'
+                    AND a.published_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 4 DAY)) AS publicly_available,
                    a.canonical_url AS source_url, s.name AS source_name,
                    b.payload AS normalized_payload
             FROM article_versions av
@@ -114,16 +121,19 @@ class MariaDBWorkerLookups:
             for row in rows
         )
 
+    async def essential_article_analysis(self, version_id: str) -> bool:
+        predicate = essential_article_exists(":version_id", "UTC_TIMESTAMP()")
+        row = await self._one(
+            f"SELECT {predicate} AS essential", {"version_id": version_id}
+        )
+        return bool(row and row.get("essential"))
+
     async def comparison_is_current(self, issue_id: str, version_ids: Sequence[str]) -> bool:
-        rows = await self._all("""
-            SELECT a.current_version_id AS version_id
-            FROM issues i
-            JOIN issue_memberships im ON im.issue_id = i.id
-            JOIN articles a ON a.id = im.article_id
-            WHERE i.id = :issue_id AND i.issue_kind = 'EVENT' AND i.status = 'active'
-              AND a.status = 'active'
-        """, {"issue_id": issue_id})
-        return 2 <= len(rows) <= 4 and sorted(str(row["version_id"]) for row in rows) == sorted(
+        rows = select_comparison_cohort(
+            await self._all(COMPARISON_ARTICLES_SQL, {"issue_id": issue_id}),
+            minimum_content_chars=self.minimum_analysis_content_chars,
+        )
+        return bool(rows) and sorted(str(row["article_version_id"]) for row in rows) == sorted(
             str(value) for value in version_ids
         )
 
@@ -437,6 +447,7 @@ class MariaDBWorkerLookups:
             "source_lookup": self.source_lookup,
             "article_version_lookup": self.article_version_lookup,
             "existing_article_analysis": self.existing_article_analysis,
+            "essential_article_analysis": self.essential_article_analysis,
             "articles_lookup": self.articles_lookup,
             "issue_comparison_inputs": self.issue_comparison_inputs,
             "votes_lookup": self.votes_lookup,

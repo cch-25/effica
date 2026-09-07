@@ -13,11 +13,12 @@ export function IssueGrid({ fallback, columns = 2, featuredOnly = false }: { fal
   const source = query.data?.items ?? (isMockMode() ? fallback : []);
   const issues = featuredOnly
     ? source
-        .filter((issue) => issue.kind === "EVENT" && issue.analysisStatus === "READY" && issue.freshnessStatus === "CURRENT" && issue.sourceCount >= 3)
+        .filter((issue) => issue.kind === "EVENT" && issue.freshnessStatus === "CURRENT" && issue.sourceCount >= 2)
         .sort((left, right) => {
+          const readiness = Number(right.analysisStatus === "READY") - Number(left.analysisStatus === "READY");
           const rightTime = new Date(right.dataAsOf ?? right.updatedAt).getTime();
           const leftTime = new Date(left.dataAsOf ?? left.updatedAt).getTime();
-          return rightTime - leftTime || (left.editorialPriority ?? Number.MAX_SAFE_INTEGER) - (right.editorialPriority ?? Number.MAX_SAFE_INTEGER);
+          return readiness || rightTime - leftTime || (left.editorialPriority ?? Number.MAX_SAFE_INTEGER) - (right.editorialPriority ?? Number.MAX_SAFE_INTEGER);
         })
     : source;
   if (issues.length === 0) return <StatePanel state="empty" />;

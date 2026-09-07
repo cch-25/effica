@@ -42,10 +42,28 @@ issue versions without substantive input changes, invalidating job dedupe.
 - Live calls use GPT-5.6 Luna, reasoning `none`, no provider-local retries,
   bounded input and output lengths, and a durable conservative $5 daily cost
   reservation ceiling. Non-budgeted models fail closed.
-- Overflow work is marked SKIPPED rather than building an ever-growing paid
-  backlog. The next day permits new eligible inputs; it does not automatically
-  replay every skipped job. A limit of 100 is a maximum, not a promise of 100
-  completed analyses.
+- General article analysis leaves capacity for event work inside those same
+  limits: up to 9 article slots, 12 request slots and 20% of the cost ceiling.
+  Article and request reserves scale down to one fifth when configured limits
+  are small. Active, recent EVENT membership is checked in the database before
+  an article can use protected capacity. Payload flags cannot grant it.
+- Deterministic clustering and scoring are claimed first, followed by comparisons and event
+  article analysis, then general work. Existing queued articles gain priority
+  when they become event members. Event selection also enqueues missing analysis
+  when an earlier crawl was already marked skipped, including skips predating
+  this policy. Comparison input is a stable selection of
+  real articles from two or three distinct sources. Duplicate-source reports
+  and index pages do not block the entire event or consume comparison capacity.
+- Work skipped before submission for lack of budget is carried forward to the
+  next KST midnight in the result transaction. The continuation is deduplicated
+  and expires after four days. Current versions and public availability are
+  checked again before submission. Possibly billed failures, invalid content
+  and cached responses are never turned into new budget retries.
+- The home page retains current event entries while analysis is partial, with
+  a preparation label. It does not mark missing analysis complete. Existing
+  editorial review requirements still apply to public comparison snapshots.
+  A limit of 100 is a maximum, not a promise of 100 completed analyses; a hard
+  stop or an insufficient total limit cannot guarantee fresh comparisons.
 - Crawling, deterministic clustering and scoring do not require LLM calls.
   Crawling may discover more than 100 pages. The 100-article limit applies to
   actual new paid analysis/comparison input, not HTTP discovery.

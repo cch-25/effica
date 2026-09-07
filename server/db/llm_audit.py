@@ -14,6 +14,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from apps.api.app.db.session import create_engine, dispose_engine
+from apps.worker.worker.comparison_cohort import COMPARISON_ARTICLES_SQL, select_comparison_cohort
+from apps.worker.worker.queue import MariaDBQueueRepository
 
 
 def _body(value: object) -> str:
@@ -123,6 +125,27 @@ async def main() -> None:
                 GROUP BY a.id, a.title, s.name ORDER BY assessment_rows DESC LIMIT 15
             """, start=start)
             report["runtime_control"] = await rows("SELECT id, llm_enabled, version, updated_at FROM runtime_controls")
+            events = await rows("""
+                SELECT id, title FROM issues WHERE issue_kind='EVENT' AND status='active'
+                  AND last_activity_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 4 DAY)
+                ORDER BY editorial_priority IS NULL, editorial_priority, id
+            """)
+            report["essential_event_inputs"] = []
+            for event in events:
+                candidates = await rows(COMPARISON_ARTICLES_SQL, issue_id=event["id"])
+                cohort = select_comparison_cohort(candidates)
+                report["essential_event_inputs"].append({
+                    **event, "candidate_articles": len(candidates),
+                    "selected_articles": [{"article_id": row["article_id"],
+                                           "source": row["source_name"], "title": row["title"]}
+                                          for row in cohort],
+                })
+            claim_order = MariaDBQueueRepository(lambda: None)._claim_order()
+            report["next_work_under_essential_priority"] = await rows(f"""
+                SELECT id, job_type, priority FROM jobs
+                WHERE status='PENDING' AND available_at <= :now
+                ORDER BY {claim_order} LIMIT 10
+            """, now=now.replace(tzinfo=None))
             report["ledger"] = await rows("SELECT * FROM llm_daily_usage WHERE usage_date >= :start ORDER BY usage_date", start=start.date())
             report["active_models"] = await rows("""
                 SELECT alias, provider, actual_model_id, status,

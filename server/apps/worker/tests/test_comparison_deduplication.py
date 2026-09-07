@@ -22,8 +22,10 @@ class Rows:
 
 
 ARTICLES = [
-    {"article_id": "a", "article_version_id": "va", "title": "First"},
-    {"article_id": "b", "article_version_id": "vb", "title": "Second"},
+    {"article_id": "a", "article_version_id": "va", "title": "First article headline",
+     "source_id": "source-a", "content": "Article body text. " * 100},
+    {"article_id": "b", "article_version_id": "vb", "title": "Second article headline",
+     "source_id": "source-b", "content": "Article body text. " * 100},
 ]
 MODEL = {"actual_model_id": "gpt-5.6-luna", "reasoning_effort": "none"}
 NOW = datetime(2026, 9, 6, tzinfo=UTC)
@@ -44,6 +46,8 @@ class ComparisonSession:
             return Rows([{"version": self.version}])
         if sql.startswith("SELECT a.id AS article_id"):
             return Rows(self.articles)
+        if sql.startswith("SELECT ma.id FROM model_assessments"):
+            return Rows([{"id": "already-assessed"}])
         if sql.startswith("SELECT id, actual_model_id"):
             return Rows([{"id": "model", "actual_model_id": MODEL["actual_model_id"], "config_json": MODEL}])
         if sql.startswith("SELECT id, issue_version, article_frames_json"):

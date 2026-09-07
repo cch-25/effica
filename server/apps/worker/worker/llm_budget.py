@@ -22,6 +22,14 @@ SEOUL = ZoneInfo("Asia/Seoul")
 class DailyLLMBudgetExceeded(RuntimeError):
     """Raised before a paid request when its daily authorization is unavailable."""
 
+    code = "DAILY_LLM_BUDGET_EXCEEDED"
+
+
+class EssentialLLMBudgetReserved(DailyLLMBudgetExceeded):
+    """Ordinary feed work cannot consume the capacity protected for events."""
+
+    code = "ESSENTIAL_LLM_BUDGET_RESERVED"
+
 
 class LLMRequestSuppressed(RuntimeError):
     """A previously authorized input must not cause another paid submission."""
@@ -122,6 +130,12 @@ class MariaDBLLMBudget:
         self.daily_request_limit = min(110, int(daily_request_limit))
         self.daily_article_limit = min(100, int(daily_article_limit))
         self.daily_comparison_limit = min(10, int(daily_comparison_limit))
+        # Keep room for three events with three sources and one comparison
+        # each. Smaller operator limits scale this reserve down. These are
+        # portions of the existing limits, never additional spending.
+        self.essential_article_reserve = min(9, self.daily_article_limit // 5)
+        self.essential_request_reserve = min(12, self.daily_request_limit // 5)
+        self.essential_cost_reserve = self.daily_budget_microusd // 5
         self.clock = clock or (lambda: datetime.now(UTC))
         if self.daily_budget_microusd < 1:
             raise ValueError("daily LLM budget must be positive")
@@ -146,6 +160,7 @@ class MariaDBLLMBudget:
         request_key: str | None = None,
         subject_key: str | None = None,
         article_keys: Sequence[str] | None = None,
+        essential: bool = False,
     ) -> LLMBudgetReservation:
         if category not in {"article", "comparison"}:
             raise ValueError("unsupported LLM budget category")
@@ -170,6 +185,7 @@ class MariaDBLLMBudget:
                 request_key=key,
                 subject_key=subject_key,
                 article_keys=cohort_keys,
+                essential=essential or category == "comparison",
             )
         except IntegrityError as exc:
             # Concurrent reservations on different KST dates can both miss the
@@ -181,6 +197,7 @@ class MariaDBLLMBudget:
         self, *, category: str, requested: int,
         request_key: str | None, subject_key: str | None,
         article_keys: Sequence[str],
+        essential: bool,
     ) -> LLMBudgetReservation:
         usage_date = self._usage_date()
         now = datetime.now(UTC).replace(tzinfo=None)
@@ -265,6 +282,12 @@ class MariaDBLLMBudget:
                     raise DailyLLMBudgetExceeded(
                         "daily LLM request or cost budget has been exhausted"
                     )
+                if not essential and (
+                    requests >= self.daily_request_limit - self.essential_request_reserve
+                    or articles >= self.daily_article_limit - self.essential_article_reserve
+                    or reserved + requested > self.daily_budget_microusd - self.essential_cost_reserve
+                ):
+                    raise EssentialLLMBudgetReserved("remaining daily capacity is reserved for events")
                 new_article_keys: set[str] = set()
                 if article_keys:
                     cohort_result = await _maybe_await(session.execute(text("""
@@ -280,6 +303,11 @@ class MariaDBLLMBudget:
                         raise DailyLLMBudgetExceeded(
                             "daily distinct article cohort has been exhausted"
                         )
+                    if not essential and (
+                        len(existing_article_keys) + len(new_article_keys)
+                        > self.daily_article_limit - self.essential_article_reserve
+                    ):
+                        raise EssentialLLMBudgetReserved("remaining article cohort is reserved for events")
                 if request_key is not None:
                     await _maybe_await(session.execute(text("""
                         INSERT INTO llm_requests

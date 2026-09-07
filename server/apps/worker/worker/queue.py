@@ -34,6 +34,8 @@ from typing import (
     Protocol,
 )
 
+from .essential_analysis import essential_article_exists
+
 try:
     from apps.api.app.jobs.types import JobStatus, utc_now
 except ImportError:  # pragma: no cover - supports ``PYTHONPATH=apps/worker``.
@@ -600,6 +602,21 @@ class MariaDBQueueRepository:
         "last_error_json, created_at, updated_at"
     )
 
+    def _claim_order(self) -> str:
+        essential = essential_article_exists(
+            f"JSON_UNQUOTE(JSON_EXTRACT({self.table_name}.payload_json, '$.article_version_id'))",
+            ":now",
+        )
+        # Discover events before draining general analysis, then finish event
+        # analysis and comparisons first. Resolve membership at claim time so
+        # already-queued articles gain priority as soon as clustering finishes.
+        return f"""CASE
+            WHEN job_type = 'cluster' THEN 4
+            WHEN job_type = 'calculate_score' THEN 3
+            WHEN job_type = 'build_issue_comparison' THEN 2
+            WHEN job_type = 'analyze' AND {essential} THEN 1
+            ELSE 0 END DESC, priority DESC, available_at ASC, id ASC"""
+
     def __init__(
         self,
         session_factory: Callable[[], Any],
@@ -832,7 +849,7 @@ class MariaDBQueueRepository:
                 OR (status = 'LEASED' AND lease_expires_at IS NOT NULL AND lease_expires_at <= :now)
               )
               AND attempts < max_attempts
-            ORDER BY priority DESC, available_at ASC, id ASC
+            ORDER BY {self._claim_order()}
             LIMIT 1
             FOR UPDATE SKIP LOCKED
             """.strip()
@@ -920,7 +937,7 @@ class MariaDBQueueRepository:
                 OR (status = 'LEASED' AND lease_expires_at IS NOT NULL AND lease_expires_at <= :now)
               )
               AND attempts < max_attempts
-            ORDER BY priority DESC, available_at ASC, id ASC
+            ORDER BY {self._claim_order()}
             LIMIT 25
             """.strip()
         )

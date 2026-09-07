@@ -868,7 +868,10 @@ def _default_services(session_factory: Callable[[], Any]) -> dict[str, Any]:
 
     settings = get_settings()
     settings.assert_safe_runtime()
-    lookups = MariaDBWorkerLookups(session_factory, encryption_secret=settings.session_secret)
+    lookups = MariaDBWorkerLookups(
+        session_factory, encryption_secret=settings.session_secret,
+        minimum_analysis_content_chars=settings.llm_min_article_chars,
+    )
     services = lookups.as_services()
     services["source_fetcher"] = SourceFetchService()
     if not settings.live_llm_enabled:

@@ -82,6 +82,8 @@ async def handle(
         skip_reason = None
         if source.get("current_version_id") not in (None, article_version_id):
             skip_reason = "STALE_ARTICLE_VERSION"
+        elif "publicly_available" in source and not source["publicly_available"]:
+            skip_reason = "ARTICLE_NO_LONGER_PUBLIC"
         elif not eligibility.eligible:
             skip_reason = eligibility.reason
         if skip_reason:
@@ -164,6 +166,8 @@ async def handle(
     assessments = []
     provider_errors: list[dict[str, Any]] = []
     budget = None if context is None else context.services.get("llm_budget")
+    essential_lookup = None if context is None else context.services.get("essential_article_analysis")
+    essential = bool(callable(essential_lookup) and await essential_lookup(article_version_id))
     try:
         for provider in providers:
             reservation = None
@@ -178,6 +182,7 @@ async def handle(
                         )
                     reservation = await reserve(
                         category="article",
+                        essential=essential,
                         request_key=provider.article_request_key(assessment_input, prompt_version),
                         subject_key=str(source.get("article_id") or article_version_id),
                         article_keys=[str(source.get("article_id") or article_version_id)],
@@ -216,13 +221,13 @@ async def handle(
                             # are observability only and must never cause a
                             # second paid request after a successful response.
                             pass
-            except DailyLLMBudgetExceeded:
+            except DailyLLMBudgetExceeded as exc:
                 return HandlerResult(
                     value={
                         "article_version_id": article_version_id,
                         "prompt_version": prompt_version,
                         "status": "SKIPPED",
-                        "skip_reason": "DAILY_LLM_BUDGET_EXCEEDED",
+                        "skip_reason": exc.code,
                         "resets_at": "00:00 Asia/Seoul",
                         "assessments": [],
                     },
