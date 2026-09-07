@@ -22,3 +22,10 @@ client/node_modules/
 AGENTS.md
 output/
 .ops/
+
+# Private project operations and Tommy context
+/AGENTS.md
+/.env
+/.agents/
+/HANDOFF.md
+/.ops/
