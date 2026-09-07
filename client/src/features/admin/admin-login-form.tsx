@@ -77,6 +77,7 @@ export function AdminLoginForm({ returnTo }: { returnTo: string }) {
           autoCapitalize="none"
           autoFocus
           required
+          disabled={!ready || submitting}
           value={username}
           onChange={(event) => setUsername(event.target.value)}
         />
@@ -86,6 +87,7 @@ export function AdminLoginForm({ returnTo }: { returnTo: string }) {
           type="password"
           autoComplete="current-password"
           required
+          disabled={!ready || submitting}
           value={password}
           onChange={(event) => setPassword(event.target.value)}
         />
