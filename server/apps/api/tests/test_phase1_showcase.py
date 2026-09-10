@@ -190,7 +190,7 @@ async def test_showcase_refresh_is_idempotent_and_audit_fails_closed() -> None:
     }
 
     async with factory() as session:
-        await session.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(64))"))
+        await session.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32))"))
         await session.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
             {"revision": REQUIRED_DB_REVISION},

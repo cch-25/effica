@@ -31,6 +31,17 @@ def test_readiness_revision_matches_the_single_migration_head() -> None:
     assert script.get_heads() == [EXPECTED_DB_REVISION]
 
 
+def test_migration_revision_ids_fit_the_version_table_column() -> None:
+    config = Config("db/alembic.ini")
+    script = ScriptDirectory.from_config(config)
+    oversized = {
+        migration.revision: len(migration.revision)
+        for migration in script.walk_revisions()
+        if len(migration.revision) > 32
+    }
+    assert oversized == {}
+
+
 def test_schema_preserves_initial_tables_and_adds_evidence_snapshot() -> None:
     assert len(metadata.tables) == 44
     assert "article_retention_tombstones" in metadata.tables

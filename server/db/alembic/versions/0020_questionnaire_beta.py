@@ -1,6 +1,6 @@
 """Add the provisional 30-item political questionnaire.
 
-Revision ID: 0020_political_questionnaire_beta
+Revision ID: 0020_questionnaire_beta
 Revises: 0019_llm_request_dedup
 Create Date: 2026-09-10
 
@@ -13,7 +13,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0020_political_questionnaire_beta"
+revision = "0020_questionnaire_beta"
 down_revision = "0019_llm_request_dedup"
 branch_labels = None
 depends_on = None

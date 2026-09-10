@@ -51,7 +51,7 @@
 
 ## 운영 반영 전 확인
 
-1. DB 백업과 `0020_political_questionnaire_beta` migration을 적용한 뒤 API와 worker를 배포한다.
+1. DB 백업과 `0020_questionnaire_beta` migration을 적용한 뒤 API와 worker를 배포한다.
 2. 변경된 API가 준비된 뒤 프런트를 배포한다.
 3. 출처 부트스트랩은 먼저 드라이런으로 확인한다. 승인 조건과 명령은
    [출처별 근거 문서](source-coverage-qa-20260910.md)에 정리했다.
