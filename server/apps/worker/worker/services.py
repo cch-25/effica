@@ -739,7 +739,7 @@ class MariaDBResultApplier:
                     now=now,
                     request_id=str(request_id) if request_id is not None else None,
                 )
-                if inventory_managed and job.job_type == "crawl":
+                if inventory_managed and job.job_type in {"crawl", "discover_issues"}:
                     from db.article_retention import enforce_inventory
 
                     await enforce_inventory(session, now, lock=False)
@@ -826,6 +826,7 @@ class MariaDBResultApplier:
             )
             return
         handlers = {
+            "discover_issues": self._apply_discover_issues,
             "crawl": self._apply_crawl,
             "cluster": self._apply_cluster,
             "merge_issue": self._apply_merge_issue,
@@ -1132,7 +1133,137 @@ class MariaDBResultApplier:
         rows = _rows(result)
         return str(_row(rows[0], "id", blob_id)) if rows else blob_id
 
-    async def _apply_crawl(self, session: Any, job: Job, result: Mapping[str, Any], now: datetime) -> None:
+    async def _apply_discover_issues(
+        self, session: Any, job: Job, result: Mapping[str, Any], now: datetime,
+    ) -> None:
+        """Commit one validated editorial edition, preserving exact memberships.
+
+        Discovery never routes its articles through keyword clustering. Old
+        editions retire only after at least one eligible replacement is saved.
+        """
+        from apps.api.app.domains.issues.editorial_policy import (
+            is_current_article,
+            publisher_identity,
+        )
+
+        if result.get("status") in {"SKIPPED", "FAILED"}:
+            return
+        edition_ids: list[str] = []
+        seen_urls: set[str] = set()
+        for candidate in result.get("issues", []):
+            if len(edition_ids) >= 5:
+                break
+            if (not isinstance(candidate, Mapping)
+                    or candidate.get("topic") not in PUBLIC_ISSUE_TOPICS
+                    or not candidate.get("controversy_reason")):
+                continue
+            articles = []
+            publishers: set[str] = set()
+            for article in candidate.get("articles", []):
+                if not isinstance(article, Mapping):
+                    continue
+                url = str(article.get("canonical_url") or "")
+                publisher = publisher_identity(url)
+                if (not publisher or publisher in publishers or url in seen_urls
+                        or not article.get("source_id")
+                        or not is_current_article(article.get("published_at"), now=now)
+                        or not assess_analysis_eligibility(
+                            str(article.get("title") or ""),
+                            str(article.get("content") or ""),
+                            minimum_content_chars=self.minimum_analysis_content_chars,
+                        ).eligible):
+                    continue
+                articles.append(article)
+                publishers.add(publisher)
+            if len(publishers) < 3:
+                continue
+            await self._apply_crawl(session, job, {"articles": articles}, now,
+                                    curated=True)
+            members = []
+            stored_publishers: set[str] = set()
+            for article in articles:
+                rows = _rows(await self._execute(session, """
+                    SELECT a.id, a.published_at, a.canonical_url
+                    FROM articles a JOIN sources s ON s.id = a.source_id
+                    WHERE a.canonical_url_hash = :hash AND a.status = 'active'
+                      AND a.current_version_id IS NOT NULL
+                      AND s.active = 1 AND s.policy_status = 'approved'
+                """, {"hash": hashlib.sha256(article["canonical_url"].encode()).digest()}))
+                if rows and is_current_article(_row(rows[0], "published_at"), now=now):
+                    members.append(rows[0])
+                    stored_publishers.add(publisher_identity(_row(rows[0], "canonical_url")))
+            if len(stored_publishers) < 3:
+                continue
+            topic = str(candidate["topic"])
+            key = "daily-issue:" + hashlib.sha256(
+                f"{topic}:{candidate.get('issue_key') or candidate['title']}".encode()
+            ).hexdigest()[:40]
+            issue_id = _stable_id(key)
+            # Reuse the exact event when discovery finds an already-associated
+            # article, even if the model worded its semantic event key differently.
+            for member in members:
+                overlap = _rows(await self._execute(session, """
+                    SELECT i.id, i.editorial_key FROM issues i
+                    JOIN issue_memberships im ON im.issue_id = i.id
+                    WHERE im.article_id = :article_id
+                      AND i.editorial_key LIKE 'daily-issue:%'
+                    ORDER BY i.last_activity_at DESC LIMIT 1
+                """, {"article_id": _row(member, "id")}))
+                if overlap:
+                    issue_id = str(_row(overlap[0], "id"))
+                    key = str(_row(overlap[0], "editorial_key"))
+                    break
+            if issue_id in edition_ids:
+                continue
+            data_as_of = max(_database_timestamp(_row(item, "published_at")) for item in members)
+            await self._execute(session, """
+                INSERT INTO issues
+                  (id, title, summary, topic, status, issue_kind, editorial_key,
+                   editorial_priority, editorial_reviewed_at, editorial_data_as_of,
+                   opened_at, last_activity_at, version)
+                VALUES (:id, :title, :summary, :topic, 'active', 'EVENT', :key,
+                        :priority, :now, :data_as_of, :now, :data_as_of, 1)
+                ON DUPLICATE KEY UPDATE title=VALUES(title), summary=VALUES(summary),
+                  topic=VALUES(topic), status='active', issue_kind='EVENT',
+                  editorial_priority=VALUES(editorial_priority),
+                  editorial_reviewed_at=VALUES(editorial_reviewed_at),
+                  editorial_data_as_of=VALUES(editorial_data_as_of),
+                  last_activity_at=VALUES(last_activity_at), version=version+1
+            """, {"id": issue_id, "title": str(candidate["title"])[:500],
+                    "summary": str(candidate.get("summary") or candidate["controversy_reason"]),
+                    "topic": topic, "key": key, "priority": len(edition_ids) + 1,
+                    "now": now, "data_as_of": data_as_of})
+            await self._execute(session, "DELETE FROM issue_memberships WHERE issue_id=:id",
+                                {"id": issue_id})
+            for member in members:
+                await self._execute(session, """
+                    INSERT INTO issue_memberships (issue_id, article_id, confidence, created_at)
+                    VALUES (:issue_id, :article_id, 1, :now)
+                """, {"issue_id": issue_id, "article_id": _row(member, "id"), "now": now})
+                seen_urls.add(str(_row(member, "canonical_url")))
+            edition_ids.append(issue_id)
+            analysis_rows = _rows(await self._execute(
+                session, COMPARISON_ARTICLES_SQL, {"issue_id": issue_id},
+            ))
+            await self._ensure_event_article_analyses(session, analysis_rows, now)
+            await self._enqueue_issue_comparisons_for_article(
+                session, article_id=str(_row(members[0], "id")),
+                request_id=self._request_id(job, result), now=now,
+            )
+        if edition_ids:
+            # Bind every identifier; never interpolate discovery text into SQL.
+            params = {f"id{index}": value for index, value in enumerate(edition_ids)}
+            placeholders = ",".join(f":{name}" for name in params)
+            await self._execute(session, f"""
+                UPDATE issues SET status='archived', editorial_priority=NULL
+                WHERE editorial_key LIKE 'daily-issue:%' AND status='active'
+                  AND id NOT IN ({placeholders})
+            """, params)
+
+    async def _apply_crawl(self, session: Any, job: Job, result: Mapping[str, Any], now: datetime,
+                           *, curated: bool = False) -> None:
+        if result.get("status") == "SKIPPED":
+            return
         source_id = result.get("source_id") or job.payload.get("source_id")
         # The API intentionally creates CrawlRun with the queue job's ID so
         # operators can correlate both records without a join table.  Always
@@ -1284,13 +1415,11 @@ class MariaDBResultApplier:
             # public topic membership for a metadata-only article.
             if normalized_ref is None:
                 continue
-            await self._upsert_topic_membership(
-                session,
-                article_id=article_id,
-                title=title,
-                summary=str(content)[:1000],
-                now=now,
-            )
+            if not curated:
+                await self._upsert_topic_membership(
+                    session, article_id=article_id, title=title,
+                    summary=str(content)[:1000], now=now,
+                )
             content_text = (
                 content.decode("utf-8", errors="replace")
                 if isinstance(content, bytes)
@@ -1306,6 +1435,10 @@ class MariaDBResultApplier:
             eligible_article_ids.append(article_id)
             analyzable_version_ids.append(version_id)
 
+        if curated:
+            # Event membership is established before essential analysis is
+            # scheduled, protecting the existing event budget reservation.
+            return
         request_id = self._request_id(job, result)
         for version_id in sorted(set(analyzable_version_ids)):
             trusted_assessment = await self._execute(
@@ -1462,6 +1595,8 @@ class MariaDBResultApplier:
                         WHERE memberships.article_id = :article_id
                           AND issues.status IN ('candidate', 'active')
                           AND issues.issue_kind = 'EVENT'
+                          AND (issues.editorial_key IS NULL
+                               OR issues.editorial_key NOT LIKE 'daily-issue:%')
                         ORDER BY issues.last_activity_at DESC, issues.id
                         LIMIT 1
                         """,
@@ -1484,12 +1619,16 @@ class MariaDBResultApplier:
             existing_issue = await self._execute(
                 session,
                 """
-                SELECT id, title, summary, topic, status, version
+                SELECT id, title, summary, topic, status, version, editorial_key
                 FROM issues WHERE id = :issue_id LIMIT 1 FOR UPDATE
                 """,
                 {"issue_id": issue_id},
             )
             existing_rows = _rows(existing_issue)
+            if existing_rows and str(_row(existing_rows[0], "editorial_key") or "").startswith("daily-issue:"):
+                # A queued legacy cluster may carry an explicit event id.
+                # It cannot rewrite the curated event or contaminate membership.
+                continue
             existing_members = await self._execute(
                 session,
                 "SELECT article_id FROM issue_memberships WHERE issue_id = :issue_id",
@@ -1924,7 +2063,7 @@ class MariaDBResultApplier:
             if not issue_id or issue_version < 1:
                 continue
             article_rows = await self._comparison_articles(session, issue_id)
-            if not 2 <= len(article_rows) <= 4:
+            if not 3 <= len(article_rows) <= 4:
                 continue
             await self._ensure_event_article_analyses(session, article_rows, now)
             article_ids = [str(_row(row, "article_id")) for row in article_rows]

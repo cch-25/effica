@@ -42,7 +42,7 @@ export function AnalysisReadinessNotice({ articleId }: { articleId?: string }) {
   const next = query.data.next_eligible_at ? new Date(query.data.next_eligible_at) : null;
   return <div className="analysis-readiness" role="status" aria-live="polite">
     <strong>{content.title}</strong><p>{content.description}</p>
-    {!articleId && <p>이슈는 정해진 아침 시각에 한 번 공개하는 방식이 아니라, 약 {Math.round((query.data.refresh_interval_seconds ?? 900) / 60)}분 간격으로 수집 조건을 확인하며 갱신합니다. 오전 이용 시에도 준비된 기사부터 확인할 수 있습니다.</p>}
+    {!articleId && <p>하루 한 번 최근 3~7일의 정치와 정책 쟁점을 먼저 선정하고, 각 이슈를 다룬 서로 다른 언론사의 보도를 수집합니다. 출처 3곳 이상을 확보한 이슈를 소개하며, 보도 비교는 분석 준비가 끝나면 공개합니다.</p>}
     {next && Number.isFinite(next.getTime()) && <p>다음 처리 가능 시각: <time dateTime={next.toISOString()}>{new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Seoul" }).format(next)}</time> (한국 시간). 이 시각에 완료되는 것은 아닙니다.</p>}
     <small>상태는 30초마다 다시 확인합니다. 완료 시각은 원문 확보와 분석 상황에 따라 달라집니다.</small>
   </div>;

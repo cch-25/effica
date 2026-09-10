@@ -207,6 +207,7 @@ def _validate_split(payload: Mapping[str, Any]) -> None:
 
 
 JOB_PAYLOAD_CONTRACTS: dict[str, JobPayloadContract] = {
+    "discover_issues": JobPayloadContract("discover_issues", required_all=("run_date",)),
     "crawl": JobPayloadContract("crawl", required_any=(("url", "source_id"),), validator=_validate_crawl),
     "cluster": JobPayloadContract(
         "cluster", required_any=(("articles", "article_ids"),), validator=_validate_articles

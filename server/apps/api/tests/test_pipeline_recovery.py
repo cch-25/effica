@@ -42,7 +42,7 @@ from db.seeds.pipeline_recovery import recover_pipeline
 
 
 @pytest.mark.asyncio
-async def test_source_bootstrap_rebuilds_durable_broad_topic_collections() -> None:
+async def test_source_bootstrap_drops_sports_from_supported_topic_collections() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -108,19 +108,16 @@ async def test_source_bootstrap_rebuilds_durable_broad_topic_collections() -> No
                 bootstrap_sources=True,
             )
 
-        canonical = await session.get(Issue, canonical_topic_issue_id("스포츠"))
-        membership = await session.get(
-            IssueMembership,
-            (canonical_topic_issue_id("스포츠"), article.id),
-        )
+        canonical = await session.get(Issue, canonical_topic_issue_id("정치"))
+        membership = await session.get(IssueMembership, (canonical.id, article.id))
         await session.refresh(legacy)
         assert canonical is not None
         assert canonical.status == "active"
         assert canonical.issue_kind == "TOPIC"
-        assert membership is not None
+        assert membership is None
         assert legacy.status == "archived"
-        assert report["actions"]["canonical_topic_collections_upserted"] == 8
-        assert report["actions"]["topic_memberships_upserted"] == 1
+        assert report["actions"]["canonical_topic_collections_upserted"] == 3
+        assert report["actions"]["topic_memberships_upserted"] == 0
         assert report["actions"]["legacy_active_topic_collections_archived"] == 1
         assert report["diagnostics"]["metadata_only_articles"] == 1
         assert report["deferred"]["articles_without_body"] == 0

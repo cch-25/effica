@@ -57,7 +57,9 @@ class Settings(BaseSettings):
     worker_queue_error_backoff_base_seconds: float = Field(default=1.0, gt=0, le=60)
     worker_queue_error_backoff_max_seconds: float = Field(default=30.0, gt=0, le=300)
     worker_crawl_scheduler_enabled: bool = True
-    worker_crawl_interval_seconds: float = Field(default=21600.0, ge=60, le=86400)
+    # Legacy manual source scheduler settings. Production uses one KST-day
+    # topic-first job, independently of these historical interval values.
+    worker_crawl_interval_seconds: float = Field(default=86400.0, ge=60, le=86400)
     worker_crawl_batch_size: int = Field(default=50, ge=1, le=500)
     worker_crawl_max_attempts: int = Field(default=1, ge=1, le=20)
     google_client_id: str | None = None

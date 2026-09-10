@@ -110,7 +110,7 @@ async def test_d04_durable_efficacy_metrics_use_latest_distinct_user(
 
 
 @pytest.mark.asyncio
-async def test_issue_topics_and_pending_articles_remain_public(repository_session) -> None:
+async def test_legacy_single_source_issue_and_pending_articles_are_hidden(repository_session) -> None:
     session = repository_session
     now = utc_now()
     issue_id, source_id, article_id, blocked_source_id, blocked_article_id = (
@@ -206,14 +206,9 @@ async def test_issue_topics_and_pending_articles_remain_public(repository_sessio
     issues = await repository.list_issue_rows(topic="산업")
     articles = await repository.issue_article_rows(issue_id)
 
-    assert issues[0]["topic"] == "산업"
-    assert issues[0]["article_ids"] == [article_id]
-    assert issues[0]["source_count"] == 1
-    assert articles is not None
-    assert len(articles) == 1
-    assert articles[0]["canonical_url"] == "https://source.example.test/pending"
-    assert articles[0]["analysis_status"] == "PROCESSING"
-    assert "coordinate" not in articles[0]
+    assert issues == []
+    assert articles is None
+    assert await repository.article_view(article_id) is None
 
 
 @pytest.mark.asyncio

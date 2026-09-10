@@ -31,6 +31,7 @@ from apps.api.app.db.models import (
     Article,
     ArticleVersion,
     Issue,
+    IssueMembership,
     Job,
     Source,
     StoredBlob,
@@ -57,7 +58,7 @@ def test_memory_readiness_reports_current_event_and_article_state() -> None:
     assert overview.status_code == 200
     assert overview.json()["status"] == "READY"
     assert overview.json()["reason"] == "CURRENT_EVENT_AVAILABLE"
-    assert overview.json()["refresh_interval_seconds"] == 21600
+    assert overview.json()["refresh_interval_seconds"] == 86400
     assert overview.json()["next_eligible_at"] is None
 
     article = client.get(f"/api/v1/articles/{article_id}/analysis-status")
@@ -104,6 +105,31 @@ def test_memory_readiness_distinguishes_deferred_from_not_selected() -> None:
     assert not_selected.json()["next_eligible_at"] is None
 
 
+@pytest.mark.parametrize("violation", ["legacy", "sports", "insufficient_sources", "expired", "unfetched"])
+def test_memory_readiness_excludes_hidden_content(violation: str) -> None:
+    state = PlatformState()
+    issue = next(iter(state.issues.values()))
+    article_id = issue["article_ids"][0]
+    if violation == "legacy":
+        issue.pop("editorial_key", None)
+    elif violation == "sports":
+        issue["topic"] = "스포츠"
+    elif violation == "insufficient_sources":
+        issue["article_ids"] = issue["article_ids"][:2]
+    elif violation == "expired":
+        state.articles[issue["article_ids"][-1]]["published_at"] = datetime.now(UTC) - timedelta(days=8)
+    else:
+        state.articles[issue["article_ids"][-1]]["current_version_id"] = None
+    client = TestClient(_test_app(state))
+    overview = client.get("/api/v1/analysis-status")
+    assert overview.status_code == 200
+    assert overview.json()["status"] == "WAITING_FOR_ELIGIBLE_CONTENT"
+    assert overview.json()["reason"] == "NO_ELIGIBLE_EVENT"
+    article = client.get(f"/api/v1/articles/{article_id}/analysis-status")
+    assert article.status_code == 404
+    assert article.json()["error"]["code"] == "ARTICLE_NOT_FOUND"
+
+
 def test_completed_job_without_public_assessment_is_unavailable() -> None:
     now = datetime.now(UTC)
     result = _readiness_from_jobs(
@@ -140,12 +166,13 @@ async def test_persisted_overview_ignores_stale_event_candidates() -> None:
             Issue(
                 id=new_ulid(),
                 title="Stale candidate",
-                summary=None,
-                topic="일반",
+                summary="정책 개편을 둘러싼 논쟁",
+                topic="정치",
+                editorial_key="daily-issue:readiness-candidate",
                 status=IssueStatus.CANDIDATE,
                 issue_kind=IssueKind.EVENT,
-                opened_at=now - timedelta(days=6),
-                last_activity_at=now - timedelta(days=5),
+                opened_at=now - timedelta(days=9),
+                last_activity_at=now - timedelta(days=8),
                 version=1,
             )
         )
@@ -174,6 +201,10 @@ async def test_persisted_overview_ignores_stale_event_candidates() -> None:
             repository=repository,
         )
         assert current.reason == "EVENT_CANDIDATE_NEEDS_MORE_SOURCES"
+        issue.editorial_key = None
+        await session.commit()
+        uncurated = await get_analysis_status(settings=settings, state=PlatformState(), repository=repository)
+        assert uncurated.reason == "NO_ELIGIBLE_EVENT"
 
     await engine.dispose()
 
@@ -267,6 +298,30 @@ async def test_persisted_readiness_uses_deferred_job_timestamp() -> None:
         )
         await session.commit()
 
+        issue_id = new_ulid()
+        session.add(Issue(id=issue_id, title="Policy readiness issue", summary="Policy debate", topic="정치",
+                          issue_kind=IssueKind.EVENT, status=IssueStatus.ACTIVE, editorial_key="daily-issue:readiness",
+                          opened_at=now, last_activity_at=now))
+        await session.flush()
+        session.add(IssueMembership(issue_id=issue_id, article_id=article_id, confidence=1))
+        for index in range(2):
+            support_source_id, support_article_id = new_ulid(), new_ulid()
+            support_url = f"https://support{index}.co.kr/report"
+            session.add(Source(id=support_source_id, name=f"Support {index}", source_type=SourceType.RSS,
+                               canonical_url=support_url, active=True, policy_status=SourcePolicyStatus.APPROVED))
+            session.add(Article(id=support_article_id, source_id=support_source_id, canonical_url=support_url,
+                                canonical_url_hash=hashlib.sha256(support_url.encode()).digest(), title="Policy debate",
+                                published_at=now, status=ArticleStatus.ACTIVE))
+            await session.flush()
+            support_version_id = new_ulid()
+            session.add(ArticleVersion(id=support_version_id, article_id=support_article_id,
+                                       content_hash=hashlib.sha256(support_article_id.encode()).digest(),
+                                       normalized_text_ref="fixture://support", fetched_at=now))
+            await session.flush()
+            support_article = await session.get(Article, support_article_id)
+            support_article.current_version_id = support_version_id
+            session.add(IssueMembership(issue_id=issue_id, article_id=support_article_id, confidence=1))
+        await session.commit()
         repository = MariaDBPlatformRepository(session, encryption_secret="x" * 40)
         result = await _persisted_article_readiness(
             repository,

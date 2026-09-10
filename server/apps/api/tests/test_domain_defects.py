@@ -33,21 +33,15 @@ from app.domains.users import QuestionnaireVersion, QuestionSpec, score_question
 from app.domains.users.service import QuestionnaireValidationError
 
 
-def test_public_topic_taxonomy_preserves_culture_and_sports_buckets() -> None:
-    assert PUBLIC_ISSUE_TOPICS == (
-        "정치",
-        "사회",
-        "경제",
-        "국제",
-        "산업",
-        "문화",
-        "스포츠",
-        "기타",
-    )
-    assert infer_issue_topic("프로야구 KBO 시즌 개막") == "스포츠"
-    assert infer_issue_topic("배우 신작 영화 공개") == "문화"
-    assert normalize_issue_topic("문화", "전시 소식") == "문화"
-    assert infer_issue_topic("분류 키워드가 없는 속보") == "기타"
+def test_public_topic_taxonomy_excludes_unrelated_news() -> None:
+    assert PUBLIC_ISSUE_TOPICS == ("정치", "경제", "사회")
+    assert infer_issue_topic("프로야구 KBO 시즌 개막") == ""
+    assert infer_issue_topic("배우 신작 영화 공개") == ""
+    assert normalize_issue_topic("문화", "전시 소식") == ""
+    assert infer_issue_topic("분류 키워드가 없는 속보") == ""
+    assert normalize_issue_topic("국제", "외교 정책 논란") == "정치"
+    with pytest.raises(ValueError, match="unsupported public issue topic"):
+        canonical_topic_issue_id("스포츠")
     assert canonical_topic_issue_id("경제") == canonical_topic_issue_id("경제")
     assert len(canonical_topic_issue_id("경제")) == 26
 

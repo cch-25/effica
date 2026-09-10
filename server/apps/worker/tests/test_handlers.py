@@ -14,6 +14,7 @@ def test_all_builtin_handlers_are_registered():
     registry = build_default_registry()
     assert set(registry.names()) == {
         "crawl",
+        "discover_issues",
         "cluster",
         "analyze",
         "build_issue_comparison",

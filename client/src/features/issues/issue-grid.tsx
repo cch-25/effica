@@ -5,6 +5,7 @@ import { useIssuesQuery } from "@/lib/api/queries";
 import type { Issue } from "@/lib/api/types";
 import { isMockMode } from "@/lib/api/mode";
 import { StatePanel } from "@/components/ui/state-panel";
+import { compareIssueImportance, featuredIssueLimit, isFeaturedIssue, isSupportedIssue } from "./issue-selection";
 
 export function IssueGrid({ fallback, columns = 2, featuredOnly = false }: { fallback: Issue[]; columns?: 2 | 3; featuredOnly?: boolean }) {
   const query = useIssuesQuery();
@@ -13,14 +14,10 @@ export function IssueGrid({ fallback, columns = 2, featuredOnly = false }: { fal
   const source = query.data?.items ?? (isMockMode() ? fallback : []);
   const issues = featuredOnly
     ? source
-        .filter((issue) => issue.kind === "EVENT" && issue.freshnessStatus === "CURRENT" && issue.sourceCount >= 2)
-        .sort((left, right) => {
-          const readiness = Number(right.analysisStatus === "READY") - Number(left.analysisStatus === "READY");
-          const rightTime = new Date(right.dataAsOf ?? right.updatedAt).getTime();
-          const leftTime = new Date(left.dataAsOf ?? left.updatedAt).getTime();
-          return readiness || rightTime - leftTime || (left.editorialPriority ?? Number.MAX_SAFE_INTEGER) - (right.editorialPriority ?? Number.MAX_SAFE_INTEGER);
-        })
-    : source;
+        .filter(isFeaturedIssue)
+        .sort(compareIssueImportance)
+        .slice(0, featuredIssueLimit)
+    : source.filter(isSupportedIssue);
   if (issues.length === 0) return <StatePanel state="empty" />;
   return (
     <ol className={`issue-list issue-list--${columns}`}>

@@ -21,9 +21,9 @@ describe("home issues during limited analysis", () => {
     expect(screen.queryByText("비교 가능")).not.toBeInTheDocument();
   });
 
-  it("places completed events first and excludes stale events and topic buckets", () => {
+  it("preserves editorial priority and excludes stale events and topic buckets", () => {
     query.useIssuesQuery.mockReturnValue({ data: { items: [
-      { ...issues[0], id: "partial", title: "준비 중인 사건", analysisStatus: "PARTIAL" },
+      { ...issues[0], id: "partial", title: "준비 중인 사건", analysisStatus: "PARTIAL", editorialPriority: 2 },
       { ...issues[0], id: "topic", title: "주제 모음", kind: "TOPIC" },
       { ...issues[0], id: "stale", title: "지난 사건", freshnessStatus: "UPDATE_NEEDED" },
       { ...issues[0], id: "ready", title: "분석 완료 사건", analysisStatus: "READY" },
@@ -31,5 +31,18 @@ describe("home issues during limited analysis", () => {
     render(<IssueGrid fallback={[]} featuredOnly />);
     expect(screen.getAllByRole("listitem")[0]).toHaveTextContent("분석 완료 사건");
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
+  });
+
+  it("requires three publishers and caps the homepage at five curated events", () => {
+    query.useIssuesQuery.mockReturnValue({ data: { items: [
+      { ...issues[0], id: "two", title: "출처 부족", sourceCount: 2 },
+      { ...issues[0], id: "few-articles", title: "기사 부족", articleIds: ["a", "b"] },
+      { ...issues[0], id: "sports", title: "경기 결과", topic: "스포츠" },
+      ...Array.from({ length: 6 }, (_, index) => ({ ...issues[0], id: `policy-${index}`, title: `정책 쟁점 ${index}`, editorialPriority: index + 1 })),
+    ] } });
+    render(<IssueGrid fallback={[]} featuredOnly />);
+    expect(screen.getAllByRole("listitem")).toHaveLength(5);
+    expect(screen.getAllByRole("listitem")[0]).toHaveTextContent("정책 쟁점 0");
+    for (const title of ["출처 부족", "기사 부족", "경기 결과", "정책 쟁점 5"]) expect(screen.queryByText(title)).not.toBeInTheDocument();
   });
 });

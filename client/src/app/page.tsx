@@ -6,7 +6,7 @@ import { FrontPage } from "@/features/home/front-page";
 
 export default function HomePage() {
   return <div className="home-page">
-    <div className="front-page-dateline"><span>종합 / 주요 이슈와 보도</span><DataAsOfBadge fallback={issues} /></div>
+    <div className="front-page-dateline"><span>정치와 정책 / 주요 이슈와 보도</span><DataAsOfBadge fallback={issues} /></div>
     <FrontPage fallbackIssues={issues} fallbackArticles={articles} />
     <section className="home-section home-section--feed">
       <div className="section-head"><div><span className="section-index">02</span><h2>추천 기사와 관점 분석</h2></div><Link href="/issues">이슈 전체 보기 →</Link></div>

@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from apps.api.app.domains.issues.editorial_policy import publisher_identity
+
 from .analysis_eligibility import assess_analysis_eligibility
 
 COMPARISON_ARTICLES_SQL = """
@@ -18,9 +20,11 @@ COMPARISON_ARTICLES_SQL = """
     JOIN article_versions av ON av.id = a.current_version_id
     JOIN stored_blobs b ON b.id = av.normalized_text_ref
     WHERE im.issue_id = :issue_id AND i.issue_kind = 'EVENT' AND i.status = 'active'
-      AND i.last_activity_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 4 DAY)
+      AND i.last_activity_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 7 DAY)
+      AND i.editorial_key LIKE 'daily-issue:%'
       AND a.status = 'active' AND s.active = 1 AND s.policy_status = 'approved'
-      AND a.published_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 4 DAY)
+      AND a.published_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 7 DAY)
+      AND a.published_at <= UTC_TIMESTAMP()
     ORDER BY a.id
 """
 
@@ -31,7 +35,7 @@ def select_comparison_cohort(
     selected = []
     sources: set[str] = set()
     for row in sorted(rows, key=lambda row: str(row["article_id"])):
-        source = str(row.get("source_id") or "")
+        source = publisher_identity(str(row.get("source_url") or ""))
         content = row.get("content")
         body = bytes(content).decode("utf-8", errors="replace") if isinstance(content, (bytes, bytearray)) else str(content or "")
         if not source or source in sources or not assess_analysis_eligibility(
@@ -42,4 +46,4 @@ def select_comparison_cohort(
         sources.add(source)
         if len(selected) == 3:
             break
-    return selected if len(selected) >= 2 else []
+    return selected if len(selected) >= 3 else []

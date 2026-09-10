@@ -12,6 +12,7 @@ from apps.api.app.db.enums import (
     ArticleStatus,
     AssessmentStatus,
     ComparisonSnapshotStatus,
+    IssueKind,
     IssueStatus,
     JobStatus,
     ModelStatus,
@@ -50,8 +51,31 @@ from apps.api.app.repositories.platform import MariaDBPlatformRepository
 from apps.api.app.repositories.product import ProductComparisonError
 
 
+async def _add_supporting_coverage(session, issue_id: str, published_at: datetime) -> set[str]:
+    ids = set()
+    for index in range(2):
+        source_id, article_id = new_ulid(), new_ulid()
+        url = f"https://support{index}.co.kr/{article_id}"
+        session.add(Source(id=source_id, name=f"Support {index}", source_type=SourceType.RSS,
+                           canonical_url=url, policy_status=SourcePolicyStatus.APPROVED, active=True))
+        session.add(Article(id=article_id, source_id=source_id, canonical_url=url,
+                            canonical_url_hash=hashlib.sha256(url.encode()).digest(), title="Policy debate coverage",
+                            published_at=published_at, status=ArticleStatus.ACTIVE))
+        await session.flush()
+        version_id = new_ulid()
+        session.add(ArticleVersion(id=version_id, article_id=article_id,
+                                   content_hash=hashlib.sha256(article_id.encode()).digest(),
+                                   normalized_text_ref="fixture://support", fetched_at=published_at))
+        await session.flush()
+        article = await session.get(Article, article_id)
+        article.current_version_id = version_id
+        session.add(IssueMembership(issue_id=issue_id, article_id=article_id, confidence=1))
+        ids.add(article_id)
+    return ids
+
+
 @pytest.mark.asyncio
-async def test_public_issues_and_comparisons_enforce_rolling_four_day_window(
+async def test_public_issues_and_comparisons_enforce_rolling_seven_day_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     now = datetime(2026, 9, 4, 12, tzinfo=UTC)
@@ -92,18 +116,20 @@ async def test_public_issues_and_comparisons_enforce_rolling_four_day_window(
                     id=fresh_issue_id,
                     title="Fresh public issue",
                     summary="Fresh summary",
+                    topic="정치", issue_kind=IssueKind.EVENT, editorial_key="daily-issue:fresh",
                     status=IssueStatus.ACTIVE,
-                    opened_at=now - timedelta(days=4),
-                    last_activity_at=now - timedelta(days=4),
+                    opened_at=now - timedelta(days=7),
+                    last_activity_at=now - timedelta(days=7),
                     version=1,
                 ),
                 Issue(
                     id=stale_issue_id,
                     title="Stale public issue",
                     summary="Stale summary",
+                    topic="정치", issue_kind=IssueKind.EVENT, editorial_key="daily-issue:stale",
                     status=IssueStatus.ACTIVE,
-                    opened_at=now - timedelta(days=5),
-                    last_activity_at=now - timedelta(days=4, microseconds=1),
+                    opened_at=now - timedelta(days=8),
+                    last_activity_at=now - timedelta(days=7, microseconds=1),
                     version=1,
                 ),
             ]
@@ -132,11 +158,11 @@ async def test_public_issues_and_comparisons_enforce_rolling_four_day_window(
 
         session.add_all(
             [
-                article(fresh_article_id, "four-day-boundary", now - timedelta(days=4)),
+                article(fresh_article_id, "seven-day-boundary", now - timedelta(days=7)),
                 article(
                     stale_article_id,
-                    "older-than-four-days",
-                    now - timedelta(days=4, microseconds=1),
+                    "older-than-seven-days",
+                    now - timedelta(days=7, microseconds=1),
                 ),
                 article(undated_article_id, "missing-publication-date", None),
                 article(stale_issue_article_id, "fresh-article-in-stale-issue", now),
@@ -186,14 +212,24 @@ async def test_public_issues_and_comparisons_enforce_rolling_four_day_window(
         )
         await session.commit()
 
+        for article_id in (fresh_article_id, stale_article_id, undated_article_id, stale_issue_article_id):
+            version_id = new_ulid()
+            session.add(ArticleVersion(id=version_id, article_id=article_id,
+                                       content_hash=hashlib.sha256(article_id.encode()).digest(),
+                                       normalized_text_ref="fixture://boundary", fetched_at=now))
+            await session.flush()
+            row = await session.get(Article, article_id)
+            row.current_version_id = version_id
+        supporting_ids = await _add_supporting_coverage(session, fresh_issue_id, now - timedelta(days=7))
+        await session.commit()
         issues = await repository.list_issue_rows()
         assert [row["id"] for row in issues] == [fresh_issue_id]
-        assert issues[0]["article_ids"] == [fresh_article_id]
-        assert issues[0]["source_count"] == 1
+        assert set(issues[0]["article_ids"]) == {fresh_article_id, *supporting_ids}
+        assert issues[0]["source_count"] == 3
 
         articles = await repository.issue_article_rows(fresh_issue_id)
         assert articles is not None
-        assert [row["id"] for row in articles] == [fresh_article_id]
+        assert {row["id"] for row in articles} == {fresh_article_id, *supporting_ids}
         assert await repository.issue_view(stale_issue_id) is None
         assert await repository.issue_article_rows(stale_issue_id) is None
         assert (
@@ -215,7 +251,7 @@ async def test_public_issues_and_comparisons_enforce_rolling_four_day_window(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["openai", "codex"])
-async def test_public_feed_enforces_four_day_article_cutoff_without_stale_fallback(
+async def test_public_feed_enforces_seven_day_article_cutoff_without_stale_fallback(
     monkeypatch: pytest.MonkeyPatch, provider: str,
 ) -> None:
     now = datetime(2026, 9, 4, 12, tzinfo=UTC)
@@ -351,12 +387,12 @@ async def test_public_feed_enforces_four_day_article_cutoff_without_stale_fallba
             return article_id
 
         boundary_id = await add_analyzed_article(
-            "exact-four-day-boundary",
-            now - timedelta(days=4),
+            "exact-seven-day-boundary",
+            now - timedelta(days=7),
         )
         stale_id = await add_analyzed_article(
-            "older-than-four-days",
-            now - timedelta(days=4, microseconds=1),
+            "older-than-seven-days",
+            now - timedelta(days=7, microseconds=1),
         )
         undated_id = await add_analyzed_article("missing-publication-date", None)
         inactive_id = await add_analyzed_article(
@@ -369,6 +405,16 @@ async def test_public_feed_enforces_four_day_article_cutoff_without_stale_fallba
             now,
             source_id=rejected_source_id,
         )
+        await session.commit()
+
+        issue_id = new_ulid()
+        session.add(Issue(id=issue_id, title="Policy feed issue", summary="Policy debate", topic="정치",
+                          issue_kind=IssueKind.EVENT, status=IssueStatus.ACTIVE, editorial_key="daily-issue:feed",
+                          opened_at=now, last_activity_at=now))
+        await session.flush()
+        for member_id in (boundary_id, stale_id, undated_id, inactive_id, rejected_source_article_id):
+            session.add(IssueMembership(issue_id=issue_id, article_id=member_id, confidence=1))
+        await _add_supporting_coverage(session, issue_id, now)
         await session.commit()
 
         feed, personalized = await repository.feed_items(
@@ -434,6 +480,7 @@ async def test_db_product_engagement_vertical_slice() -> None:
                     id=issue_id,
                     title="Fixture issue",
                     summary="Summary",
+                    topic="정치", issue_kind=IssueKind.EVENT, editorial_key="daily-issue:engagement",
                     status=IssueStatus.ACTIVE,
                     opened_at=now,
                     last_activity_at=now,
@@ -564,6 +611,8 @@ async def test_db_product_engagement_vertical_slice() -> None:
                 ),
             ]
         )
+        await session.commit()
+        await _add_supporting_coverage(session, issue_id, now - timedelta(hours=1))
         await session.commit()
         sensitive_consent_id = new_ulid()
         session.add_all(

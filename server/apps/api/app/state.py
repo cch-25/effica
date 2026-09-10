@@ -264,9 +264,10 @@ class PlatformState:
         self.issues[issue_id] = {
             "id": issue_id,
             "title": "Fixture policy issue",
+            "editorial_key": "daily-issue:fixture-policy",
             "summary": "Multiple synthetic perspectives on one policy issue.",
             "topic": "정치",
-            "status": "OPEN",
+            "status": "ACTIVE",
             "kind": "EVENT",
             "source_count": 3,
             "analysis_status": "READY",

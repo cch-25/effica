@@ -986,7 +986,7 @@ class LLMRequest(Base):
 
     __table_args__ = (
         Index("ix_llm_requests_subject_day", "category", "usage_date", "subject_key"),
-        CheckConstraint("category IN ('article', 'comparison')", name="valid_llm_category"),
+        CheckConstraint("category IN ('article', 'comparison', 'discovery')", name="valid_llm_category"),
         CheckConstraint("state IN ('SUBMITTED', 'SUCCEEDED')", name="valid_llm_request_state"),
         _json_check("response_json"),
     )

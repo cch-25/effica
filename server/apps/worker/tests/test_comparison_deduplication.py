@@ -23,9 +23,14 @@ class Rows:
 
 ARTICLES = [
     {"article_id": "a", "article_version_id": "va", "title": "First article headline",
-     "source_id": "source-a", "content": "Article body text. " * 100},
+     "source_id": "source-a", "source_url": "https://publisher-a.com/news/1",
+     "content": "Article body text. " * 100},
     {"article_id": "b", "article_version_id": "vb", "title": "Second article headline",
-     "source_id": "source-b", "content": "Article body text. " * 100},
+     "source_id": "source-b", "source_url": "https://publisher-b.com/news/2",
+     "content": "Article body text. " * 100},
+    {"article_id": "c", "article_version_id": "vc", "title": "Third article headline",
+     "source_id": "source-c", "source_url": "https://publisher-c.com/news/3",
+     "content": "Article body text. " * 100},
 ]
 MODEL = {"actual_model_id": "gpt-5.6-luna", "reasoning_effort": "none"}
 NOW = datetime(2026, 9, 6, tzinfo=UTC)
@@ -127,7 +132,7 @@ def test_stale_comparison_completion_never_supersedes_current_snapshot():
         job = Job(id="compare", job_type="build_issue_comparison", payload={
             "issue_id": "issue", "issue_version": 1, "prompt_version": "issue-comparison-v1",
         })
-        result = {"article_version_ids": {"a": "old-version", "b": "vb"}}
+        result = {"article_version_ids": {"a": "old-version", "b": "vb", "c": "vc"}}
         await applier._apply_issue_comparison(session, job, result, NOW)
         assert not session.writes
         result["article_version_ids"]["a"] = "va"
@@ -152,7 +157,7 @@ def test_duplicate_comparison_completion_preserves_existing_review():
             Job(id="compare", job_type="build_issue_comparison", payload={
                 "issue_id": "issue", "issue_version": 1, "prompt_version": "issue-comparison-v1",
             }),
-            {"article_version_ids": {"a": "va", "b": "vb"},
+            {"article_version_ids": {"a": "va", "b": "vb", "c": "vc"},
              "input_fingerprint": fingerprint, "comparison_model_identity": MODEL},
             NOW,
         )

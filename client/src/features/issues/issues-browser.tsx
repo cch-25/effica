@@ -13,6 +13,7 @@ import { useIssueArticleCollectionsQuery, useIssuesQuery } from "@/lib/api/queri
 import type { Article, Issue } from "@/lib/api/types";
 import { isMockMode } from "@/lib/api/mode";
 import { StatePanel } from "@/components/ui/state-panel";
+import { compareIssueImportance, isFeaturedIssue, isSupportedIssue, issueTopics } from "./issue-selection";
 
 type Period = "all" | "day" | "week" | "month";
 
@@ -29,47 +30,14 @@ const periodInMilliseconds: Record<Exclude<Period, "all">, number> = {
   month: 30 * 24 * 60 * 60 * 1000,
 };
 
-const preferredTopicOrder = ["정치", "사회", "경제", "국제", "산업", "문화", "스포츠", "기타"];
 const collapsedTopicLength = 6;
-const genericTopicTitles = new Set(["정치", "사회", "경제", "국제", "산업", "문화", "스포츠", "기타", "과학", "기술"]);
-const genericTopicSummary = /분야의 최신 한국어 원문 기사 모음/;
 
 function isSubstantiveEventIssue(issue: Issue): boolean {
-  return issue.kind === "EVENT"
-    && issue.analysisStatus === "READY"
-    && issue.freshnessStatus === "CURRENT"
-    && issue.articleIds.length >= 3
-    && issue.sourceCount >= 3
-    && issue.summary.trim().length > 0
-    && !genericTopicTitles.has(issue.title.trim())
-    && !genericTopicSummary.test(issue.summary);
-}
-
-function compareIssueImportance(left: Issue, right: Issue): number {
-  const leftReady = left.analysisStatus === "READY" ? 1 : 0;
-  const rightReady = right.analysisStatus === "READY" ? 1 : 0;
-  const leftCurrent = left.freshnessStatus === "CURRENT" ? 1 : 0;
-  const rightCurrent = right.freshnessStatus === "CURRENT" ? 1 : 0;
-  const leftPriority = left.editorialPriority ?? Number.MAX_SAFE_INTEGER;
-  const rightPriority = right.editorialPriority ?? Number.MAX_SAFE_INTEGER;
-
-  return rightReady - leftReady
-    || leftPriority - rightPriority
-    || right.sourceCount - left.sourceCount
-    || right.articleIds.length - left.articleIds.length
-    || rightCurrent - leftCurrent
-    || new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
-    || left.id.localeCompare(right.id);
+  return isFeaturedIssue(issue) && issue.analysisStatus === "READY";
 }
 
 function topicOrder(left: string, right: string): number {
-  const leftIndex = preferredTopicOrder.indexOf(left);
-  const rightIndex = preferredTopicOrder.indexOf(right);
-  if (leftIndex >= 0 || rightIndex >= 0) {
-    return (leftIndex < 0 ? preferredTopicOrder.length : leftIndex)
-      - (rightIndex < 0 ? preferredTopicOrder.length : rightIndex);
-  }
-  return left.localeCompare(right, "ko");
+  return issueTopics.findIndex((topic) => topic === left) - issueTopics.findIndex((topic) => topic === right);
 }
 
 function IssueCounts({ issue }: { issue: Issue }) {
@@ -163,10 +131,10 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
     return source.map((issue) => ({
       ...issue,
       topic: issue.topic === "일반" ? fallbackById.get(issue.id)?.topic ?? issue.topic : issue.topic,
-    }));
+    })).filter(isSupportedIssue);
   }, [fallback, query.data?.items]);
 
-  const availableTopics = useMemo(() => [...new Set(issues.map((issue) => issue.topic))].sort(topicOrder), [issues]);
+  const availableTopics = issueTopics;
   const visibleIssues = useMemo(() => {
     const cutoff = period === "all" ? null : filterReferenceTime - periodInMilliseconds[period];
     return issues.filter((issue) => {
@@ -180,7 +148,7 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
   const activeFilterCount = topics.length + (period === "all" ? 0 : 1);
   const visibleEventCount = visibleIssues.filter((issue) => issue.kind === "EVENT").length;
   const featuredIssues = useMemo(
-    () => visibleIssues.filter(isSubstantiveEventIssue).sort(compareIssueImportance).slice(0, 10),
+    () => visibleIssues.filter(isSubstantiveEventIssue).sort(compareIssueImportance),
     [visibleIssues],
   );
   const topicGroups = useMemo(() => {
@@ -217,7 +185,7 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
       <PageHeader
         eyebrow="이슈 찾기"
         title="오늘의 이슈"
-        description="바로 비교할 수 있는 이슈를 먼저 확인하고, 필요한 주제의 전체 이슈와 기사를 이어서 찾아보세요."
+        description="정치와 정책을 둘러싼 쟁점을 살펴보고, 같은 이슈를 다룬 여러 언론사의 보도를 비교하세요."
         actions={<Button variant="secondary" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)}><Filter size={16} /> 주제와 기간{activeFilterCount > 0 ? ` ${activeFilterCount}` : ""}</Button>}
       />
 
@@ -239,7 +207,7 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
                 </div>
                 <span>{featuredIssues.length}개 준비</span>
               </header>
-              <p className="issue-group__description">기사 3개 이상, 출처 3곳 이상, 최신 AI 분석 기준을 모두 충족한 실제 사건을 최대 10개까지 표시합니다.</p>
+              <p className="issue-group__description">정치와 정책 쟁점 중 기사 3개 이상과 출처 3곳 이상의 보도가 모이고, 최신 AI 분석이 준비된 이슈입니다.</p>
               {featuredIssues.length > 0 ? <ul className="issue-rank-list">
                 {featuredIssues.map((issue) => (
                   <li key={issue.id}>
@@ -265,7 +233,7 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
                 </div>
                 <span>{topicGroups.length}개 주제</span>
               </header>
-              <p className="issue-group__description">위의 비교 가능 이슈를 포함한 전체 사건을 주제 맥락에서 다시 찾고, 주제별 최신 기사도 함께 확인할 수 있습니다.</p>
+              <p className="issue-group__description">정치와 사회, 경제 분야에서 선정한 정책 쟁점과 관련 보도를 모았습니다. 분석 중인 이슈도 함께 확인할 수 있습니다.</p>
               <nav className="topic-directory__nav" aria-label="대주제 바로가기">
                 {topicGroups.map((group) => <a key={group.topic} href={`#${group.id}`}><strong>{group.topic}</strong><span>{group.issues.length ? `${group.issues.length} 이슈` : "최신 기사"}</span></a>)}
               </nav>

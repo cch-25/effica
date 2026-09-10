@@ -79,13 +79,35 @@ class MariaDBWorkerLookups:
         row["url"] = row["canonical_url"]
         return row
 
+    async def allowed_sources(self) -> list[dict[str, Any]]:
+        rows = await self._all("""
+            SELECT s.id AS source_id, s.name, s.canonical_url AS home_url,
+                   s.policy_status, s.robots_status, s.terms_status,
+                   s.version AS policy_version, a.config_json
+            FROM sources s
+            LEFT JOIN source_adapters a ON a.source_id = s.id AND a.active = 1
+            WHERE s.active = 1 AND s.policy_status = 'approved'
+            ORDER BY s.id, a.id
+        """, {})
+        return [{**row, "adapter_config": _json_value(row.get("config_json"), {})}
+                for row in rows]
+
     async def article_version_lookup(self, identifier: Any) -> dict[str, Any] | None:
         row = await self._one(
             """
             SELECT av.id AS article_version_id, av.article_id, a.current_version_id,
                    a.title, a.author,
                    (a.status = 'active' AND s.active = 1 AND s.policy_status = 'approved'
-                    AND a.published_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 4 DAY)) AS publicly_available,
+                    AND a.published_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 7 DAY)
+                    AND a.published_at <= UTC_TIMESTAMP()
+                    AND EXISTS (
+                        SELECT 1 FROM issue_memberships im
+                        JOIN issues i ON i.id = im.issue_id
+                        WHERE im.article_id = a.id AND i.status = 'active'
+                          AND i.issue_kind = 'EVENT'
+                          AND i.editorial_key LIKE 'daily-issue:%'
+                          AND i.topic IN ('정치', '경제', '사회')
+                    )) AS publicly_available,
                    a.canonical_url AS source_url, s.name AS source_name,
                    b.payload AS normalized_payload
             FROM article_versions av
@@ -458,6 +480,7 @@ class MariaDBWorkerLookups:
 
     def as_services(self) -> dict[str, Any]:
         return {
+            "allowed_sources": self.allowed_sources,
             "source_lookup": self.source_lookup,
             "article_version_lookup": self.article_version_lookup,
             "existing_article_analysis": self.existing_article_analysis,

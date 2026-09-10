@@ -35,7 +35,7 @@ def test_crawl_result_keeps_new_articles_in_a_canonical_topic_bucket() -> None:
         await applier._upsert_topic_membership(
             session,
             article_id="article-1",
-            title="프로야구 KBO 시즌 개막",
+            title="국회 선거 제도 개편 논의",
             summary="",
             now=datetime.now(UTC),
         )
@@ -44,8 +44,8 @@ def test_crawl_result_keeps_new_articles_in_a_canonical_topic_bucket() -> None:
         issue_query, issue_params = session.statements[0]
         membership_query, membership_params = session.statements[1]
         assert "issue_kind" in issue_query
-        assert issue_params["topic"] == "스포츠"
-        assert issue_params["editorial_key"] == "public-topic:스포츠"
+        assert issue_params["topic"] == "정치"
+        assert issue_params["editorial_key"] == "public-topic:정치"
         assert "issue_memberships" in membership_query
         assert membership_params["article_id"] == "article-1"
 

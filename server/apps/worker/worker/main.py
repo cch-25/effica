@@ -30,7 +30,6 @@ from .queue import (
     QueueRepository,
 )
 from .services import (
-    MariaDBCrawlScheduler,
     MariaDBIdempotencyStore,
     MariaDBResultApplier,
     MariaDBRuntimeControl,
@@ -862,12 +861,9 @@ def build_mariadb_runtime(
             minimum_analysis_content_chars=settings.llm_min_article_chars,
         )
     if crawl_scheduler is None and settings.worker_crawl_scheduler_enabled:
-        crawl_scheduler = MariaDBCrawlScheduler(
-            session_factory,
-            interval_seconds=settings.worker_crawl_interval_seconds,
-            batch_size=settings.worker_crawl_batch_size,
-            max_attempts=settings.worker_crawl_max_attempts,
-        )
+        from .daily_scheduler import MariaDBDailyIssueScheduler
+
+        crawl_scheduler = MariaDBDailyIssueScheduler(session_factory)
     if runtime_control is None:
         runtime_control = MariaDBRuntimeControl(session_factory)
     if services is None:
@@ -914,6 +910,16 @@ def _default_services(session_factory: Callable[[], Any]) -> dict[str, Any]:
     )
     services["llm_budget"] = llm_budget
     services["minimum_analysis_content_chars"] = settings.llm_min_article_chars
+    from .issue_discovery import IssueDiscoveryService
+
+    services["issue_discovery"] = IssueDiscoveryService(
+        api_key=settings.openai_api_key,
+        model=settings.llm_model,
+        budget=llm_budget,
+        source_fetcher=services["source_fetcher"],
+        base_url=settings.openai_endpoint.removesuffix("/responses"),
+        timeout_seconds=settings.llm_timeout_seconds,
+    )
 
     async def analysis_provider_factory(*, attempt: int = 1) -> HttpLLMProvider:
         configured = await lookups.analysis_model_lookup()

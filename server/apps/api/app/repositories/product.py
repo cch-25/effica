@@ -14,7 +14,7 @@ from datetime import timedelta
 from statistics import fmean
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, select
 
 from apps.api.app.db.enums import (
     ArticleStatus,
@@ -65,7 +65,13 @@ from apps.api.app.domains.content.trust import (
 )
 from apps.api.app.domains.engagement.read import evaluate_read_eligibility
 from apps.api.app.domains.feed.ranking import FeedCandidate, rank_feed
-from apps.api.app.domains.issues.topics import normalize_issue_topic
+from apps.api.app.domains.issues.editorial_policy import (
+    MIN_PUBLIC_ISSUE_SOURCES,
+    PUBLIC_CONTENT_MAX_AGE,
+    is_curated_issue,
+    publisher_identity,
+)
+from apps.api.app.domains.issues.topics import PUBLIC_ISSUE_TOPICS, normalize_issue_topic
 from apps.api.app.domains.scoring import (
     PUBLIC_VOTE_AGGREGATE_MIN_SIZE,
     public_vote_axis_means,
@@ -107,7 +113,7 @@ def _linked_assessment_summary(assessment: ModelAssessment, score: ScoreVersion 
 
 
 _TERMINAL_ISSUE_STATUSES = ("merged", "closed", "archived")
-_PUBLIC_CONTENT_MAX_AGE = timedelta(days=4)
+_PUBLIC_CONTENT_MAX_AGE = PUBLIC_CONTENT_MAX_AGE
 
 
 class ProductConflictError(RuntimeError):
@@ -183,24 +189,55 @@ class ProductRepositoryMixin:
             "status": _value(article.status),
         }
 
-    async def _article_context(self, article_id: str) -> tuple[Article, Source, str | None] | None:
-        row = (
-            await self.session.execute(
-                select(Article, Source, IssueMembership.issue_id)
-                .join(Source, Article.source_id == Source.id)
-                .outerjoin(IssueMembership, IssueMembership.article_id == Article.id)
-                .outerjoin(Issue, Issue.id == IssueMembership.issue_id)
-                .where(
-                    Article.id == article_id,
-                    or_(
-                        Issue.id.is_(None),
-                        Issue.status.not_in(_TERMINAL_ISSUE_STATUSES),
-                    ),
-                )
-                .limit(1)
+    async def _public_issue_memberships(self) -> dict[str, set[str]]:
+        """Recheck actual eligible publisher coverage for every public read."""
+        now = utc_now()
+        rows = (await self.session.execute(
+            select(Issue, Article)
+            .join(IssueMembership, IssueMembership.issue_id == Issue.id)
+            .join(Article, Article.id == IssueMembership.article_id)
+            .join(ArticleVersion, and_(
+                ArticleVersion.id == Article.current_version_id,
+                ArticleVersion.article_id == Article.id,
+            ))
+            .join(Source, Source.id == Article.source_id)
+            .where(
+                Issue.status == IssueStatus.ACTIVE,
+                Issue.issue_kind == IssueKind.EVENT,
+                Issue.editorial_key.startswith("daily-issue:"),
+                Issue.topic.in_(PUBLIC_ISSUE_TOPICS),
+                Article.status == ArticleStatus.ACTIVE,
+                Article.published_at >= now - _PUBLIC_CONTENT_MAX_AGE,
+                Article.published_at <= now,
+                Source.active.is_(True),
+                Source.policy_status == SourcePolicyStatus.APPROVED,
             )
-        ).first()
-        return None if row is None else (row[0], row[1], row[2])
+        )).all()
+        members: dict[str, set[str]] = {}
+        publishers: dict[str, set[str]] = {}
+        for issue, article in rows:
+            identity = publisher_identity(article.canonical_url)
+            if not is_curated_issue(issue) or identity is None:
+                continue
+            members.setdefault(issue.id, set()).add(article.id)
+            publishers.setdefault(issue.id, set()).add(identity)
+        return {
+            issue_id: article_ids
+            for issue_id, article_ids in members.items()
+            if len(publishers[issue_id]) >= MIN_PUBLIC_ISSUE_SOURCES
+        }
+
+    async def _article_context(self, article_id: str) -> tuple[Article, Source, str | None] | None:
+        public_members = await self._public_issue_memberships()
+        issue_id = next((key for key, ids in public_members.items() if article_id in ids), None)
+        if issue_id is None:
+            return None
+        row = (await self.session.execute(
+            select(Article, Source)
+            .join(Source, Article.source_id == Source.id)
+            .where(Article.id == article_id)
+        )).first()
+        return None if row is None else (row[0], row[1], issue_id)
 
     async def _analysis_context(self) -> dict[str, dict[str, Any]]:
         assessment_rows = list(
@@ -290,10 +327,7 @@ class ProductRepositoryMixin:
                         Article.published_at >= freshness_cutoff,
                         Source.active.is_(True),
                         Source.policy_status == SourcePolicyStatus.APPROVED,
-                        or_(
-                            Issue.id.is_(None),
-                            Issue.status.not_in(_TERMINAL_ISSUE_STATUSES),
-                        ),
+                        Issue.status == IssueStatus.ACTIVE,
                     )
                     .order_by(
                         Article.published_at.desc(),
@@ -303,6 +337,11 @@ class ProductRepositoryMixin:
                 )
             ).all()
         )
+        public_members = await self._public_issue_memberships()
+        contexts = [
+            row for row in contexts
+            if row[0].id in public_members.get(row[2], set())
+        ]
         # A merge/split transition and retries can leave more than one active
         # membership while the transaction settles.  Feed has one invariant:
         # an article may be emitted at most once.  Terminal memberships were
@@ -386,8 +425,7 @@ class ProductRepositoryMixin:
         to_time: Any = None,
         recent_first: bool = True,
     ) -> list[dict[str, Any]]:
-        # Candidate clusters are internal work-in-progress. Public issue
-        # directories expose only active events and active topic collections.
+        # Candidate clusters and legacy collections are internal only.
         now = utc_now()
         freshness_cutoff = now - _PUBLIC_CONTENT_MAX_AGE
         statement = select(Issue).where(
@@ -398,7 +436,8 @@ class ProductRepositoryMixin:
             statement = statement.where(Issue.last_activity_at >= from_time)
         if to_time:
             statement = statement.where(Issue.last_activity_at <= to_time)
-        rows = list((await self.session.scalars(statement)).all())
+        public_members = await self._public_issue_memberships()
+        rows = [row for row in (await self.session.scalars(statement)).all() if row.id in public_members]
         memberships = list(
             (
                 await self.session.execute(
@@ -428,11 +467,14 @@ class ProductRepositoryMixin:
             by_issue.setdefault(issue_id, []).append((article, fetched_at))
         output: list[dict[str, Any]] = []
         for row in rows:
-            article_rows = by_issue.get(row.id, [])
+            article_rows = [
+                item for item in by_issue.get(row.id, [])
+                if item[0].id in public_members[row.id]
+            ]
             if not article_rows:
                 continue
             article_ids = [article.id for article, _fetched_at in article_rows]
-            source_count = len({article.source_id for article, _fetched_at in article_rows})
+            source_count = len({publisher_identity(article.canonical_url) for article, _ in article_rows})
             statuses = [
                 analysis.get(article.current_version_id or "", {}).get("status", "PROCESSING")
                 for article, _fetched_at in article_rows
@@ -452,18 +494,8 @@ class ProductRepositoryMixin:
                 or not (row.summary or "").strip()
             ):
                 analysis_status = "PARTIAL" if ready_count else "PROCESSING"
-            timestamps = [
-                value
-                for article, fetched_at in article_rows
-                for value in (article.published_at, fetched_at)
-                if value is not None
-            ]
-            for article, _fetched_at in article_rows:
-                trusted = analysis.get(article.current_version_id or "", {}).get(
-                    "trusted_assessments", []
-                )
-                timestamps.extend(assessment.created_at for assessment, _alias in trusted)
-            data_as_of = max(timestamps) if timestamps else row.editorial_data_as_of
+            timestamps = [article.published_at for article, _ in article_rows if article.published_at is not None]
+            data_as_of = max(timestamps) if timestamps else None
             freshness = (
                 "UPDATE_NEEDED"
                 if data_as_of is not None and now - data_as_of > timedelta(days=7)
@@ -537,8 +569,10 @@ class ProductRepositoryMixin:
     ) -> list[dict[str, Any]] | None:
         freshness_cutoff = utc_now() - _PUBLIC_CONTENT_MAX_AGE
         issue = await self.session.get(Issue, issue_id)
+        public_members = await self._public_issue_memberships()
         if (
-            issue is None
+            issue_id not in public_members
+            or issue is None
             or _value(issue.status) != IssueStatus.ACTIVE.value
             or issue.last_activity_at < freshness_cutoff
         ):
@@ -551,6 +585,7 @@ class ProductRepositoryMixin:
                     .join(Source, Source.id == Article.source_id)
                     .where(
                         IssueMembership.issue_id == issue_id,
+                        Article.id.in_(public_members[issue_id]),
                         Article.status.not_in(
                             (ArticleStatus.REMOVED, ArticleStatus.BLOCKED)
                         ),
@@ -622,8 +657,10 @@ class ProductRepositoryMixin:
 
         issue = await self.session.get(Issue, issue_id)
         freshness_cutoff = utc_now() - _PUBLIC_CONTENT_MAX_AGE
+        public_members = await self._public_issue_memberships()
         if (
-            issue is None
+            issue_id not in public_members
+            or issue is None
             or _value(issue.status) != IssueStatus.ACTIVE.value
             or issue.last_activity_at < freshness_cutoff
         ):
@@ -656,6 +693,7 @@ class ProductRepositoryMixin:
                     .join(Source, Source.id == Article.source_id)
                     .where(
                         IssueMembership.issue_id == issue_id,
+                        Article.id.in_(public_members[issue_id]),
                         Article.status.not_in(
                             (ArticleStatus.REMOVED, ArticleStatus.BLOCKED)
                         ),
@@ -948,8 +986,8 @@ class ProductRepositoryMixin:
         }
 
     async def score_history(self, article_id: str) -> list[dict[str, Any]] | None:
-        article = await self.session.get(Article, article_id)
-        if article is None:
+        context = await self._article_context(article_id)
+        if context is None:
             return None
         version_ids = list(
             (
@@ -989,9 +1027,10 @@ class ProductRepositoryMixin:
         ]
 
     async def current_score(self, article_id: str) -> dict[str, Any] | None:
-        article = await self.session.get(Article, article_id)
-        if article is None or not article.current_version_id:
+        context = await self._article_context(article_id)
+        if context is None or not context[0].current_version_id:
             return None
+        article = context[0]
         analysis = await self._analysis_context()
         trusted = analysis.get(article.current_version_id, {})
         row = trusted.get("score") if trusted.get("status") == "READY" else None
@@ -1006,6 +1045,9 @@ class ProductRepositoryMixin:
                 await self.session.scalars(select(Article).where(Article.source_id == source_id))
             ).all()
         )
+        public_members = await self._public_issue_memberships()
+        public_article_ids = set().union(*public_members.values()) if public_members else set()
+        articles = [row for row in articles if row.id in public_article_ids]
         analysis = await self._analysis_context()
         values = [
             analysis[row.current_version_id]["score"].x
@@ -1925,6 +1967,13 @@ class ProductRepositoryMixin:
                 )
             ).all()
         )
+        public_members = await self._public_issue_memberships()
+        contexts = [
+            row for row in contexts
+            if row[0].id in public_members.get(row[2], set())
+            and (issue_id is None or row[2] == issue_id)
+        ]
+        contexts = list({row[0].id: row for row in contexts}.values())
         analysis = await self._analysis_context()
         latest: dict[str, ScoreVersion] = {
             version_id: context["score"]

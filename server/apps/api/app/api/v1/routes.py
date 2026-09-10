@@ -92,6 +92,12 @@ from apps.api.app.domains.engagement.read import (
     evaluate_read_eligibility,
     verify_redirect_token,
 )
+from apps.api.app.domains.issues.editorial_policy import (
+    MIN_PUBLIC_ISSUE_SOURCES,
+    is_curated_issue,
+    is_current_article,
+    publisher_identity,
+)
 from apps.api.app.domains.scoring import (
     PUBLIC_VOTE_AGGREGATE_MIN_SIZE,
     public_vote_axis_means,
@@ -121,6 +127,43 @@ from apps.api.app.state import (
 )
 
 router = APIRouter(prefix="/api/v1", responses=COMMON_ERROR_RESPONSES)
+
+
+def _public_memory_issues(platform: PlatformState) -> dict[str, dict[str, Any]]:
+    """Mirror durable corpus eligibility in the deterministic memory backend."""
+    now = utcnow()
+    output: dict[str, dict[str, Any]] = {}
+    for issue_id, issue in platform.issues.items():
+        if not is_curated_issue(issue):
+            continue
+        members = []
+        publishers: set[str] = set()
+        for article_id in issue.get("article_ids", []):
+            article = platform.articles.get(article_id)
+            if article is None or not article.get("current_version_id") or str(article.get("status", "")).upper() != "ACTIVE":
+                continue
+            source = platform.sources.get(article.get("source_id"), {})
+            if not source.get("active") or source.get("policy_status") != "APPROVED":
+                continue
+            if not is_current_article(article.get("published_at"), now):
+                continue
+            identity = publisher_identity(article.get("canonical_url", ""))
+            if identity is None:
+                continue
+            members.append(article_id)
+            publishers.add(identity)
+        if len(publishers) >= MIN_PUBLIC_ISSUE_SOURCES:
+            public_issue = {key: value for key, value in issue.items() if key != "editorial_key"}
+            output[issue_id] = {**public_issue, "article_ids": members, "source_count": len(publishers)}
+    return output
+
+
+def _public_memory_article_ids(platform: PlatformState) -> set[str]:
+    return {
+        article_id
+        for issue in _public_memory_issues(platform).values()
+        for article_id in issue["article_ids"]
+    }
 
 
 async def _admin_repo[T](awaitable: Awaitable[T]) -> T:
@@ -959,7 +1002,11 @@ async def feed(
     last_source = None
     seen_article_ids: set[str] = set()
     issue_counts: dict[str | None, int] = {}
-    articles = sorted(platform.articles.values(), key=lambda row: row["published_at"], reverse=True)
+    public_ids = _public_memory_article_ids(platform)
+    articles = sorted(
+        (article for article in platform.articles.values() if article["id"] in public_ids),
+        key=lambda row: row["published_at"], reverse=True,
+    )
     if personalized and profile:
         def profile_distance(article: dict[str, Any]) -> float:
             score = (platform.scores.get(article["id"]) or [{"x": 0}])[-1]
@@ -1025,7 +1072,7 @@ async def list_issues(
             recent_first=sort == "recent",
         )
         return _page(rows, cursor, limit)
-    rows = list(platform.issues.values())
+    rows = list(_public_memory_issues(platform).values())
     if topic:
         rows = [row for row in rows if row["topic"].casefold() == topic.casefold()]
     if from_:
@@ -1047,7 +1094,7 @@ async def get_issue(
         if issue is None:
             raise _not_found("issue")
         return issue
-    issue = platform.issues.get(issue_id)
+    issue = _public_memory_issues(platform).get(issue_id)
     if not issue:
         raise _not_found("issue")
     axes = [platform.scores[aid][-1]["x"] for aid in issue["article_ids"] if aid in platform.scores]
@@ -1078,7 +1125,7 @@ async def list_issue_articles(
         if rows is None:
             raise _not_found("issue")
         return _page(rows, cursor)
-    issue = platform.issues.get(issue_id)
+    issue = _public_memory_issues(platform).get(issue_id)
     if not issue:
         raise _not_found("issue")
     rows = []
@@ -1135,7 +1182,7 @@ async def get_issue_comparison(
         if result is None:
             raise _not_found("issue")
     else:
-        issue = platform.issues.get(issue_id)
+        issue = _public_memory_issues(platform).get(issue_id)
         if issue is None or str(issue.get("status", "")).lower() in {
             "merged",
             "closed",
@@ -1263,7 +1310,7 @@ async def get_article(
             raise _not_found("article")
         return article
     article = platform.articles.get(article_id)
-    if not article:
+    if not article or article_id not in _public_memory_article_ids(platform):
         raise _not_found("article")
     return article
 
@@ -1283,7 +1330,7 @@ async def article_assessments(
         if assessments is None:
             raise _not_found("article")
         return assessments
-    if article_id not in platform.articles:
+    if article_id not in _public_memory_article_ids(platform):
         raise _not_found("article")
     public_assessments = [
         {
@@ -1322,7 +1369,7 @@ async def article_score(
         if score is None:
             raise _not_found("score")
         return score
-    if article_id not in platform.scores:
+    if article_id not in _public_memory_article_ids(platform) or article_id not in platform.scores:
         raise _not_found("score")
     return platform.scores[article_id][-1]
 
@@ -1343,7 +1390,7 @@ async def article_score_history(
         if rows is None:
             raise _not_found("article")
         return _page(rows, cursor)
-    if article_id not in platform.articles:
+    if article_id not in _public_memory_article_ids(platform):
         raise _not_found("article")
     return _page(list(reversed(platform.scores.get(article_id, []))), cursor)
 
@@ -1366,7 +1413,7 @@ async def compare_articles(
             rows.append({"article": article, "score": score})
         return {"rows": rows, "normalized_columns": ["x", "y", "z", "sensationalism", "confidence"]}
     for article_id in article_ids:
-        if article_id not in platform.articles:
+        if article_id not in _public_memory_article_ids(platform):
             raise _not_found("article")
         rows.append(
             {"article": platform.articles[article_id], "score": platform.scores[article_id][-1]}
@@ -1391,7 +1438,7 @@ async def get_source(
     values = [
         platform.scores[a["id"]][-1]["x"]
         for a in platform.articles.values()
-        if a["source_id"] == source_id
+        if a["source_id"] == source_id and a["id"] in _public_memory_article_ids(platform)
     ]
     return {
         **source,
@@ -1991,9 +2038,12 @@ async def visualization_points(
         if to:
             repository_rows = [row for row in repository_rows if row.get("created_at", to) <= to]
         return _page(repository_rows, cursor)
+    public_ids = _public_memory_article_ids(platform)
     rows: list[dict[str, Any]] = []
     if type == "article":
         for article in platform.articles.values():
+            if article["id"] not in public_ids:
+                continue
             if issue_id and article["issue_id"] != issue_id:
                 continue
             history = platform.scores.get(article["id"])
@@ -2015,7 +2065,9 @@ async def visualization_points(
             scores = [
                 platform.scores[a["id"]][-1]
                 for a in platform.articles.values()
-                if a["source_id"] == source["id"] and platform.scores.get(a["id"])
+                if a["source_id"] == source["id"] and a["id"] in public_ids
+                and (issue_id is None or a.get("issue_id") == issue_id)
+                and platform.scores.get(a["id"])
             ]
             if scores:
                 rows.append(
@@ -2070,8 +2122,9 @@ async def visualization_timeline(
                 entity_type=entity_type, entity_id=entity_id
             ),
         }
+    public_ids = _public_memory_article_ids(platform)
     if entity_type == "article":
-        rows = platform.scores.get(entity_id, [])
+        rows = platform.scores.get(entity_id, []) if entity_id in public_ids else []
     elif entity_type == "user":
         if not principal or principal.user_id != entity_id:
             raise ApiError(403, "OWNER_REQUIRED", "User-coordinate history is private.")
@@ -2088,7 +2141,7 @@ async def visualization_timeline(
         rows = [
             platform.scores[a["id"]][-1]
             for a in platform.articles.values()
-            if a["source_id"] == entity_id
+            if a["source_id"] == entity_id and a["id"] in public_ids
         ]
     return {"entity_type": entity_type, "entity_id": entity_id, "snapshots": rows}
 

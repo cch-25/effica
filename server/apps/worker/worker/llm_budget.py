@@ -162,7 +162,7 @@ class MariaDBLLMBudget:
         article_keys: Sequence[str] | None = None,
         essential: bool = False,
     ) -> LLMBudgetReservation:
-        if category not in {"article", "comparison"}:
+        if category not in {"article", "comparison", "discovery"}:
             raise ValueError("unsupported LLM budget category")
         if request_key is not None and not request_key:
             raise ValueError("request key cannot be empty")

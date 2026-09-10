@@ -22,6 +22,8 @@ from apps.api.app.db.models import (
     JobReceipt,
     StoredBlob,
 )
+from apps.api.app.domains.issues.editorial_policy import DAILY_ISSUE_KEY_PREFIX
+from apps.api.app.domains.issues.topics import PUBLIC_ISSUE_TOPICS
 from apps.api.app.repositories.platform import MariaDBPlatformRepository
 from apps.api.app.state import PlatformState
 from apps.worker.worker.analysis_eligibility import assess_analysis_eligibility
@@ -84,7 +86,7 @@ _DAILY_DEFER_REASONS = {
     "DAILY_LLM_BUDGET_EXCEEDED",
     "ESSENTIAL_LLM_BUDGET_RESERVED",
 }
-_PUBLIC_CANDIDATE_MAX_AGE = timedelta(days=4)
+_PUBLIC_CANDIDATE_MAX_AGE = timedelta(days=7)
 
 
 def _value(value: Any) -> str:
@@ -232,8 +234,10 @@ def _memory_article_readiness(
     settings: Settings,
     checked_at: datetime,
 ) -> ArticleAnalysisReadiness:
+    from apps.api.app.api.v1.routes import _public_memory_article_ids
+
     article = state.articles.get(article_id)
-    if article is None:
+    if article is None or article_id not in _public_memory_article_ids(state):
         raise ApiError(404, "ARTICLE_NOT_FOUND", "The requested article was not found.")
     version_id = article.get("current_version_id")
     if str(article.get("analysis_status") or "").upper() == "READY":
@@ -375,13 +379,9 @@ async def get_analysis_status(
 ) -> OverallAnalysisReadiness:
     checked_at = datetime.now(UTC)
     if repository is None:
-        events = [
-            issue
-            for issue in state.issues.values()
-            if str(issue.get("kind") or "").upper() == "EVENT"
-            and str(issue.get("status") or "").lower()
-            not in {"merged", "closed", "archived"}
-        ]
+        from apps.api.app.api.v1.routes import _public_memory_issues
+
+        events = list(_public_memory_issues(state).values())
         ready = any(
             str(issue.get("analysis_status") or "").upper() == "READY"
             for issue in events
@@ -407,8 +407,12 @@ async def get_analysis_status(
                 .where(
                     Issue.issue_kind == IssueKind.EVENT,
                     Issue.status == IssueStatus.CANDIDATE,
+                    Issue.editorial_key.startswith(DAILY_ISSUE_KEY_PREFIX),
+                    Issue.topic.in_(PUBLIC_ISSUE_TOPICS),
+                    func.length(func.trim(Issue.summary)) > 0,
                     Issue.last_activity_at
                     >= checked_at - _PUBLIC_CANDIDATE_MAX_AGE,
+                    Issue.last_activity_at <= checked_at,
                 )
             )
         )
@@ -430,7 +434,7 @@ async def get_analysis_status(
         reason=reason,
         checked_at=checked_at,
         next_eligible_at=None,
-        refresh_interval_seconds=round(settings.worker_crawl_interval_seconds),
+        refresh_interval_seconds=86_400,
     )
 
 

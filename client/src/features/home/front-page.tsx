@@ -6,6 +6,7 @@ import { isMockMode } from "@/lib/api/mode";
 import type { Article, Issue } from "@/lib/api/types";
 import { IssueCard } from "@/features/issues/issue-card";
 import { StatePanel } from "@/components/ui/state-panel";
+import { compareIssueImportance, featuredIssueLimit, isFeaturedIssue } from "@/features/issues/issue-selection";
 
 function NewspaperChart({ articles }: { articles: Article[] }) {
   const plotted = articles.filter((article) => article.analysisStatus === "READY" && article.sensationalism !== null).slice(0, 12);
@@ -43,12 +44,12 @@ export function FrontPage({ fallbackIssues, fallbackArticles }: { fallbackIssues
   const feed = useFeedQuery();
   const issues = issueQuery.data?.items ?? (isMockMode() ? fallbackIssues : []);
   const articles = feed.data?.items ?? (isMockMode() ? fallbackArticles : []);
-  const events = issues.filter((issue) => issue.kind === "EVENT" && issue.freshnessStatus === "CURRENT")
-    .sort((a, b) => Number(b.analysisStatus === "READY") - Number(a.analysisStatus === "READY") || (a.editorialPriority ?? 999) - (b.editorialPriority ?? 999));
+  const events = issues.filter(isFeaturedIssue).sort(compareIssueImportance).slice(0, featuredIssueLimit);
   const lead = events[0];
-  const otherIssues = events.slice(1, 4);
+  const otherIssues = events.slice(1);
   const leadCollection = useIssueArticleCollectionsQuery(lead ? [lead.id] : []);
-  const dispatches = leadCollection.items.length ? leadCollection.items : articles.filter((a) => a.issueId === lead?.id);
+  const leadArticles = leadCollection.items.length ? leadCollection.items : articles.filter((a) => a.issueId === lead?.id);
+  const dispatches = [...new Map(leadArticles.map((article) => [article.sourceId || article.source, article])).values()];
   const secondary = articles.find((article) => article.issueId !== lead?.id);
   const secondaryCollection = useIssueArticleCollectionsQuery(secondary?.issueId && secondary.issueId !== "unclustered" ? [secondary.issueId] : []);
   const brief = secondaryCollection.items.find((article) => article.id === secondary?.id) ?? secondary;

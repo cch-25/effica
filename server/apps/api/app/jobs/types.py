@@ -52,6 +52,7 @@ class JobType(str, Enum):
     """
 
     CRAWL = "crawl"
+    DISCOVER_ISSUES = "discover_issues"
     CLUSTER = "cluster"
     ANALYZE = "analyze"
     BUILD_ISSUE_COMPARISON = "build_issue_comparison"

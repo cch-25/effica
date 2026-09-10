@@ -72,6 +72,9 @@ def canonical_url(value: str) -> str:
 
 async def handle(payload: Mapping[str, Any], context: HandlerContext | None = None) -> HandlerResult:
     require_mapping(payload)
+    if "schedule_bucket" in payload:
+        return HandlerResult(value={"status": "SKIPPED", "articles": [],
+                                    "skip_reason": "REPLACED_BY_DAILY_ISSUE_DISCOVERY"})
     source = dict(payload)
     # Admin-created crawl jobs include a URL, but adapter fields, pagination,
     # rate limits and retention live only on source_adapters.  Looking up the

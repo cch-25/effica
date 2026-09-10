@@ -75,6 +75,7 @@ def build_default_registry() -> HandlerRegistry:
         cluster,
         crawl,
         delete_user,
+        discover_issues,
         export_user,
         issue_operation,
         recommend_weights,
@@ -83,6 +84,7 @@ def build_default_registry() -> HandlerRegistry:
     )
 
     modules = (
+        discover_issues,
         crawl,
         cluster,
         analyze,

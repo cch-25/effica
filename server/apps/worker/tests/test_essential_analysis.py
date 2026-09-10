@@ -20,16 +20,23 @@ from apps.worker.worker.services import MariaDBResultApplier
 def test_comparison_keeps_distinct_real_sources_despite_extra_members_and_index_page():
     def article(identifier, source, title="정부의 새 정책 발표", content="기사 본문입니다. " * 100):
         return {"article_id": identifier, "article_version_id": f"v-{identifier}",
-                "source_id": source, "title": title, "content": content}
+                "source_id": source, "source_url": f"https://{source}.co.kr/story/{identifier}",
+                "title": title, "content": content}
 
     rows = [article("index", "government", "정보공개 홈"),
             article("a", "news-a"), article("b", "news-a"),
             article("c", "news-b"), article("d", "news-b")]
     cohort = select_comparison_cohort(rows)
-    assert [row["article_id"] for row in cohort] == ["a", "c"]
+    assert cohort == []
     assert select_comparison_cohort(list(reversed(rows))) == cohort
     assert select_comparison_cohort(rows[:3]) == []
-    assert len(select_comparison_cohort(rows + [article("e", "news-c"), article("f", "news-d")])) == 3
+    diverse = rows + [article("e", "news-c"), article("f", "news-d")]
+    assert [row["article_id"] for row in select_comparison_cohort(diverse)] == ["a", "c", "e"]
+    assert select_comparison_cohort(list(reversed(diverse))) == select_comparison_cohort(diverse)
+    forged = [article("a", "one"), article("b", "two"), article("c", "three")]
+    for row in forged:
+        row["source_url"] = f"https://{row['source_id']}.same-publisher.co.kr/story"
+    assert select_comparison_cohort(forged) == []
 
 
 def test_general_feed_cannot_spend_event_cohort_and_comparison_capacity():

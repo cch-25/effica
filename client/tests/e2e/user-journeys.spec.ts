@@ -48,8 +48,12 @@ test("today's issues keeps top stories above broad topic sections without horizo
   await expect(page.getByRole("heading", { name: "지금 비교할 수 있는 주요 이슈" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "주제별 전체 찾아보기" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "경제" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "국제" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "산업" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "정치" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "사회" })).toBeVisible();
+  await page.getByRole("button", { name: "주제와 기간" }).click();
+  await expect(page.getByRole("checkbox")).toHaveCount(3);
+  await expect(page.getByRole("checkbox", { name: "스포츠" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
   await expect(page.locator(".issue-rank-list > li")).toHaveCount(1);
   await expect(page.locator(".issue-rank-list")).not.toContainText("AI 기본법 시행 준비");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);

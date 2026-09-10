@@ -8,11 +8,13 @@ vi.mock("@/lib/api/client", () => ({ apiRequest: mocks.apiRequest }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 it("주요 이슈가 준비되면 오래된 이슈 목록도 다시 조회한다", async () => {
-  mocks.apiRequest.mockResolvedValue({ status: "READY", reason: "CURRENT_EVENT_AVAILABLE", checked_at: "2026-09-10T00:00:00Z", next_eligible_at: null, refresh_interval_seconds: 900 });
+  mocks.apiRequest.mockResolvedValue({ status: "READY", reason: "CURRENT_EVENT_AVAILABLE", checked_at: "2026-09-10T00:00:00Z", next_eligible_at: null, refresh_interval_seconds: 86400 });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const invalidate = vi.spyOn(client, "invalidateQueries");
   render(<QueryClientProvider client={client}><AnalysisReadinessNotice /></QueryClientProvider>);
   expect(await screen.findByText("비교할 수 있는 이슈가 준비되어 있습니다.")).toBeVisible();
+  expect(screen.getByText(/하루 한 번 최근 3~7일의 정치와 정책 쟁점/)).toBeVisible();
+  expect(screen.queryByText(/15분 간격으로 수집/)).not.toBeInTheDocument();
   await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["issues"] }));
 });
 
