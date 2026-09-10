@@ -66,7 +66,7 @@ export function AdminLoginForm({ returnTo }: { returnTo: string }) {
   return (
     <section className="form-card admin-login" aria-labelledby="admin-login-title">
       <Link className="form-brand" href="/">EFFICA</Link>
-      <p className="eyebrow">Administrator</p>
+      <p className="eyebrow">관리자 접속</p>
       <h1 id="admin-login-title">관리자 로그인</h1>
       <p className="form-card__intro">운영 도구에 접근하려면 관리자 계정을 입력하세요.</p>
       <form onSubmit={(event) => void submit(event)}>

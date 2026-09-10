@@ -59,7 +59,7 @@ describe("app shell navigation", () => {
     renderShell("/visualization");
 
     const nav = screen.getByRole("navigation", { name: "주요 메뉴" });
-    expect(within(nav).getByRole("link", { name: "EFFICA 홈" })).toHaveAttribute("href", "/");
+    expect(within(nav).getByRole("link", { name: "종합 1면" })).toHaveAttribute("href", "/");
     expect(within(nav).getByRole("link", { name: "이슈 비교" })).toHaveAttribute("href", "/issues");
     expect(within(nav).getByRole("link", { name: "기사 관점 지도" })).toHaveAttribute("aria-current", "page");
     expect(within(nav).getByRole("link", { name: "내 활동" })).toHaveAttribute("href", "/progress");

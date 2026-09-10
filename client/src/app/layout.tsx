@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import localFont from "next/font/local";
 import "./globals.css";
 import "./base-ui.css";
 import "./comparison-visualization.css";
@@ -9,6 +10,8 @@ import { AppShell } from "@/components/layout/app-shell";
 import { serverApiRequest } from "@/lib/api/server";
 import type { UserView } from "@/lib/api/contracts";
 import { isMockMode } from "@/lib/api/mode";
+
+const newspaperFont = localFont({ src: "../../public/fonts/ChosunIlboMyungjo.woff2", variable: "--font-newspaper", display: "swap", preload: true });
 
 export const metadata: Metadata = {
   title: { default: "EFFICA | 관점 사이를 읽다", template: "%s | EFFICA" },
@@ -32,10 +35,10 @@ const MOCK_MEMBER: UserView = {
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const user = isMockMode() ? MOCK_MEMBER : await serverApiRequest<UserView>("/me").catch(() => null);
   return (
-    <html lang="ko" data-scroll-behavior="smooth">
+    <html lang="ko" className={newspaperFont.variable} data-scroll-behavior="smooth">
       <body>
         <div className="app-root">
-          <Providers><AppShell user={user}>{children}</AppShell></Providers>
+          <Providers><AppShell user={user} editionDate={new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "long", timeZone: "Asia/Seoul" }).format(new Date())}>{children}</AppShell></Providers>
         </div>
       </body>
     </html>

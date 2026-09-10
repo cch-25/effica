@@ -1,60 +1,17 @@
 import Link from "next/link";
-import { ArrowRight, Compass, Layers3 } from "lucide-react";
 import { FeedGrid } from "@/features/feed/feed-grid";
-import { IssueGrid } from "@/features/issues/issue-grid";
 import { articles, issues } from "@/mocks/fixtures/content";
-import { ButtonLink } from "@/components/ui/button";
 import { DataAsOfBadge } from "@/features/issues/data-as-of-badge";
-import { PerspectiveOrb } from "@/features/home/perspective-orb";
+import { FrontPage } from "@/features/home/front-page";
 
 export default function HomePage() {
-  return (
-    <div className="home-page">
-      <section className="feature-banner">
-        <div className="feature-banner__content">
-          <div className="feature-banner__meta">
-            <p className="eyebrow">EFFICA / 보도 비교와 관점 분석</p>
-            <DataAsOfBadge fallback={issues} />
-          </div>
-          <h1 aria-label="Political Efficacy"><span>POLITICAL</span><span><em>EFFICA</em>CY</span></h1>
-          <p>같은 이슈를 다룬 여러 출처의 기사를 나란히 비교하고, AI 분석의 근거와 한계를 확인하세요.</p>
-          <div className="page-header__actions"><ButtonLink href="/issues">이슈 비교 시작 <ArrowRight size={15} /></ButtonLink><ButtonLink variant="secondary" href="/visualization"><Compass size={15} /> 기사 관점 지도</ButtonLink></div>
-        </div>
-        <div className="feature-banner__aside" aria-hidden="true">
-          <span className="paper-shape paper-shape--circle" />
-          <span className="paper-shape paper-shape--square" />
-          <span className="paper-shape paper-shape--dash" />
-          <PerspectiveOrb />
-        </div>
-      </section>
-
-      <section className="home-section home-section--issues">
-        <div className="section-head">
-          <div><span className="section-index">01</span><h2>지금 살펴볼 주요 이슈</h2></div>
-          <Link href="/issues">이슈 전체 보기 →</Link>
-        </div>
-        <IssueGrid fallback={issues} columns={3} featuredOnly />
-      </section>
-
-      <section className="home-section home-section--feed">
-        <div className="section-head"><div><span className="section-index">02</span><h2>추천 기사와 관점 분석</h2></div><span className="badge"><Layers3 size={12} /> 다른 출처 추천</span></div>
-        <FeedGrid fallback={articles} />
-      </section>
-
-      <footer className="home-footer" role="contentinfo" aria-label="사이트 정보">
-        <div className="home-footer__identity">
-          <Link href="/" className="home-footer__brand" aria-label="EFFICA 홈">EFFICA</Link>
-          <p>관점 사이를 읽다</p>
-        </div>
-        <div className="home-footer__details">
-          <nav aria-label="푸터 메뉴">
-            <Link href="/issues">이슈 비교</Link>
-            <Link href="/visualization">기사 관점 지도</Link>
-            <Link href="/settings/privacy">개인정보 관리</Link>
-          </nav>
-          <small>© EFFICA</small>
-        </div>
-      </footer>
-    </div>
-  );
+  return <div className="home-page">
+    <div className="front-page-dateline"><span>종합 / 주요 이슈와 보도</span><DataAsOfBadge fallback={issues} /></div>
+    <FrontPage fallbackIssues={issues} fallbackArticles={articles} />
+    <section className="home-section home-section--feed">
+      <div className="section-head"><div><span className="section-index">02</span><h2>추천 기사와 관점 분석</h2></div><Link href="/issues">이슈 전체 보기 →</Link></div>
+      <FeedGrid fallback={articles} />
+    </section>
+    <section className="reader-notice" aria-label="독자 안내"><strong>독자 안내</strong><p>기사의 편향성과 과장성은 사실 여부나 품질의 판정이 아닙니다. 분석의 근거와 한계를 확인하고 원문을 함께 읽어 주세요.</p><Link href="/visualization">기사 관점 지도 →</Link></section>
+  </div>;
 }

@@ -23,19 +23,19 @@ export function IdeologyGraph({ ideology }: { ideology: Ideology }) {
       <title id={titleId}>{completed ? `검사 결과: 경제 ${x}, 사회문화 ${y}, 국제 ${z}` : "검사 미실시: 기본 좌표 (0,0,0). 중도 성향을 뜻하지 않습니다."}</title>
       <g fill="none" stroke="var(--line)" strokeWidth="1">{edges.map((edge, i) => <path key={i} d={path(edge)} />)}</g>
       <g fill="none" strokeWidth="2">
-        <path d={path([project(-115, 0, 0), project(115, 0, 0)])} stroke="#a14443" />
-        <path d={path([project(0, -115, 0), project(0, 115, 0)])} stroke="#28704e" />
-        <path d={path([project(0, 0, -100), project(0, 0, 115)])} stroke="#3657a6" />
+        <path d={path([project(-115, 0, 0), project(115, 0, 0)])} stroke="#303030" />
+        <path d={path([project(0, -115, 0), project(0, 115, 0)])} stroke="#5a5a5a" strokeDasharray="6 4" />
+        <path d={path([project(0, 0, -100), project(0, 0, 115)])} stroke="#404040" strokeDasharray="2 4" />
         {completed && <path d={path([position, floor])} stroke="var(--muted)" strokeDasharray="4 4" strokeWidth="1" />}
       </g>
       <g className="ideology-graph__labels" textAnchor="middle">
-        <text x="65" y="154" fill="#a14443">경제적 좌</text><text x="414" y="245" fill="#a14443">경제적 우</text>
-        <text x="141" y="281" fill="#28704e">사회문화적</text><text x="141" y="299" fill="#28704e">권위주의</text>
-        <text x="368" y="128" fill="#28704e">사회문화적</text><text x="368" y="146" fill="#28704e">자유주의</text>
-        <text x="240" y="42" fill="#3657a6">국제주의 / 세계주의</text>
-        <text x="240" y="337" fill="#3657a6">민족주의 / 주권주의</text>
+        <text x="65" y="154" fill="#303030">경제적 좌</text><text x="414" y="245" fill="#303030">경제적 우</text>
+        <text x="141" y="281" fill="#5a5a5a">사회문화적</text><text x="141" y="299" fill="#5a5a5a">권위주의</text>
+        <text x="368" y="128" fill="#5a5a5a">사회문화적</text><text x="368" y="146" fill="#5a5a5a">자유주의</text>
+        <text x="240" y="42" fill="#404040">국제주의 / 세계주의</text>
+        <text x="240" y="337" fill="#404040">민족주의 / 주권주의</text>
       </g>
-      <circle cx={position[0]} cy={position[1]} r="7" fill="var(--ink)" stroke="var(--paper, #fffaf0)" strokeWidth="2" />
+      <circle cx={position[0]} cy={position[1]} r="7" fill="var(--ink)" stroke="var(--paper, #f8f7f3)" strokeWidth="2" />
       {!completed && <text x={position[0] + 12} y={position[1] - 10} className="ideology-graph__coordinate">(0,0,0)</text>}
     </svg>
     {completed ? <dl className="ideology-coordinates"><div><dt>경제 (X)</dt><dd>{x > 0 ? "+" : ""}{x}</dd></div><div><dt>사회문화 (Y)</dt><dd>{y > 0 ? "+" : ""}{y}</dd></div><div><dt>국제 (Z)</dt><dd>{z > 0 ? "+" : ""}{z}</dd></div></dl> : <p className="ideology-graph__note">검사 미실시 / 기본 좌표 (0,0,0)<br />아직 측정하지 않은 상태이며 중도를 뜻하지 않습니다.</p>}

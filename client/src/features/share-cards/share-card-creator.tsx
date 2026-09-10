@@ -11,7 +11,7 @@ import { PerspectivePreview } from "./perspective-preview";
 import { consumptionSnapshot } from "./consumption";
 import type { ShareCardCreate, ShareCardJobAccepted } from "@/lib/api/contracts";
 
-const templateOptions = [{ value: "orbit", label: "스펙트럼형" }, { value: "editorial", label: "편집형" }];
+const templateOptions = [{ value: "orbit", label: "자료 지면" }, { value: "editorial", label: "독자 기록지" }];
 const schema = z.object({ template: z.enum(["orbit", "editorial"]), displayName: z.string().max(40), confirmed: z.literal(true) });
 
 export function ShareCardCreator() {

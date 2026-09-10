@@ -20,7 +20,7 @@ test("Google login facade, separate consent, questionnaire, demographics, home",
   await expect(page).toHaveURL(/\/onboarding\/demographics/);
   await page.getByRole("button", { name: "건너뛰고 홈으로" }).click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole("heading", { name: "Political Efficacy" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "도심 주택 공급 대책", level: 1 })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(/데모 데이터 기준 8월 16일/)).toBeVisible();
   const primaryNav = page.getByRole("navigation", { name: /^주요 메뉴$|^모바일 주요 메뉴$/ });
   await expect(primaryNav.getByRole("link", { name: "이슈 비교" })).toBeVisible();
@@ -57,7 +57,7 @@ test("today's issues keeps top stories above broad topic sections without horizo
 
 test("home, issue comparison, article analysis, and issue return are one connected path", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("link", { name: "이슈 비교 시작" }).click();
+  await page.getByRole("link", { name: "이슈 비교 시작 →" }).click();
   await expect(page).toHaveURL(/\/issues$/);
   await page.getByRole("link", { name: /도심 주택 공급 대책/ }).first().click();
   await expect(page).toHaveURL(/\/issues\/issue-housing/);
@@ -72,7 +72,7 @@ test("activity is the hub for share, privacy, and confidence tracking", async ({
   await page.getByRole("link", { name: "공유 카드 만들기" }).click();
   await expect(page).toHaveURL(/\/share\/new$/);
   await page.getByRole("link", { name: "내 활동으로 돌아가기" }).click();
-  await page.getByRole("link", { name: "개인정보 관리" }).click();
+  await page.getByRole("main").getByRole("link", { name: "개인정보 관리" }).click();
   await expect(page).toHaveURL(/\/settings\/privacy$/);
   await page.getByRole("link", { name: "내 활동으로 돌아가기" }).click();
   await page.getByRole("link", { name: /정치 이슈 이해 자신감 변화/ }).click();
@@ -213,7 +213,7 @@ test("page transitions and browser history always start at the top", async ({ pa
   await expect.poll(() => page.evaluate(() => window.history.scrollRestoration)).toBe("manual");
   await scrollAwayFromTop();
 
-  const homeLink = page.getByRole("link", { name: /^(EFFICA )?홈$/ });
+  const homeLink = page.getByRole("link", { name: "EFFICA 홈", exact: true });
   await homeLink.focus();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/$/);

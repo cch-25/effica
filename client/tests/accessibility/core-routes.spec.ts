@@ -48,6 +48,8 @@ for (const route of routes) {
     await page.goto(route);
     await expect(page.locator("main")).toBeVisible();
     await expect(page.locator("main [aria-busy='true']")).toHaveCount(0, { timeout: 15_000 });
+    await expect(page).toHaveTitle(/EFFICA/);
+    await page.evaluate(() => document.fonts.ready);
     const results = await new AxeBuilder({ page }).analyze();
     expect(results.violations.filter((violation) => violation.impact === "critical" || violation.impact === "serious")).toEqual([]);
   });

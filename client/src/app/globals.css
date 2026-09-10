@@ -1,37 +1,27 @@
-/* Use the Bold face for Latin text at every UI weight, preserving Korean fallbacks. */
-@font-face {
-  font-family: "EFFICA Alliance";
-  src: local("Alliance No.1 Bold"), local("AllianceNo1-Bold");
-  font-style: normal;
-  font-weight: 100 900;
-  font-display: swap;
-  unicode-range: U+0000-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
-}
-
 :root {
   color-scheme: light;
 
-  --peer-color-canvas: #fffaf0;
-  --peer-color-surface-hover: #fff0c7;
-  --peer-color-surface-active: #dbe7ff;
-  --peer-color-ink: #202735;
-  --peer-color-ink-muted: #4f5662;
-  --peer-color-disabled: #8b8e95;
-  --peer-color-accent: #3455b4;
-  --peer-color-danger: #b94b3e;
-  --peer-color-success: #37745c;
-  --peer-color-line: rgb(32 39 53 / 24%);
+  --peer-color-canvas: #f8f7f3;
+  --peer-color-surface-hover: #efeee9;
+  --peer-color-surface-active: #e3e2dd;
+  --peer-color-ink: #242424;
+  --peer-color-ink-muted: #595959;
+  --peer-color-disabled: #777777;
+  --peer-color-accent: #303030;
+  --peer-color-danger: #383838;
+  --peer-color-success: #454545;
+  --peer-color-line: rgb(36 36 36 / 25%);
   --peer-color-backdrop: rgb(0 0 0 / 20%);
 
-  --effica-cobalt: #7893e5;
-  --effica-coral: #f08a73;
-  --effica-butter: #f3d36f;
-  --effica-mint: #9cc9aa;
-  --effica-lilac: #b9a9dc;
-  --effica-sky: #b8d9ec;
-  --effica-cream: #fff1d6;
+  --effica-cobalt: #747474;
+  --effica-coral: #575757;
+  --effica-butter: #ddddda;
+  --effica-mint: #ababab;
+  --effica-lilac: #888888;
+  --effica-sky: #c1c1be;
+  --effica-cream: #eeede8;
 
-  --peer-font-sans: "EFFICA Alliance", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --peer-font-sans: var(--font-newspaper), "Batang", "Songti SC", Georgia, serif;
   --peer-font-display: var(--peer-font-sans);
   --peer-font-mono: var(--peer-font-sans);
   --peer-text-xs: .75rem;
@@ -49,12 +39,13 @@
   --peer-space-6: 1.5rem;
   --peer-space-8: 2rem;
   --peer-space-12: 3rem;
+  --peer-space-10: 2.5rem;
 
-  --peer-control-height: 2rem;
+  --peer-control-height: 2.5rem;
   --peer-border-width: 1px;
   --peer-radius: 0;
   --peer-radius-round: 100%;
-  --peer-shadow-popup: .25rem .25rem 0 rgb(0 0 0 / 12%);
+  --peer-shadow-popup: none;
   --peer-focus-ring: 2px solid var(--peer-color-ink);
 
   --peer-layout-gutter: clamp(1rem, 3vw, 2rem);

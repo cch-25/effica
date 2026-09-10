@@ -20,7 +20,7 @@ describe("Peer Design system", () => {
 
   it("keeps the shared Peer control, spacing, radius, and typography contracts", () => {
     const globals = readFileSync(join(sourceRoot, "app/globals.css"), "utf8");
-    expect(globals).toContain("--peer-control-height: 2rem");
+    expect(globals).toContain("--peer-control-height: 2.5rem");
     expect(globals).toContain("--peer-space-4: 1rem");
     expect(globals).toContain("--peer-radius: 0");
     expect(globals).toContain("--peer-radius-round: 100%");

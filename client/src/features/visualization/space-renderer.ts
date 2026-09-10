@@ -46,7 +46,7 @@ export function createSpace(element: HTMLDivElement, camera: SpaceCamera, onSele
   const token = (name: string) => style.getPropertyValue(name).trim();
   const colors = { accent: token("--peer-color-accent"), selected: token("--effica-butter"), ink: token("--peer-color-ink") };
   const background = token("--peer-color-canvas");
-  const font = token("--peer-font-sans");
+  const font = style.fontFamily;
   const chart = init(element, undefined, { renderer: "canvas", devicePixelRatio: Math.min(devicePixelRatio, 2) });
   const axisLabel = { color: colors.ink, fontFamily: font, fontSize: 11, margin: 7 };
   const axis = {
@@ -55,7 +55,7 @@ export function createSpace(element: HTMLDivElement, camera: SpaceCamera, onSele
     axisTick: { show: false }, axisLabel,
     nameTextStyle: { color: colors.ink, fontFamily: font, fontSize: 12, fontWeight: "bold" },
     splitLine: { show: true, lineStyle: { color: colors.ink, width: 1, opacity: .23 } },
-    splitArea: { show: true, areaStyle: { color: [background, "#fffdf7"] } },
+    splitArea: { show: true, areaStyle: { color: [background, "#f1f0ec"] } },
   };
   try {
     chart.setOption({

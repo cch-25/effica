@@ -74,7 +74,7 @@ export function RuntimeControlPage({ role }: { role: Role }) {
 
   return <>
     <PageHeader
-      eyebrow="Runtime control"
+      eyebrow="분석 운영"
       title="LLM 사용"
       description="끄면 수집 스케줄과 모든 백그라운드 작업이 멈추며 대기 중인 작업도 취소됩니다."
       actions={<><Badge tone="info">role: {role}</Badge><Button variant="secondary" onClick={() => void query.refetch()}><RefreshCcw size={16} /> 새로고침</Button></>}

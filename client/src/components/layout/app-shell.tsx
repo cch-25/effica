@@ -7,6 +7,7 @@ import { BarChart3, BookOpenText, Boxes, CircleGauge, Compass, FileText, Home, L
 import type { ComponentType, ReactNode } from "react";
 import type { UserView } from "@/lib/api/contracts";
 import { HeadlineBand } from "./headline-band";
+import { NewspaperMasthead } from "./newspaper-masthead";
 
 type NavItem = {
   href: string;
@@ -47,12 +48,12 @@ function userNavHref(item: NavItem, user: UserView | null) {
   return item.href === "/progress" && !user ? "/login?returnTo=%2Fprogress" : item.href;
 }
 
-export function AppShell({ children, user }: { children: ReactNode; user: UserView | null }) {
+export function AppShell({ children, user, editionDate = "" }: { children: ReactNode; user: UserView | null; editionDate?: string }) {
   const pathname = usePathname();
   const admin = pathname.startsWith("/admin");
   const minimal = pathname === "/login" || pathname === "/admin" || pathname.startsWith("/onboarding");
 
-  if (minimal) return <main className="minimal-shell">{children}</main>;
+  if (minimal) return <div className="newspaper-account"><a className="skip-link" href="#main-content">본문으로 건너뛰기</a><NewspaperMasthead date={editionDate} section={admin ? "관리자" : "독자"} compact /><main id="main-content" className="minimal-shell" tabIndex={-1}>{children}</main></div>;
 
   return (
     <div className={admin ? "shell shell--admin" : "shell"}>
@@ -61,7 +62,7 @@ export function AppShell({ children, user }: { children: ReactNode; user: UserVi
         <aside className="sidebar">
           <Link href="/admin/runtime" className="brand" aria-label="EFFICA 관리자 홈">
             <Avatar.Root className="brand__mark" aria-hidden="true"><Avatar.Fallback>EF</Avatar.Fallback></Avatar.Root>
-            <span><strong>EFFICA</strong><small>운영 관제</small></span>
+            <span><strong>에피카</strong><small>관리자 지면 안내</small></span>
           </Link>
           <nav aria-label="관리자 메뉴">
             {adminNav.map(({ href, label, icon: Icon, index }) => {
@@ -76,9 +77,9 @@ export function AppShell({ children, user }: { children: ReactNode; user: UserVi
         </aside>
       ) : (
         <>
-          <HeadlineBand />
+          <NewspaperMasthead date={editionDate} section={pathname === "/" ? "종합" : pathname.startsWith("/issues") || pathname.startsWith("/articles") ? "보도 비교" : pathname === "/visualization" ? "자료 분석" : "독자"} />
           <nav className="site-nav" aria-label="주요 메뉴">
-            <Link href="/" className="site-nav__brand" aria-label="EFFICA 홈" aria-current={pathname === "/" ? "page" : undefined}>EFFICA</Link>
+            <Link href="/" className="site-nav__brand" aria-label="종합 1면" aria-current={pathname === "/" ? "page" : undefined}>종합 1면</Link>
             <div className="site-nav__links">
               {userNav.slice(1).map((item) => {
                 const { href, label, icon: Icon, paths } = item;
@@ -88,11 +89,14 @@ export function AppShell({ children, user }: { children: ReactNode; user: UserVi
             </div>
             <Link href={user ? "/settings/privacy" : "/login"} className="site-nav__account" aria-current={user && pathMatches(pathname, "/settings/privacy") ? "page" : undefined}><UserRound size={17} aria-hidden="true" /><span>{user ? "개인정보 관리" : "로그인"}</span></Link>
           </nav>
+          <HeadlineBand />
         </>
       )}
       <main id="main-content" className="main-content" tabIndex={-1}>
+        {admin && <NewspaperMasthead date={editionDate} section="관리자" compact />}
         {children}
       </main>
+      {!admin && <footer className="newspaper-footer"><Link href="/" aria-label="에피카 홈">에피카 <small>EFFICA</small></Link><p>같은 이슈를 여러 관점에서 읽고, 근거를 비교합니다.</p><nav aria-label="푸터 메뉴"><Link href="/issues">이슈 비교</Link><Link href="/visualization">기사 관점 지도</Link><Link href="/settings/privacy">개인정보 관리</Link></nav><small>© EFFICA</small></footer>}
       {!admin && <nav className="bottom-nav" aria-label="모바일 주요 메뉴">{userNav.map((item) => { const { href, label, icon: Icon, paths } = item; const active = isActive(pathname, paths) || (href === "/progress" && pathname.startsWith("/settings/")); return <Link key={href} href={userNavHref(item, user)} aria-current={active ? "page" : undefined}><Icon size={20} aria-hidden={true} /><span>{label}</span></Link>; })}</nav>}
     </div>
   );
