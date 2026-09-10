@@ -561,6 +561,9 @@ async def seed(*, dry_run: bool = False) -> dict[str, int]:
     engine = create_engine(settings.database_url)
     try:
         async with engine.begin() as connection:
+            from db.article_retention import lock_inventory
+
+            await lock_inventory(connection)
             await _delete_seed_content(connection)
             await _insert_articles(connection, articles)
             actual = (
@@ -615,6 +618,12 @@ async def seed(*, dry_run: bool = False) -> dict[str, int]:
                     f"legacy={legacy}, graph={graph_counts}, "
                     f"nonzero_legacy_axes={graph['nonzero_legacy_axes']}"
                 )
+            from sqlalchemy.ext.asyncio import AsyncSession
+
+            from db.article_retention import enforce_inventory
+
+            async with AsyncSession(bind=connection) as inventory_session:
+                await enforce_inventory(inventory_session, datetime.now(UTC), lock=False)
     finally:
         await dispose_engine()
     return summary

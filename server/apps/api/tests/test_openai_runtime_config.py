@@ -25,7 +25,7 @@ def test_openai_runtime_defaults_to_luna_with_bounded_daily_cost() -> None:
     assert settings.worker_max_concurrency == 4
     assert settings.worker_shutdown_grace_seconds == 195.0
     assert settings.worker_crawl_scheduler_enabled is True
-    assert settings.worker_crawl_interval_seconds == 900.0
+    assert settings.worker_crawl_interval_seconds == 21600.0
     settings.assert_safe_runtime()
 
 

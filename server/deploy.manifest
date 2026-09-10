@@ -124,7 +124,9 @@ db/alembic/versions/0017_remove_obsolete_storage.py
 db/alembic/versions/0018_llm_cost_guardrails.py
 db/alembic/versions/0019_llm_request_dedup.py
 db/alembic/versions/0020_questionnaire_beta.py
+db/alembic/versions/0021_article_inventory.py
 db/article_retention.py
+db/backlog_relief.py
 db/llm_audit.py
 db/seeds/__init__.py
 db/seeds/analyze_articles.py
@@ -137,6 +139,7 @@ db/seeds/source_feeds.py
 db/seeds/tier_policy.json
 db/storage_maintenance.py
 deploy/effica-maintenance.service
+deploy/effica-article-expiry.service
 deploy/effica-maintenance.timer
 deploy/journald.conf
 deploy/nginx-logrotate.conf

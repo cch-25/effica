@@ -5,8 +5,10 @@ flock -n 9 || exit 0
 current="$(readlink -f /opt/perspective-news/current)"
 resume_api=0
 resume_worker=0
+resume_expiry=0
 systemctl is-active --quiet perspective-api && resume_api=1
 systemctl is-active --quiet perspective-worker && resume_worker=1
+systemctl is-active --quiet effica-article-expiry && resume_expiry=1
 restore_services() {
   local status=$?
   trap - EXIT
@@ -23,10 +25,12 @@ restore_services() {
     [[ "$ready" == 1 ]] || status=1
   fi
   if [[ "$resume_worker" == 1 ]]; then systemctl start perspective-worker || status=1; fi
+  if [[ "$resume_expiry" == 1 ]]; then systemctl start effica-article-expiry || status=1; fi
   exit "$status"
 }
 trap restore_services EXIT
 systemctl stop perspective-worker
+systemctl stop effica-article-expiry || true
 systemctl stop perspective-api
 sudo -u perspective bash -c '
   set -Eeuo pipefail; set -a; . "$1/.env"; set +a

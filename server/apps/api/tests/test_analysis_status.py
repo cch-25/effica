@@ -57,7 +57,7 @@ def test_memory_readiness_reports_current_event_and_article_state() -> None:
     assert overview.status_code == 200
     assert overview.json()["status"] == "READY"
     assert overview.json()["reason"] == "CURRENT_EVENT_AVAILABLE"
-    assert overview.json()["refresh_interval_seconds"] == 900
+    assert overview.json()["refresh_interval_seconds"] == 21600
     assert overview.json()["next_eligible_at"] is None
 
     article = client.get(f"/api/v1/articles/{article_id}/analysis-status")

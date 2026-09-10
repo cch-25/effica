@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 RETENTION_DAYS = 7
+MAX_ARTICLES = 300
 
 
 def utc(value: Any) -> datetime | None:
@@ -20,7 +21,9 @@ def utc(value: Any) -> datetime | None:
 
 
 def expired(published_at: Any, created_at: Any, now: datetime) -> bool:
-    effective = utc(published_at) or utc(created_at)
+    # A future publication timestamp must not extend storage indefinitely.
+    timestamps = [value for value in (utc(published_at), utc(created_at)) if value]
+    effective = min(timestamps) if timestamps else None
     return effective is not None and effective < utc(now) - timedelta(days=RETENTION_DAYS)
 
 

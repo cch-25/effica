@@ -353,6 +353,12 @@ class CrawlRun(Base):
     )
 
 
+class ArticleInventoryGuard(Base):
+    __tablename__ = "article_inventory_guard"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+
 class Article(Base):
     __tablename__ = "articles"
 
@@ -636,7 +642,7 @@ class Vote(Base):
 
     id: Mapped[str] = _id()
     user_id: Mapped[str] = _fk("users.id", ondelete="CASCADE")
-    article_id: Mapped[str] = _fk("articles.id", ondelete="RESTRICT")
+    article_id: Mapped[str | None] = _fk("articles.id", ondelete="SET NULL", nullable=True)
     revision: Mapped[int] = mapped_column(Integer, nullable=False)
     x: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     y: Mapped[int] = mapped_column(SmallInteger, nullable=False)
@@ -702,7 +708,7 @@ class ReadSession(Base):
 
     id: Mapped[str] = _id()
     user_id: Mapped[str] = _fk("users.id", ondelete="CASCADE")
-    article_id: Mapped[str] = _fk("articles.id", ondelete="RESTRICT")
+    article_id: Mapped[str | None] = _fk("articles.id", ondelete="SET NULL", nullable=True)
     token_hash: Mapped[bytes] = mapped_column(_HASH, nullable=False)
     expires_at: Mapped[datetime] = _timestamp()
     status: Mapped[ReadSessionStatus] = _enum(

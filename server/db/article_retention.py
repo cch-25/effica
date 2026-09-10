@@ -1,8 +1,7 @@
-"""Preview or apply content retention while API and worker writers are stopped.
+"""Seven-day, 300-article inventory with proportional dates and diverse sources.
 
-Only article-owned blobs are collected. User exports and unrelated artifacts
-are never swept. References inside share snapshots and credit event keys are
-protected as well as ordinary foreign keys. Each batch is independently atomic.
+Online enforcement and ingestion share a transaction-scoped inventory lock.
+Activity rows and awarded credits survive article deletion.
 """
 from __future__ import annotations
 
@@ -10,14 +9,17 @@ import argparse
 import asyncio
 import json
 import os
+from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from apps.api.app.db.session import create_engine, dispose_engine
-from apps.api.app.domains.content.retention import RETENTION_DAYS, expired, utc
+from apps.api.app.domains.content.retention import MAX_ARTICLES, RETENTION_DAYS, expired, utc
+from apps.api.app.domains.issues.topics import infer_issue_topic
 
 
 def strings(value: Any) -> set[str]:
@@ -42,35 +44,67 @@ async def in_query(session, sql: str, ids: set[str] | list[str]):
     return await session.execute(text(sql).bindparams(bindparam("ids", expanding=True)), {"ids": sorted(ids)})
 
 
-async def plan(session, now: datetime) -> dict:
-    articles = await rows(session, "SELECT id, canonical_url_hash, published_at, created_at FROM articles")
-    stale = {a["id"]: a for a in articles if expired(a["published_at"], a["created_at"], now)}
-    protected = set()
-    for table in ("votes", "read_sessions", "feed_impressions"):
-        where = " WHERE user_id IS NOT NULL" if table == "feed_impressions" else ""
-        protected.update(r["article_id"] for r in await rows(session, f"SELECT DISTINCT article_id FROM {table}{where}"))
-    refs = set()
-    for card in await rows(session, "SELECT snapshot_json FROM share_cards"):
-        refs.update(strings(card["snapshot_json"]))
-    for item in await rows(session, "SELECT event_key FROM credit_ledger"):
-        refs.update(strings(item["event_key"]))
-    # event_key can contain a namespaced article ID, not just the ID itself.
-    protected.update(a for a in stale if any(a in ref for ref in refs))
-    memberships = await rows(session, "SELECT issue_id, article_id FROM issue_memberships")
-    protected.update(m["article_id"] for m in memberships if m["issue_id"] in refs)
-    protected.update(v["article_id"] for v in await rows(session, "SELECT id, article_id FROM article_versions") if v["id"] in refs)
-    targets = set(stale) - protected
+def inventory_plan(articles: list[dict], now: datetime) -> dict:
+    """Hamilton date quotas, then equal source coverage and topic coverage.
+
+    All quotas are computed from the same pre-deletion snapshot. Recomputing
+    them after every deletion would compound rounding and distort date ratios.
+    """
+    stale = {a["id"] for a in articles if expired(a["published_at"], a["created_at"], now)}
+    by_day: dict[str, list[dict]] = defaultdict(list)
+    for article in articles:
+        if article["id"] not in stale:
+            effective = min(value for value in (utc(article["published_at"]), utc(article["created_at"])) if value is not None)
+            date = effective.astimezone(ZoneInfo("Asia/Seoul")).date().isoformat()
+            by_day[date].append(article)
+    total = sum(map(len, by_day.values()))
+    budget = min(MAX_ARTICLES, total)
+    quotas = {day: len(items) * budget // total for day, items in by_day.items()} if total else {}
+    remainder_order = sorted(by_day, key=lambda day: (len(by_day[day]) * budget % total, day), reverse=True)
+    for day in remainder_order[:budget - sum(quotas.values())]:
+        quotas[day] += 1
+    kept: set[str] = set()
+    for day, items in sorted(by_day.items()):
+        source_counts: Counter = Counter()
+        topic_counts: Counter = Counter()
+        pool = {a["id"]: {**a, "topic": infer_issue_topic(a.get("title") or "")} for a in items}
+        for _ in range(quotas[day]):
+            choice = min(pool.values(), key=lambda a: (
+                source_counts[a["source_id"]], topic_counts[a["topic"]],
+                not a.get("assessed", False), a["id"],
+            ))
+            kept.add(choice["id"])
+            source_counts[choice["source_id"]] += 1
+            topic_counts[choice["topic"]] += 1
+            del pool[choice["id"]]
+    targets = {a["id"] for a in articles} - kept
     return {
         "checked_at": now.isoformat(),
         "cutoff": (now - timedelta(days=RETENTION_DAYS)).isoformat(),
+        "max_articles": MAX_ARTICLES,
         "total": len(articles), "expired": len(stale),
-        "protected_expired": len(set(stale) & protected),
+        "overflow": max(0, total - MAX_ARTICLES),
+        "protected_expired": 0,
         "delete_count": len(targets), "remaining": len(articles) - len(targets),
+        "by_date": {day: {"before": len(items), "keep": quotas[day], "delete": len(items) - quotas[day]} for day, items in sorted(by_day.items())},
+        "sources_before": dict(Counter(a["source_id"] for a in articles)),
+        "sources_after": dict(Counter(a["source_id"] for a in articles if a["id"] in kept)),
         "article_ids": sorted(targets),
     }
 
 
-async def delete_batch(session, ids: set[str], now: datetime) -> dict:
+async def lock_inventory(session) -> None:
+    await session.execute(text("SELECT id FROM article_inventory_guard WHERE id = 1 FOR UPDATE"))
+
+
+async def plan(session, now: datetime) -> dict:
+    articles = await rows(session, """SELECT a.id, a.source_id, a.title, a.published_at, a.created_at,
+        EXISTS (SELECT 1 FROM model_assessments m WHERE m.article_version_id = a.current_version_id
+                AND m.status = 'SUCCEEDED') AS assessed FROM articles a""")
+    return inventory_plan(articles, now)
+
+
+async def delete_batch(session, ids: set[str], now: datetime, *, online: bool = False) -> dict:
     versions = list((await in_query(session,
         "SELECT id, normalized_text_ref FROM article_versions WHERE article_id IN :ids", ids)).mappings())
     version_ids = {v["id"] for v in versions}
@@ -89,19 +123,25 @@ async def delete_batch(session, ids: set[str], now: datetime) -> dict:
     async for job in stream.mappings():
         if job["job_type"] in {"crawl", "analyze", "cluster", "calculate_score", "aggregate_votes", "build_issue_comparison", "merge_issue", "split_issue"}:
             if strings(job["payload_json"]) & refs:
-                if job["status"] == "LEASED" and (not job["lease_expires_at"] or utc(job["lease_expires_at"]) > now):
+                if not online and job["status"] == "LEASED" and (not job["lease_expires_at"] or utc(job["lease_expires_at"]) > now):
                     raise RuntimeError("referencing job is leased; stop writers and retry after its lease expires")
                 job_ids.add(job["id"])
     await stream.close()
     # Record minimal URL hashes before deletion; no article body is retained.
     await in_query(session,
         "INSERT INTO article_retention_tombstones (canonical_url_hash, retired_at) "
-        "SELECT canonical_url_hash, CURRENT_TIMESTAMP FROM articles WHERE id IN :ids", ids)
+        "SELECT canonical_url_hash, CURRENT_TIMESTAMP FROM articles WHERE id IN :ids "
+        "AND NOT EXISTS (SELECT 1 FROM article_retention_tombstones t "
+        "WHERE t.canonical_url_hash = articles.canonical_url_hash)", ids)
     if job_ids:
         await in_query(session, "DELETE FROM jobs WHERE id IN :ids", job_ids)
     if snapshot_ids:
         await in_query(session, "DELETE FROM issue_comparison_snapshots WHERE id IN :ids", snapshot_ids)
-    await in_query(session, "DELETE FROM feed_impressions WHERE user_id IS NULL AND article_id IN :ids", ids)
+    # Activity and awarded credits survive expiry; they no longer keep the
+    # article, its bodies, or its analysis alive through restrictive FKs.
+    for table in ("votes", "read_sessions"):
+        await in_query(session, f"UPDATE {table} SET article_id = NULL WHERE article_id IN :ids", ids)
+    await in_query(session, "DELETE FROM feed_impressions WHERE article_id IN :ids", ids)
     for table in ("vote_aggregate_snapshots", "fact_check_references", "issue_memberships"):
         await in_query(session, f"DELETE FROM {table} WHERE article_id IN :ids", ids)
     await in_query(session, "UPDATE articles SET current_version_id = NULL WHERE id IN :ids", ids)
@@ -127,6 +167,40 @@ async def delete_batch(session, ids: set[str], now: datetime) -> dict:
     return {"articles": len(ids), "versions": len(versions), "blobs": deleted_blobs, "jobs": len(job_ids)}
 
 
+async def enforce_inventory(session, now: datetime, *, lock: bool = True) -> dict:
+    """Trim in the caller's transaction; the caller owns commit and rollback."""
+    if lock:
+        await lock_inventory(session)
+    current = await plan(session, now)
+    totals = {"articles": 0, "versions": 0, "blobs": 0, "jobs": 0}
+    for offset in range(0, len(current["article_ids"]), 100):
+        result = await delete_batch(session, set(current["article_ids"][offset:offset + 100]), now, online=True)
+        for key, value in result.items():
+            totals[key] += value
+    return totals
+
+
+async def ensure_current_inventory(session, now: datetime) -> None:
+    """Cheap expiry fence used before API requests and by the expiry daemon."""
+    summary = (await session.execute(text("""SELECT COUNT(*) AS n,
+        MIN(LEAST(COALESCE(published_at, created_at), created_at)) AS oldest
+        FROM articles"""))).mappings().one()
+    if summary["n"] > MAX_ARTICLES or expired(summary["oldest"], summary["oldest"], now):
+        await enforce_inventory(session, now)
+
+
+async def watch() -> None:
+    engine = create_engine()
+    try:
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        while True:
+            async with factory() as session, session.begin():
+                await ensure_current_inventory(session, datetime.now(UTC))
+            await asyncio.sleep(1)
+    finally:
+        await dispose_engine()
+
+
 async def run(*, apply: bool = False, check: bool = False) -> dict:
     engine = create_engine()
     now = datetime.now(UTC)
@@ -150,15 +224,8 @@ async def run(*, apply: bool = False, check: bool = False) -> dict:
                         raise RuntimeError("rollback check changed the retention plan")
                     await session.rollback()
                 if apply:
-                    for offset in range(0, len(initial["article_ids"]), 100):
-                        async with session.begin():
-                            # Re-check user references before each atomic batch.
-                            current = await plan(session, now)
-                            ids = set(initial["article_ids"][offset:offset + 100]) & set(current["article_ids"])
-                            if ids:
-                                result = await delete_batch(session, ids, now)
-                                for key, value in result.items():
-                                    totals[key] += value
+                    async with session.begin():
+                        totals = await enforce_inventory(session, datetime.now(UTC))
                     final = await plan(session, now)
                 else:
                     final = initial
@@ -173,7 +240,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--check", action="store_true", help="exercise one deletion batch then roll it back")
+    parser.add_argument("--watch", action="store_true", help="continuously expire articles while writers are online")
     args = parser.parse_args()
+    if args.watch:
+        asyncio.run(watch())
+        return
     if (args.apply or args.check) and os.environ.get("ARTICLE_RETENTION_WRITERS_STOPPED") != "1":
         parser.error("apply/check must run through the maintenance service with writers stopped")
     result = asyncio.run(run(apply=args.apply, check=args.check))

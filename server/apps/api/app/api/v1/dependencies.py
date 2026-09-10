@@ -45,6 +45,12 @@ async def get_repository(
     factory = session_factory()
     async with factory() as session:
         try:
+            # Expired content is removed before a request obtains a repository,
+            # including when the independent expiry daemon was unavailable.
+            from db.article_retention import ensure_current_inventory
+
+            async with session.begin():
+                await ensure_current_inventory(session, datetime.now(UTC))
             yield MariaDBPlatformRepository(
                 session,
                 encryption_secret=settings.session_secret,

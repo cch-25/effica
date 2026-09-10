@@ -205,8 +205,9 @@ _SOURCES_BY_HOME = {
 SCHEDULED_RSS_FEEDS = {
     source.home_url: source.feed_url for source in SCHEDULED_RSS_SOURCES
 }
-# A small fresh batch leaves capacity for other publishers and analysis.
-SCHEDULED_RSS_MAX_ITEMS = 8
+# Two fresh articles from each source preserve the source mix without creating
+# a collection rate the fixed daily analysis cohort cannot absorb.
+SCHEDULED_RSS_MAX_ITEMS = 2
 
 
 def bootstrap_scheduled_rss_sources() -> tuple[ScheduledRSSSource, ...]:

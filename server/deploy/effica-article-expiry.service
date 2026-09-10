@@ -1,0 +1,15 @@
+[Unit]
+Description=Enforce the seven-day and 300-article inventory continuously
+After=mariadb.service
+Requires=mariadb.service
+
+[Service]
+Type=simple
+User=perspective
+WorkingDirectory=/opt/perspective-news/current
+ExecStart=/bin/bash -c 'set -a; . ./.env; set +a; exec .venv/bin/python -m db.article_retention --watch'
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

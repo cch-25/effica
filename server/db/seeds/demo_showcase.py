@@ -53,7 +53,7 @@ from apps.api.app.domains.content.trust import (
 from db.seeds.source_feeds import scheduled_rss_config
 
 DEFAULT_MANIFEST = Path(__file__).with_name("demo_showcase.json")
-REQUIRED_DB_REVISION = "0020_questionnaire_beta"
+REQUIRED_DB_REVISION = "0021_article_inventory"
 _GENERIC_TITLES = frozenset({"정치", "경제", "사회", "국제", "문화", "과학", "기술"})
 
 

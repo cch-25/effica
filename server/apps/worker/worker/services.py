@@ -390,7 +390,7 @@ class MariaDBCrawlScheduler:
         self,
         session_factory: Callable[[], Any],
         *,
-        interval_seconds: float = 900.0,
+        interval_seconds: float = 21600.0,
         batch_size: int = 50,
         max_attempts: int = 1,
         clock: Callable[[], datetime] = utc_now,
@@ -690,6 +690,13 @@ class MariaDBResultApplier:
         )
         async with _session_scope(self.session_factory) as session:
             async with _transaction(session):
+                from sqlalchemy.ext.asyncio import AsyncSession
+
+                inventory_managed = isinstance(session, AsyncSession)
+                if inventory_managed:
+                    from db.article_retention import lock_inventory
+
+                    await lock_inventory(session)
                 # Serialize replay with the current lease holder.  The query
                 # is intentionally harmless for small fake sessions used by
                 # SQL contract tests.
@@ -702,8 +709,12 @@ class MariaDBResultApplier:
                         {"job_id": job.id},
                     )
                 )
+                locked_rows = _rows(locked_result)
+                if inventory_managed and not locked_rows:
+                    # Retention can retire a leased article while its provider
+                    # call is in flight. Its late result must not recreate it.
+                    raise ResultApplicationError("job was removed by retention")
                 if job.job_type == "export_user" and context is not None:
-                    locked_rows = _rows(locked_result)
                     locked_job = locked_rows[0] if locked_rows else None
                     locked_status = getattr(
                         _row(locked_job, "status"), "value", _row(locked_job, "status")
@@ -728,6 +739,10 @@ class MariaDBResultApplier:
                     now=now,
                     request_id=str(request_id) if request_id is not None else None,
                 )
+                if inventory_managed and job.job_type == "crawl":
+                    from db.article_retention import enforce_inventory
+
+                    await enforce_inventory(session, now, lock=False)
         return _result_value(result)
 
     apply_result = apply
