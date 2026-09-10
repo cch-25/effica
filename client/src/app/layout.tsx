@@ -3,15 +3,21 @@ import localFont from "next/font/local";
 import "./globals.css";
 import "./base-ui.css";
 import "./comparison-visualization.css";
-import "./art-direction.css";
 import "./consumption.css";
+import "./art-direction.css";
 import { Providers } from "./providers";
 import { AppShell } from "@/components/layout/app-shell";
 import { serverApiRequest } from "@/lib/api/server";
 import type { UserView } from "@/lib/api/contracts";
 import { isMockMode } from "@/lib/api/mode";
 
-const newspaperFont = localFont({ src: "../../public/fonts/ChosunIlboMyungjo.woff2", variable: "--font-newspaper", display: "swap", preload: true });
+const newspaperFont = localFont({
+  src: [
+    { path: "../../public/fonts/ChosunShinMyungjo.woff2", weight: "400", style: "normal" },
+    { path: "../../public/fonts/ChosunBoldMyungjo.woff2", weight: "700", style: "normal" },
+  ],
+  variable: "--font-newspaper", display: "swap", preload: true,
+});
 
 export const metadata: Metadata = {
   title: { default: "EFFICA | 관점 사이를 읽다", template: "%s | EFFICA" },

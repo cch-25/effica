@@ -1,10 +1,10 @@
 # Korean share card fonts
 
-The newspaper theme uses `ChosunIlboMyungjo.ttf`, the unchanged TTF from the official Chosun Ilbo distribution. The corresponding ownership and distribution terms are in `ChosunIlboMyungjo-LICENSE.txt`.
+The newspaper theme uses official Chosun Ilbo fonts: `ChosunShinMyungjo.ttf` for body text and `ChosunBoldMyungjo.ttf` for headings. Both are unchanged TTF files from the official archives. Ownership and distribution terms are in `ChosunMyungjo-LICENSE.txt`.
 
-Official source: https://about.chosun.com/mobile/pages/intro_ci.php
+Official source: https://event.chosun.com/100/100font.html
 
-The web client uses a WOFF2 compression of the same complete font, without glyph changes or subsetting. The original TTF is retained here for Pillow image rendering.
+The web client uses WOFF2 compression of these complete fonts without glyph changes or subsetting. Original TTF files are retained for Pillow image rendering. The older ChosunIlboNM font was replaced because its vhea table was rejected by browser font sanitizers.
 
 ## Previous font
 

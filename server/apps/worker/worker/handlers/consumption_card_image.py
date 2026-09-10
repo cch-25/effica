@@ -9,18 +9,19 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
-FONT = Path(__file__).resolve().parents[1] / "assets" / "ChosunIlboMyungjo.ttf"
+FONT_DIR = Path(__file__).resolve().parents[1] / "assets"
 
 
 def _font(size: int, weight: int = 400) -> ImageFont.FreeTypeFont:
-    font = ImageFont.truetype(str(FONT), size)
+    name = "ChosunBoldMyungjo.ttf" if weight >= 600 else "ChosunShinMyungjo.ttf"
+    font = ImageFont.truetype(str(FONT_DIR / name), size)
     return font
 
 
 def render_consumption_card(public: Mapping[str, Any]) -> bytes:
-    image = Image.new("RGB", (1200, 1000), "#F8F7F3")
+    image = Image.new("RGB", (1200, 1000), "#FFFFFF")
     draw = ImageDraw.Draw(image)
-    ink, muted, line = "#242424", "#595959", "#BDBDB8"
+    ink, muted, line = "#242424", "#595959", "#BDBDBD"
     font = _font(36, 600)
     body = _font(25)
     small = _font(22)
@@ -49,7 +50,7 @@ def render_consumption_card(public: Mapping[str, Any]) -> bytes:
         draw.line((70, 220, 1130, 220), fill=line, width=2)
         draw.text((70, 245), "다양성", font=body, fill=ink)
         draw.text((1130, 245), f"{score}/100", font=body, fill=ink, anchor="ra")
-        draw.line((80, 310, 1120, 310), fill="#BDBDB8", width=5)
+        draw.line((80, 310, 1120, 310), fill="#BDBDBD", width=5)
         marker = 80 + 1040 * score / 100
         draw.ellipse((marker - 9, 301, marker + 9, 319), fill="#404040")
         draw.text((70, 335), "0 낮음 / 단일 성향의 뉴스 위주 소비", font=small, fill=muted)

@@ -55,7 +55,7 @@ export function createSpace(element: HTMLDivElement, camera: SpaceCamera, onSele
     axisTick: { show: false }, axisLabel,
     nameTextStyle: { color: colors.ink, fontFamily: font, fontSize: 12, fontWeight: "bold" },
     splitLine: { show: true, lineStyle: { color: colors.ink, width: 1, opacity: .23 } },
-    splitArea: { show: true, areaStyle: { color: [background, "#f1f0ec"] } },
+    splitArea: { show: true, areaStyle: { color: [background, background] } },
   };
   try {
     chart.setOption({

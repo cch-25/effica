@@ -58,6 +58,7 @@ export function AppShell({ children, user, editionDate = "" }: { children: React
   return (
     <div className={admin ? "shell shell--admin" : "shell"}>
       <a className="skip-link" href="#main-content">본문으로 건너뛰기</a>
+      {admin && <NewspaperMasthead date={editionDate} section="관리자" compact />}
       {admin ? (
         <aside className="sidebar">
           <Link href="/admin/runtime" className="brand" aria-label="EFFICA 관리자 홈">
@@ -93,7 +94,6 @@ export function AppShell({ children, user, editionDate = "" }: { children: React
         </>
       )}
       <main id="main-content" className="main-content" tabIndex={-1}>
-        {admin && <NewspaperMasthead date={editionDate} section="관리자" compact />}
         {children}
       </main>
       {!admin && <footer className="newspaper-footer"><Link href="/" aria-label="에피카 홈">에피카 <small>EFFICA</small></Link><p>같은 이슈를 여러 관점에서 읽고, 근거를 비교합니다.</p><nav aria-label="푸터 메뉴"><Link href="/issues">이슈 비교</Link><Link href="/visualization">기사 관점 지도</Link><Link href="/settings/privacy">개인정보 관리</Link></nav><small>© EFFICA</small></footer>}

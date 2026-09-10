@@ -1,10 +1,10 @@
 :root {
   color-scheme: light;
 
-  --peer-color-canvas: #f8f7f3;
-  --peer-color-surface-hover: #efeee9;
-  --peer-color-surface-active: #e3e2dd;
-  --peer-color-ink: #242424;
+  --peer-color-canvas: #ffffff;
+  --peer-color-surface-hover: #f4f4f4;
+  --peer-color-surface-active: #e8e8e8;
+  --peer-color-ink: #161616;
   --peer-color-ink-muted: #595959;
   --peer-color-disabled: #777777;
   --peer-color-accent: #303030;
@@ -15,11 +15,11 @@
 
   --effica-cobalt: #747474;
   --effica-coral: #575757;
-  --effica-butter: #ddddda;
+  --effica-butter: #dddddd;
   --effica-mint: #ababab;
   --effica-lilac: #888888;
-  --effica-sky: #c1c1be;
-  --effica-cream: #eeede8;
+  --effica-sky: #c1c1c1;
+  --effica-cream: #eeeeee;
 
   --peer-font-sans: var(--font-newspaper), "Batang", "Songti SC", Georgia, serif;
   --peer-font-display: var(--peer-font-sans);

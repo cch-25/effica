@@ -35,7 +35,7 @@ export function IdeologyGraph({ ideology }: { ideology: Ideology }) {
         <text x="240" y="42" fill="#404040">국제주의 / 세계주의</text>
         <text x="240" y="337" fill="#404040">민족주의 / 주권주의</text>
       </g>
-      <circle cx={position[0]} cy={position[1]} r="7" fill="var(--ink)" stroke="var(--paper, #f8f7f3)" strokeWidth="2" />
+      <circle cx={position[0]} cy={position[1]} r="7" fill="var(--ink)" stroke="var(--paper, #ffffff)" strokeWidth="2" />
       {!completed && <text x={position[0] + 12} y={position[1] - 10} className="ideology-graph__coordinate">(0,0,0)</text>}
     </svg>
     {completed ? <dl className="ideology-coordinates"><div><dt>경제 (X)</dt><dd>{x > 0 ? "+" : ""}{x}</dd></div><div><dt>사회문화 (Y)</dt><dd>{y > 0 ? "+" : ""}{y}</dd></div><div><dt>국제 (Z)</dt><dd>{z > 0 ? "+" : ""}{z}</dd></div></dl> : <p className="ideology-graph__note">검사 미실시 / 기본 좌표 (0,0,0)<br />아직 측정하지 않은 상태이며 중도를 뜻하지 않습니다.</p>}
