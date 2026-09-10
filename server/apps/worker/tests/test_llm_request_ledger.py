@@ -71,7 +71,7 @@ class _Session:
                 comparison_request_count=0, reserved_microusd=0, observed_tokens=0,
             ))
         elif query.startswith("SELECT request_count"):
-            return _Rows(self.db.days[params["usage_date"]])
+            return _Rows(self.db.days.get(params["usage_date"]))
         elif query.startswith("SELECT usage_date"):
             return _Rows(self.db.requests.get(params["request_key"]))
         elif query.startswith("SELECT article_key"):

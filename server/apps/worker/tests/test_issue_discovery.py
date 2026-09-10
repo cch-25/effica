@@ -338,6 +338,46 @@ async def test_discovery_handler_is_registered_and_receives_live_service_contrac
     assert result.metadata["pipeline"] == "daily_topic_first"
 
 
+async def test_existing_analysis_usage_does_not_block_a_smaller_verified_edition():
+    fixture = _Harness()
+    fixture.db.days[NOW.date()] = dict(
+        request_count=99, article_request_count=96, comparison_request_count=3,
+        reserved_microusd=719703, observed_tokens=151221,
+    )
+    fixture.urls = [f"https://publisher-{i}.test/news/pension" for i in range(8)]
+    fixture.grounded = fixture.urls.copy()
+    fixture.selected = fixture.urls.copy()
+    fixture.pages = dict.fromkeys(fixture.urls, _html())
+    fixture.topics.append({**TOPIC, "issue_key": "second-event"})
+    sources = [{**_sources()[0], "source_id": f"publisher-{i}", "home_url": f"https://publisher-{i}.test/"}
+               for i in range(8)]
+    result = await fixture.discover(sources)
+    assert len(result["issues"]) == 1
+    assert len(result["issues"][0]["articles"]) == 4
+    assert len(fixture.paid_requests) == 3
+    assert fixture.db.days[NOW.date()]["request_count"] == 102
+    assert result["stopped_reason"] == "DAILY_LLM_BUDGET_EXCEEDED"
+    # The four selected analyses and one comparison still fit all hard limits.
+    for index in range(4):
+        await fixture.budget.reserve(category="article", estimated_max_cost_microusd=1000,
+                                     essential=True, request_key=f"new-analysis-{index}")
+    await fixture.budget.reserve(category="comparison", estimated_max_cost_microusd=1000, essential=True)
+    assert fixture.db.days[NOW.date()]["request_count"] == 107
+    assert fixture.db.days[NOW.date()]["article_request_count"] == 100
+
+
+async def test_exhausted_analysis_slots_stop_before_searching_individual_candidates():
+    fixture = _Harness()
+    fixture.db.days[NOW.date()] = dict(
+        request_count=100, article_request_count=100, comparison_request_count=0,
+        reserved_microusd=700000, observed_tokens=0,
+    )
+    result = await fixture.discover()
+    assert not result["issues"]
+    assert len(fixture.paid_requests) == 1
+    assert not fixture.page_requests
+
+
 def test_budget_migration_uses_existing_constraint_name() -> None:
     output = io.StringIO()
     context = MigrationContext.configure(dialect_name="mariadb", opts={

@@ -293,13 +293,19 @@ class IssueDiscoveryService:
         used_urls: set[str] = set()
         protected_cost = 0
         protected_requests = 0
+        pending_articles = 0
         for candidate in candidates:
             if len(result["issues"]) >= self.max_issues:
                 result["stopped_reason"] = "EDITION_FULL"
                 break
+            if await self.budget.discovery_article_capacity(
+                pending_articles=pending_articles, pending_requests=protected_requests,
+            ) < 3:
+                result["stopped_reason"] = "DAILY_LLM_BUDGET_EXCEEDED"
+                break
             try:
                 issue = await self._discover_one(run_date, candidate, approved, now, result,
-                                                 protected_cost, protected_requests)
+                                                 protected_cost, protected_requests, pending_articles)
             except DailyLLMBudgetExceeded as exc:
                 result["stopped_reason"] = exc.code
                 break
@@ -320,6 +326,7 @@ class IssueDiscoveryService:
             result["issues"].append(issue)
             protected_cost += self._analysis_cost(issue["articles"])
             protected_requests += len(issue["articles"]) + 1
+            pending_articles += len(issue["articles"])
         # Source volume matters only after the political-controversy quality gate.
         result["issues"].sort(
             key=lambda item: (item["priority"], len(item["articles"])), reverse=True,
@@ -367,6 +374,7 @@ class IssueDiscoveryService:
         self, run_date: str, candidate: dict[str, Any], approved: Mapping[str, dict[str, Any]],
         now: datetime, result: dict[str, Any],
         protected_cost: int = 0, protected_requests: int = 0,
+        pending_articles: int = 0,
     ) -> dict[str, Any] | None:
         key = hashlib.sha256(candidate["issue_key"].encode()).hexdigest()[:24]
         searched = await self._request(
@@ -405,6 +413,11 @@ class IssueDiscoveryService:
         if len({a["publisher_key"] for a in articles}) < 3:
             result["rejected_issues"].append({"issue_key": candidate["issue_key"], "reason": "FEWER_THAN_THREE_PUBLISHERS"})
             return None
+        article_limit = min(_MAX_ARTICLES_PER_ISSUE, await self.budget.discovery_article_capacity(
+            pending_articles=pending_articles, pending_requests=protected_requests,
+        ))
+        if article_limit < 3:
+            raise DailyLLMBudgetExceeded("fewer than three article analysis slots remain")
         evidence = [{
             "id": a["canonical_url"], "title": a["title"], "content": a["content"][:4500],
             "published_at": a["published_at"], "publisher": a["publisher"],
@@ -421,13 +434,14 @@ class IssueDiscoveryService:
             "6~8번째 기사는 앞선 기사에 없는 구체적인 쟁점이나 관점을 추가할 때만 허용합니다. "
             "그 경우 additional_context에 해당 기사 id별 추가 맥락과 본문 근거를 20자 이상으로 쓰세요. "
             "정치적 관련성과 서로 충돌하는 입장을 본문 근거로 확인하세요. "
+            f"이번 실행의 남은 분석 한도에 따라 최대 {article_limit}개까지만 선택하세요. "
             "요약과 controversy_reason는 오직 제공된 기사 근거로 교정하세요. "
             'JSON {"is_controversial":true,"political_relevance":true,"summary":"...",'
             '"controversy_reason":"구체적인 입장 충돌", "article_ids":["선택한 id"], "additional_context":{"추가 id":"추가 맥락과 본문 근거"}}. '
             f"기사 근거: {_json(evidence)}",
             search=False, evidence_hash=evidence_hash,
             protected_cost=protected_cost + self._analysis_cost(articles),
-            protected_requests=protected_requests + min(len(articles), _MAX_ARTICLES_PER_ISSUE) + 1,
+            protected_requests=protected_requests + min(len({a['publisher_key'] for a in articles}), article_limit) + 1,
         )
         if selected.get("is_controversial") is not True or selected.get("political_relevance") is not True:
             return None
@@ -446,7 +460,7 @@ class IssueDiscoveryService:
             article = by_url.get(article_id) if isinstance(article_id, str) else None
             if article is None or article["publisher_key"] in publishers:
                 continue
-            if len(selected_articles) >= _MAX_ARTICLES_PER_ISSUE:
+            if len(selected_articles) >= article_limit:
                 break
             if len(selected_articles) >= _DEFAULT_ARTICLES_PER_ISSUE:
                 reason = str(additional.get(article_id) or "").strip()

@@ -146,6 +146,25 @@ class MariaDBLLMBudget:
         if not 0 <= self.daily_comparison_limit <= self.daily_request_limit:
             raise ValueError("daily comparison limit must fit inside the request limit")
 
+    async def discovery_article_capacity(
+        self, *, pending_articles: int = 0, pending_requests: int = 0,
+    ) -> int:
+        """Size a new cohort to unused analysis slots, without authorizing spend.
+
+        Call after source search. Leave one request for verification and one
+        for comparison. Actual paid reservations still enforce the locked ledger.
+        """
+        async with _session_scope(self.session_factory) as session:
+            result = await _maybe_await(session.execute(text("""
+                SELECT request_count, article_request_count, comparison_request_count
+                FROM llm_daily_usage WHERE usage_date = :usage_date
+            """), {"usage_date": self._usage_date()}))
+            row = result.mappings().first()
+        return max(0, min(
+            self.daily_article_limit - int(_row_value(row, "article_request_count", 0) or 0) - pending_articles,
+            self.daily_request_limit - int(_row_value(row, "request_count", 0) or 0) - pending_requests - 2,
+        ))
+
     def _usage_date(self) -> date:
         current = self.clock()
         if current.tzinfo is None:
@@ -282,7 +301,13 @@ class MariaDBLLMBudget:
                     # Discovery cannot spend the capacity needed to analyze its
                     # selected articles, even though it is an essential job.
                     cost_floor = max(self.daily_budget_microusd * 3 // 5, protected_cost_microusd)
-                    request_floor = max(min(30, self.daily_request_limit * 3 // 5), protected_requests)
+                    # The daily analysis allocation includes work already paid
+                    # for today. Reserving another 30 after it was consumed
+                    # strands otherwise usable discovery capacity.
+                    request_floor = max(
+                        0, min(30, self.daily_request_limit * 3 // 5) - articles - comparisons,
+                        protected_requests,
+                    )
                     if (reserved + requested + cost_floor > self.daily_budget_microusd
                             or requests + 1 + request_floor > self.daily_request_limit):
                         raise EssentialLLMBudgetReserved("remaining capacity is reserved for article and comparison analysis")
