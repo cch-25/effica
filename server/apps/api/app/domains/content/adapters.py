@@ -37,6 +37,7 @@ class ArticleCandidate:
     source_id: str | None = None
     external_id: str | None = None
     adapter_type: AdapterType = AdapterType.API
+    image_url: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "url", canonicalize_url(self.url))
@@ -570,12 +571,17 @@ class CrawlerAdapter(SourceAdapter):
             or parser.meta.get("datepublished")
             or parser.meta.get("date")
         )
+        image = parser.meta.get("og:image:secure_url") or parser.meta.get("og:image") or parser.meta.get("twitter:image")
+        image_url = urljoin(base_url, image) if image else None
+        if image_url and (not image_url.startswith("https://") or len(image_url) > 2048):
+            image_url = None
         candidate = ArticleCandidate(
             url=canonical,
             title=title,
             body=body,
             author=author or None,
             published_at=parse_datetime(published),
+            image_url=image_url,
             source_id=self.source_id,
             adapter_type=self.adapter_type,
         )

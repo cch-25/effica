@@ -1376,12 +1376,13 @@ class MariaDBResultApplier:
                 session,
                 """
                 INSERT INTO articles
-                  (id, source_id, canonical_url, canonical_url_hash, title, author,
+                  (id, source_id, canonical_url, canonical_url_hash, title, author, image_url,
                    published_at, current_version_id, status, created_at, updated_at)
                 VALUES
-                  (:id, :source_id, :url, :url_hash, :title, :author, :published_at,
+                  (:id, :source_id, :url, :url_hash, :title, :author, :image_url, :published_at,
                    NULL, :status, :created_at, :updated_at)
                 ON DUPLICATE KEY UPDATE title = VALUES(title), author = VALUES(author),
+                  image_url = COALESCE(VALUES(image_url), image_url),
                   published_at = COALESCE(VALUES(published_at), published_at),
                   status = CASE
                     WHEN status = 'removed' THEN status
@@ -1397,6 +1398,7 @@ class MariaDBResultApplier:
                     "url_hash": canonical_hash,
                     "title": title,
                     "author": article.get("author"),
+                    "image_url": article.get("image_url"),
                     "published_at": _database_timestamp(article.get("published_at")),
                     "status": article_status,
                     "created_at": now,

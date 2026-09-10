@@ -18,6 +18,17 @@ def compact_job_payload(value: Mapping[str, Any]) -> dict[str, Any]:
 
 def job_receipt(job_type: str, value: Mapping[str, Any]) -> dict[str, Any]:
     receipt: dict[str, Any] = {"applied": True}
+    if job_type == "discover_issues":
+        receipt.update(
+            publication_status="PUBLISHED" if value.get("issues") else "NO_ISSUES_PUBLISHED",
+            published_issue_count=len(value.get("issues", [])),
+            candidate_count=value.get("candidate_count", 0),
+            stopped_reason=value.get("stopped_reason"),
+            blocked_reason=value.get("blocked_reason"),
+            rejected_issues=value.get("rejected_issues", [])[:12],
+            rejected_article_count=len(value.get("rejected_articles", [])),
+            rejected_source_count=len(value.get("rejected_sources", [])),
+        )
     # Exports need a download pointer, not a second copy of the user's data.
     if job_type == "export_user":
         for key in ("user_id", "blob_id", "artifact_ref"):

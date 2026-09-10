@@ -135,6 +135,7 @@ async def test_two_search_stages_hydrate_three_publishers_and_replay_without_new
     assert len(fixture.paid_requests) == 3
     assert all(request["tool_choice"] == "required" for request in fixture.paid_requests[:2])
     assert all(request["max_tool_calls"] == 2 for request in fixture.paid_requests[:2])
+    assert fixture.paid_requests[1]["tools"][0]["filters"]["allowed_domains"] == [f"publisher-{n}.test" for n in range(3)]
     assert "tools" not in fixture.paid_requests[2]
     ledger = copy.deepcopy(fixture.db.days)
     assert await fixture.discover() == first
@@ -215,7 +216,7 @@ async def test_cross_publisher_canonical_page_cannot_borrow_source_approval() ->
     )
     result = await fixture.discover()
     assert result["issues"] == []
-    assert result["rejected_articles"] == [{"url": URLS[2], "reason": "IssueDiscoveryError"}]
+    assert result["rejected_articles"] == [{"url": URLS[2], "reason": "IssueDiscoveryError", "detail": "article canonical URL changed publisher"}]
 
 
 @pytest.mark.parametrize("invalid", ["old", "future", "snippet"])
@@ -376,6 +377,21 @@ async def test_exhausted_analysis_slots_stop_before_searching_individual_candida
     assert not result["issues"]
     assert len(fixture.paid_requests) == 1
     assert not fixture.page_requests
+
+
+async def test_publisher_preview_image_comes_from_fetched_page():
+    fixture = _Harness()
+    fixture.pages[URLS[0]] = _html().replace('</head>', '<meta property="og:image" content="https://cdn.publisher-0.test/photo.jpg"></head>')
+    result = await fixture.discover()
+    assert result['issues'][0]['articles'][0]['image_url'] == 'https://cdn.publisher-0.test/photo.jpg'
+
+
+def test_discovery_receipt_distinguishes_zero_publications_from_a_new_edition():
+    from apps.api.app.domains.content.storage import job_receipt
+    receipt = job_receipt('discover_issues', {'issues': [], 'candidate_count': 10, 'rejected_issues': [{'reason': 'FEWER_THAN_THREE_PUBLISHERS'}]})
+    assert receipt['publication_status'] == 'NO_ISSUES_PUBLISHED'
+    assert receipt['published_issue_count'] == 0
+    assert receipt['rejected_issues'][0]['reason'] == 'FEWER_THAN_THREE_PUBLISHERS'
 
 
 def test_budget_migration_uses_existing_constraint_name() -> None:

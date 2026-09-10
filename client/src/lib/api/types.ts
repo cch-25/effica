@@ -31,6 +31,7 @@ export type Article = Omit<AxisScores, "sensationalism"> & {
   dek: string;
   publishedAt: string;
   originalUrl: string;
+  imageUrl?: string | null;
   reasonCode: "ADJACENT_VIEW" | "SOURCE_DIVERSITY" | "ISSUE_BALANCE" | "RECENT_HIGH_CONFIDENCE";
   scoreVersion: string;
   analysisStatus: "READY" | "PROCESSING" | "PARTIAL" | "UNTRUSTED";

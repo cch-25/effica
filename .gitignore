@@ -14,6 +14,7 @@ build/
 client/.next/
 client/.next-real/
 client/.next-playwright-*/
+client/.next-preview-*/
 client/node_modules/
 .vercel/
 .DS_Store

@@ -47,6 +47,7 @@ function articleBase(
     dek: decodeHtmlEntities(dto.summary),
     publishedAt: dto.published_at ?? "",
     originalUrl: dto.canonical_url,
+    imageUrl: dto.image_url,
     reasonCode,
     x: coordinate?.x ?? 0,
     y: coordinate?.y ?? 0,

@@ -368,6 +368,7 @@ class Article(Base):
     canonical_url_hash: Mapped[bytes] = mapped_column(_HASH, nullable=False)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     author: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    image_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     published_at: Mapped[datetime | None] = _timestamp(nullable=True, default=None)
     current_version_id: Mapped[str | None] = mapped_column(
         ULIDType(),

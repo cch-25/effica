@@ -1302,6 +1302,8 @@ export interface components {
             current_version_id?: string | null;
             /** Id */
             id: string;
+            /** Image Url */
+            image_url?: string | null;
             /** Issue Id */
             issue_id?: string | null;
             /** Published At */
@@ -1335,6 +1337,8 @@ export interface components {
             current_version_id?: string | null;
             /** Id */
             id: string;
+            /** Image Url */
+            image_url?: string | null;
             /** Issue Id */
             issue_id?: string | null;
             /** Published At */

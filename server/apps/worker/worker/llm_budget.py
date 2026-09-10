@@ -300,7 +300,7 @@ class MariaDBLLMBudget:
                 if category == "discovery":
                     # Discovery cannot spend the capacity needed to analyze its
                     # selected articles, even though it is an essential job.
-                    cost_floor = max(self.daily_budget_microusd * 3 // 5, protected_cost_microusd)
+                    cost_floor = max(self.daily_budget_microusd // 5, protected_cost_microusd)
                     # The daily analysis allocation includes work already paid
                     # for today. Reserving another 30 after it was consumed
                     # strands otherwise usable discovery capacity.

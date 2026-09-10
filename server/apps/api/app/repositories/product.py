@@ -181,6 +181,7 @@ class ProductRepositoryMixin:
             "canonical_url": article.canonical_url,
             "title": article.title,
             "author": article.author,
+            "image_url": article.image_url,
             "summary": summary,
             "published_at": article.published_at,
             "current_version_id": article.current_version_id,

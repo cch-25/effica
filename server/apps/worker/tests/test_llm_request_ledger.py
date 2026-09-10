@@ -136,11 +136,11 @@ def test_discovery_cannot_spend_article_analysis_capacity_even_when_essential():
     async def scenario():
         db = _Database()
         budget = MariaDBLLMBudget(_SessionFactory(db))
-        await budget.reserve(category="discovery", estimated_max_cost_microusd=1_900_000, essential=True)
+        await budget.reserve(category="discovery", estimated_max_cost_microusd=3_900_000, essential=True)
         with pytest.raises(DailyLLMBudgetExceeded):
             await budget.reserve(category="discovery", estimated_max_cost_microusd=200_000, essential=True)
-        await budget.reserve(category="article", estimated_max_cost_microusd=2_000_000, essential=True)
-        await budget.reserve(category="comparison", estimated_max_cost_microusd=1_000_000)
+        await budget.reserve(category="article", estimated_max_cost_microusd=600_000, essential=True)
+        await budget.reserve(category="comparison", estimated_max_cost_microusd=400_000)
         with pytest.raises(DailyLLMBudgetExceeded):
             await budget.reserve(category="article", estimated_max_cost_microusd=200_000, essential=True)
         assert next(iter(db.days.values()))["reserved_microusd"] == 4_900_000

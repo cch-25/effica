@@ -186,6 +186,7 @@ class ArticleView(ContractModel):
     canonical_url: str
     title: str
     author: str | None = None
+    image_url: str | None = None
     summary: str = ""
     published_at: datetime | None = None
     current_version_id: str | None = None
