@@ -37,9 +37,9 @@ from typing import (
 from .essential_analysis import essential_article_exists
 
 try:
-    from apps.api.app.jobs.types import JobStatus, utc_now
+    from apps.api.app.jobs.types import USER_JOB_TYPES, JobStatus, utc_now
 except ImportError:  # pragma: no cover - supports ``PYTHONPATH=apps/worker``.
-    from api.app.jobs.types import JobStatus, utc_now  # type: ignore
+    from api.app.jobs.types import USER_JOB_TYPES, JobStatus, utc_now  # type: ignore
 
 
 class JobQueueError(RuntimeError):
@@ -262,12 +262,19 @@ class QueueRepository(Protocol):
         job_id: str,
         worker_id: str,
         *,
+        attempt: int | None = None,
         lease_seconds: float = 60.0,
         now: datetime | None = None,
     ) -> bool: ...
 
     async def complete(
-        self, job_id: str, worker_id: str, *, result: Any = None, now: datetime | None = None
+        self,
+        job_id: str,
+        worker_id: str,
+        *,
+        attempt: int | None = None,
+        result: Any = None,
+        now: datetime | None = None,
     ) -> bool: ...
 
     async def fail(
@@ -276,6 +283,7 @@ class QueueRepository(Protocol):
         worker_id: str,
         error: Mapping[str, Any],
         *,
+        attempt: int | None = None,
         retryable: bool = True,
         now: datetime | None = None,
         backoff_seconds: float = 0.0,
@@ -443,7 +451,14 @@ class MemoryQueueRepository:
                     and job.lease_expires_at <= moment
                 )
             ]
-            candidates.sort(key=lambda job: (-job.priority, job.available_at, job.id))
+            candidates.sort(
+                key=lambda job: (
+                    -(job.job_type in USER_JOB_TYPES),
+                    -job.priority,
+                    job.available_at,
+                    job.id,
+                )
+            )
             if not candidates:
                 return None
             selected = candidates[0]
@@ -464,13 +479,19 @@ class MemoryQueueRepository:
         job_id: str,
         worker_id: str,
         *,
+        attempt: int | None = None,
         lease_seconds: float = 60.0,
         now: datetime | None = None,
     ) -> bool:
         moment = _aware_utc(now or self.clock())
         async with self._lock:
             job = self._jobs.get(job_id)
-            if job is None or job.status != JobStatus.LEASED or job.lease_owner != worker_id:
+            if (
+                job is None
+                or job.status != JobStatus.LEASED
+                or job.lease_owner != worker_id
+                or (attempt is not None and job.attempts != attempt)
+            ):
                 return False
             job.lease_expires_at = moment + timedelta(seconds=lease_seconds)
             job.updated_at = moment
@@ -481,13 +502,19 @@ class MemoryQueueRepository:
         job_id: str,
         worker_id: str,
         *,
+        attempt: int | None = None,
         result: Any = None,
         now: datetime | None = None,
     ) -> bool:
         moment = _aware_utc(now or self.clock())
         async with self._lock:
             job = self._jobs.get(job_id)
-            if job is None or job.status != JobStatus.LEASED or job.lease_owner != worker_id:
+            if (
+                job is None
+                or job.status != JobStatus.LEASED
+                or job.lease_owner != worker_id
+                or (attempt is not None and job.attempts != attempt)
+            ):
                 return False
             job.status = JobStatus.SUCCEEDED
             job.lease_owner = None
@@ -504,6 +531,7 @@ class MemoryQueueRepository:
         worker_id: str,
         error: Mapping[str, Any],
         *,
+        attempt: int | None = None,
         retryable: bool = True,
         now: datetime | None = None,
         backoff_seconds: float = 0.0,
@@ -518,7 +546,11 @@ class MemoryQueueRepository:
             job = self._jobs.get(job_id)
             if job is None:
                 raise JobNotFound(job_id)
-            if job.status != JobStatus.LEASED or job.lease_owner != worker_id:
+            if (
+                job.status != JobStatus.LEASED
+                or job.lease_owner != worker_id
+                or (attempt is not None and job.attempts != attempt)
+            ):
                 return job.status
             job.last_error = dict(error)
             job.lease_owner = None
@@ -611,6 +643,7 @@ class MariaDBQueueRepository:
         # analysis and comparisons first. Resolve membership at claim time so
         # already-queued articles gain priority as soon as clustering finishes.
         return f"""CASE
+            WHEN job_type IN ('render_share_card', 'export_user', 'delete_user') THEN 5
             WHEN job_type = 'cluster' THEN 4
             WHEN job_type = 'calculate_score' THEN 3
             WHEN job_type = 'build_issue_comparison' THEN 2
@@ -1032,30 +1065,32 @@ class MariaDBQueueRepository:
         job_id: str,
         worker_id: str,
         *,
+        attempt: int | None = None,
         lease_seconds: float = 60.0,
         now: datetime | None = None,
     ) -> bool:
         moment = _aware_utc(now or self.clock())
         table = self.table_name
+        attempt_clause = " AND attempts = :attempt" if attempt is not None else ""
         statement = _sql(
             f"""
             UPDATE {table}
             SET lease_expires_at = :lease_expires_at, updated_at = :now
-            WHERE id = :id AND status = 'LEASED' AND lease_owner = :worker_id
+            WHERE id = :id AND status = 'LEASED' AND lease_owner = :worker_id{attempt_clause}
             """.strip()
         )
+        params = {
+            "id": job_id,
+            "worker_id": worker_id,
+            "lease_expires_at": moment + timedelta(seconds=lease_seconds),
+            "now": moment,
+        }
+        if attempt is not None:
+            params["attempt"] = attempt
         async with _session_scope(self.session_factory) as session:
             async with _transaction(session):
                 result = await _maybe_await(
-                    session.execute(
-                        statement,
-                        {
-                            "id": job_id,
-                            "worker_id": worker_id,
-                            "lease_expires_at": moment + timedelta(seconds=lease_seconds),
-                            "now": moment,
-                        },
-                    )
+                    session.execute(statement, params)
                 )
                 return _rowcount(result) == 1
 
@@ -1064,40 +1099,50 @@ class MariaDBQueueRepository:
         job_id: str,
         worker_id: str,
         *,
+        attempt: int | None = None,
         result: Any = None,
         now: datetime | None = None,
     ) -> bool:
         del result
         moment = _aware_utc(now or self.clock())
         table = self.table_name
+        attempt_clause = " AND attempts = :attempt" if attempt is not None else ""
         statement = _sql(
             f"""
             UPDATE {table}
             SET status = 'SUCCEEDED', lease_owner = NULL,
                 lease_expires_at = NULL, last_error_json = NULL, updated_at = :now
-            WHERE id = :id AND status = 'LEASED' AND lease_owner = :worker_id
+            WHERE id = :id AND status = 'LEASED' AND lease_owner = :worker_id{attempt_clause}
             """.strip()
         )
+        params = {"id": job_id, "worker_id": worker_id, "now": moment}
+        if attempt is not None:
+            params["attempt"] = attempt
         async with _session_scope(self.session_factory) as session:
             async with _transaction(session):
-                updated = await _maybe_await(
-                    session.execute(
-                        statement, {"id": job_id, "worker_id": worker_id, "now": moment}
-                    )
-                )
+                updated = await _maybe_await(session.execute(statement, params))
                 return _rowcount(updated) == 1
 
-    async def _owned_job(self, session: Any, job_id: str, worker_id: str) -> Job | None:
+    async def _owned_job(
+        self,
+        session: Any,
+        job_id: str,
+        worker_id: str,
+        *,
+        attempt: int | None = None,
+    ) -> Job | None:
+        attempt_clause = " AND attempts = :attempt" if attempt is not None else ""
         statement = _sql(
             f"""
             SELECT {self._SELECT_COLUMNS} FROM {self.table_name}
-            WHERE id = :id AND status = 'LEASED' AND lease_owner = :worker_id
+            WHERE id = :id AND status = 'LEASED' AND lease_owner = :worker_id{attempt_clause}
             FOR UPDATE
             """.strip()
         )
-        result = await _maybe_await(
-            session.execute(statement, {"id": job_id, "worker_id": worker_id})
-        )
+        params = {"id": job_id, "worker_id": worker_id}
+        if attempt is not None:
+            params["attempt"] = attempt
+        result = await _maybe_await(session.execute(statement, params))
         rows = _result_rows(result)
         return None if not rows else _job_from_row(rows[0])
 
@@ -1107,6 +1152,7 @@ class MariaDBQueueRepository:
         worker_id: str,
         error: Mapping[str, Any],
         *,
+        attempt: int | None = None,
         retryable: bool = True,
         now: datetime | None = None,
         backoff_seconds: float = 0.0,
@@ -1120,7 +1166,7 @@ class MariaDBQueueRepository:
         table = self.table_name
         async with _session_scope(self.session_factory) as session:
             async with _transaction(session):
-                job = await self._owned_job(session, job_id, worker_id)
+                job = await self._owned_job(session, job_id, worker_id, attempt=attempt)
                 if job is None:
                     existing_query = _sql(f"SELECT status FROM {table} WHERE id = :id LIMIT 1")
                     existing_result = await _maybe_await(
@@ -1139,27 +1185,28 @@ class MariaDBQueueRepository:
                 else:
                     status = JobStatus.FAILED
                     available = moment
+                attempt_clause = " AND attempts = :attempt" if attempt is not None else ""
                 statement = _sql(
                     f"""
                     UPDATE {table}
                     SET status = :status, available_at = :available_at,
                         lease_owner = NULL, lease_expires_at = NULL,
                         last_error_json = :last_error_json, updated_at = :now
-                    WHERE id = :id AND status = 'LEASED' AND lease_owner = :worker_id
+                    WHERE id = :id AND status = 'LEASED' AND lease_owner = :worker_id{attempt_clause}
                     """.strip()
                 )
+                params = {
+                    "id": job_id,
+                    "worker_id": worker_id,
+                    "status": status.value,
+                    "available_at": available,
+                    "last_error_json": json.dumps(dict(error), sort_keys=True, default=str),
+                    "now": moment,
+                }
+                if attempt is not None:
+                    params["attempt"] = attempt
                 updated = await _maybe_await(
-                    session.execute(
-                        statement,
-                        {
-                            "id": job_id,
-                            "worker_id": worker_id,
-                            "status": status.value,
-                            "available_at": available,
-                            "last_error_json": json.dumps(dict(error), sort_keys=True, default=str),
-                            "now": moment,
-                        },
-                    )
+                    session.execute(statement, params)
                 )
                 if _rowcount(updated) == 1:
                     if job.job_type == "crawl":

@@ -1,0 +1,43 @@
+.share-creator { align-items: start; }
+.share-creator__form .field { margin-bottom: 1.5rem; }
+.consumption-preview { gap: 1.25rem; justify-content: flex-start; }
+.consumption-preview--compact { max-width: 42rem; margin: 1.5rem auto; }
+.consumption-preview h2 { font-size: clamp(1.25rem, 2vw, 1.65rem); line-height: 1.4; word-break: keep-all; overflow-wrap: anywhere; }
+.consumption-preview p { margin: 0; }
+.consumption-preview > .axis { display: block; }
+.consumption-preview .axis__track { margin-top: 1rem; }
+.diversity-descriptions { line-height: 1.6; margin: .8rem 0; }
+.diversity-descriptions > :last-child { text-align: right; }
+.diversity-method { margin-top: .75rem; font-size: .8rem; line-height: 1.7; color: var(--muted); }
+.diversity-method summary { cursor: pointer; }
+.diversity-method p { margin-top: .5rem; }
+.consumption-preview .consumption-ideology { display: block; padding-top: 1.25rem; border-top: 1px solid var(--line); }
+.consumption-ideology h3 { font-size: 1rem; margin: 0; }
+.ideology-graph svg { display: block; width: 100%; height: auto; max-height: 25rem; }
+.ideology-graph__labels { font-size: 14px; font-weight: 500; }
+.ideology-graph__coordinate { fill: var(--ink); font-size: 14px; }
+.ideology-graph .ideology-coordinates { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; margin: .5rem 0; }
+.ideology-coordinates > div { padding-top: .6rem; border-top: 1px solid var(--line); }
+.ideology-coordinates dt { font-size: .8rem; color: var(--muted); }
+.ideology-coordinates dd { margin: .25rem 0; font-weight: 600; }
+.ideology-graph__note { color: var(--muted); font-size: .8rem; text-align: center; line-height: 1.65; }
+.consumption-preview > .button { align-self: center; font-size: .85rem; }
+.questionnaire-disclaimer { font-size: .875rem; color: var(--muted); line-height: 1.7; margin-bottom: 1.75rem; }
+.questionnaire-progress { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin: 1.5rem 0 .75rem; scroll-margin-top: 6rem; font-size: .875rem; }
+.questionnaire-scale-help { color: var(--muted); font-size: .8rem; line-height: 1.7; }
+.questionnaire-items { display: grid; gap: 1.5rem; margin: 1.5rem 0; }
+.questionnaire-item { min-width: 0; margin: 0; padding: 1rem 0 0; border: 0; border-top: 1px solid var(--line); }
+.questionnaire-item legend { padding: 0 .5rem 0 0; font-size: .95rem; font-weight: 500; line-height: 1.7; word-break: keep-all; }
+.questionnaire-item .radio-scale { margin: .6rem 0; }
+.questionnaire-item .scale-labels { color: var(--muted); font-size: .75rem; }
+.export-status { padding-top: .75rem; line-height: 1.7; }
+.export-status .button { margin-top: .75rem; }
+.analysis-readiness { padding-block: .75rem; font-size: .875rem; line-height: 1.75; word-break: keep-all; }
+.analysis-readiness p { margin: .5rem 0; color: var(--muted); }
+.analysis-readiness small { color: var(--muted); font-size: .75rem; }
+@media (max-width: 600px) {
+  .consumption-preview { padding: 1rem; }
+  .consumption-preview .axis__labels { font-size: .7rem; }
+  .consumption-preview .axis small { font-size: .75rem; line-height: 1.6; }
+  .ideology-graph__labels { font-size: 16px; }
+}

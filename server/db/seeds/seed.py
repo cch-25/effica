@@ -731,7 +731,10 @@ def main() -> int:
     parser.add_argument(
         "--bootstrap-news-sources",
         action="store_true",
-        help="검수된 공공기관 공식 RSS 출처를 복구 과정에서 함께 등록합니다",
+        help=(
+            "공식 뉴스 피드 출처를 복구 과정에서 등록합니다. "
+            "이용 조건 검토가 필요한 언론사는 PENDING 상태로 유지됩니다"
+        ),
     )
     args = parser.parse_args()
     if args.repair_pipeline and args.verify_only:

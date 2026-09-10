@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import math
 import secrets
 from datetime import datetime, timedelta
 from typing import Any
@@ -26,10 +25,12 @@ from apps.api.app.db.enums import (
 from apps.api.app.db.models import (
     ConsentVersion,
     Job,
+    JobReceipt,
     OAuthAccount,
     QuestionnaireResponse,
     QuestionnaireVersion,
     ShareCard,
+    StoredBlob,
     User,
     UserConsent,
     UserDemographics,
@@ -40,7 +41,14 @@ from apps.api.app.db.models import (
 )
 from apps.api.app.db.ulid import new_ulid
 from apps.api.app.db.utc import utc_now
+from apps.api.app.domains.users import (
+    POLITICAL_QUESTIONNAIRE_VERSION,
+    political_questionnaire_schema,
+    political_questionnaire_scoring,
+    score_political_questionnaire,
+)
 from apps.api.app.jobs.payloads import validate_job_payload
+from apps.api.app.jobs.types import resolved_job_priority
 from apps.api.app.repositories.admin import AdminRepositoryMixin
 from apps.api.app.repositories.product import ProductRepositoryMixin
 
@@ -126,7 +134,10 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
         # checking one table-wide count in that case would skip onboarding.
         onboarding_current = await self.session.scalar(
             select(QuestionnaireVersion.id)
-            .where(QuestionnaireVersion.kind == QuestionnaireKind.ONBOARDING)
+            .where(
+                QuestionnaireVersion.kind == QuestionnaireKind.ONBOARDING,
+                QuestionnaireVersion.version == POLITICAL_QUESTIONNAIRE_VERSION,
+            )
             .limit(1)
         )
         if onboarding_current is None:
@@ -134,18 +145,9 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
                 QuestionnaireVersion(
                     id=new_ulid(),
                     kind=QuestionnaireKind.ONBOARDING,
-                    version="1.0",
-                    schema_json={
-                        "questions": [
-                            {"id": "economic", "required": True, "minimum": -100, "maximum": 100},
-                            {"id": "social", "required": True, "minimum": -100, "maximum": 100},
-                            {"id": "international", "required": True, "minimum": -100, "maximum": 100},
-                        ]
-                    },
-                    scoring_json={
-                        "axes": {"x": "economic", "y": "social", "z": "international"},
-                        "confidence": 0.65,
-                    },
+                    version=POLITICAL_QUESTIONNAIRE_VERSION,
+                    schema_json=political_questionnaire_schema(),
+                    scoring_json=political_questionnaire_scoring(),
                     active_from=utc_now(),
                 )
             )
@@ -442,15 +444,7 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
                 select(func.count()).select_from(UserProfile).where(
                     UserProfile.user_id == user.id,
                     UserProfile.kind == ProfileKind.SELF_REPORTED,
-                    UserProfile.active.is_(True),
-                )
-            )
-        )
-        behavioral = bool(
-            await self.session.scalar(
-                select(func.count()).select_from(UserProfile).where(
-                    UserProfile.user_id == user.id,
-                    UserProfile.kind == ProfileKind.BEHAVIORAL,
+                    UserProfile.source_version == POLITICAL_QUESTIONNAIRE_VERSION,
                     UserProfile.active.is_(True),
                 )
             )
@@ -459,7 +453,7 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
             **self.user_view(user),
             "consent_complete": consent_complete,
             "onboarding_complete": onboarding_complete,
-            "behavioral_profile_active": behavioral,
+            "behavioral_profile_active": False,
         }
 
     async def list_consents(self, user_id: str) -> list[dict[str, Any]]:
@@ -514,7 +508,13 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
         rows = list((await self.session.scalars(statement)).all())
         latest: dict[str, QuestionnaireVersion] = {}
         for row in rows:
-            latest.setdefault(str(_enum_value(row.kind)), row)
+            row_kind = str(_enum_value(row.kind))
+            if (
+                row_kind == QuestionnaireKind.ONBOARDING.value
+                and row.version != POLITICAL_QUESTIONNAIRE_VERSION
+            ):
+                continue
+            latest.setdefault(row_kind, row)
         result: list[dict[str, Any]] = []
         for row in latest.values():
             schema_json = dict(row.schema_json or {})
@@ -570,10 +570,7 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
         if not granted and "POLITICAL" in version.purpose.upper():
             await self.session.execute(
                 update(UserProfile)
-                .where(
-                    UserProfile.user_id == user_id,
-                    UserProfile.kind == ProfileKind.BEHAVIORAL,
-                )
+                .where(UserProfile.user_id == user_id)
                 .values(active=False)
             )
         await self.session.commit()
@@ -616,32 +613,37 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
         for existing_profile in existing_profiles:
             existing_profile.active = False
         version = await self.session.get(QuestionnaireVersion, questionnaire_version_id)
-        if version is None or _enum_value(version.kind) != QuestionnaireKind.ONBOARDING.value:
+        if (
+            version is None
+            or _enum_value(version.kind) != QuestionnaireKind.ONBOARDING.value
+            or version.version != POLITICAL_QUESTIONNAIRE_VERSION
+        ):
             return None
+        latest_sensitive_consent_id = (
+            select(ConsentVersion.id)
+            .where(ConsentVersion.purpose == "SENSITIVE_POLITICAL")
+            .order_by(ConsentVersion.active_from.desc(), ConsentVersion.id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
         sensitive = await self.session.scalar(
             select(func.count())
             .select_from(UserConsent)
-            .join(ConsentVersion, UserConsent.consent_version_id == ConsentVersion.id)
             .where(
                 UserConsent.user_id == user_id,
                 UserConsent.withdrawn_at.is_(None),
-                ConsentVersion.purpose == "SENSITIVE_POLITICAL",
+                UserConsent.consent_version_id == latest_sensitive_consent_id,
             )
         )
         if not sensitive:
             raise PermissionError("CONSENT_REQUIRED")
-        axes = version.scoring_json.get(
-            "axes", {"x": "economic", "y": "social", "z": "international"}
-        )
         try:
-            coordinates = {
-                axis: max(
-                    -100,
-                    min(100, int(self._strict_numeric_answer(answers[question]))),
-                )
-                for axis, question in axes.items()
-            }
-        except (KeyError, TypeError, ValueError) as exc:
+            score = score_political_questionnaire(
+                schema_json=version.schema_json,
+                scoring_json=version.scoring_json,
+                answers=answers,
+            )
+        except ValueError as exc:
             raise ValueError("QUESTIONNAIRE_ANSWER_INVALID") from exc
         response_id = new_ulid()
         self.session.add(
@@ -657,10 +659,10 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
             id=new_ulid(),
             user_id=user_id,
             kind=ProfileKind.SELF_REPORTED,
-            x=coordinates["x"],
-            y=coordinates["y"],
-            z=coordinates["z"],
-            confidence=version.scoring_json.get("confidence", 0.65),
+            x=score.x,
+            y=score.y,
+            z=score.z,
+            confidence=score.confidence,
             source_version=version.version,
             active=True,
             created_at=utc_now(),
@@ -678,14 +680,6 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
             "source_version": profile.source_version,
             "active": profile.active,
         }
-
-    @staticmethod
-    def _strict_numeric_answer(value: Any) -> int | float:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError("questionnaire answers must be numeric")
-        if not math.isfinite(float(value)):
-            raise ValueError("questionnaire answers must be finite")
-        return value
 
     async def patch_demographics(
         self,
@@ -734,7 +728,7 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
             "job_type": job_type,
             "dedupe_key": dedupe_key,
             "status": JobStatus.PENDING,
-            "priority": 0,
+            "priority": resolved_job_priority(job_type),
             "available_at": now,
             "lease_owner": None,
             "lease_expires_at": None,
@@ -788,7 +782,112 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
         return {"id": existing.id, "status": _enum_value(existing.status)}
 
     async def request_export(self, user_id: str) -> dict[str, Any]:
-        return await self.enqueue("export_user", user_id, {"user_id": user_id})
+        existing = await self.session.scalar(
+            select(Job)
+            .where(Job.job_type == "export_user", Job.dedupe_key == user_id)
+            .with_for_update()
+        )
+        if existing is None:
+            return await self.enqueue("export_user", user_id, {"user_id": user_id})
+
+        status = _enum_value(existing.status)
+        if status in {JobStatus.PENDING.value, JobStatus.LEASED.value}:
+            return {"id": existing.id, "status": status}
+
+        # The unique user-scoped job is reusable, but a terminal row must not
+        # make later requests replay DEAD forever or serve an old snapshot.
+        # Drop only its compact receipt; immutable blobs retain their normal
+        # seven-day expiry and may be shared by digest.
+        await self.session.execute(delete(JobReceipt).where(JobReceipt.job_id == existing.id))
+        now = utc_now()
+        existing.status = JobStatus.PENDING
+        existing.available_at = now
+        existing.lease_owner = None
+        existing.lease_expires_at = None
+        # Attempts are the queue's generation fence. Keep them monotonic so a
+        # worker from the prior terminal generation cannot match a new lease,
+        # while granting the manual retry a fresh five-attempt budget.
+        existing.max_attempts = existing.attempts + 5
+        existing.last_error_json = None
+        existing.payload_json = {"user_id": user_id}
+        existing.updated_at = now
+        await self.session.commit()
+        return {"id": existing.id, "status": JobStatus.PENDING.value}
+
+    async def _owned_export(
+        self, user_id: str, job_id: str | None = None
+    ) -> tuple[Job, JobReceipt | None, StoredBlob | None] | None:
+        statement = select(Job).where(
+            Job.job_type == "export_user",
+            Job.dedupe_key == user_id,
+        )
+        if job_id is not None:
+            statement = statement.where(Job.id == job_id)
+        job = await self.session.scalar(statement.order_by(Job.created_at.desc(), Job.id.desc()))
+        if job is None:
+            return None
+        receipt = await self.session.get(JobReceipt, job.id)
+        receipt_value = receipt.result_json if receipt is not None else {}
+        receipt_owner = (
+            str(receipt_value.get("user_id") or "") if isinstance(receipt_value, dict) else ""
+        )
+        blob_id = (
+            receipt_value.get("blob_id")
+            if isinstance(receipt_value, dict) and receipt_owner == user_id
+            else None
+        )
+        blob = await self.session.get(StoredBlob, str(blob_id)) if blob_id else None
+        return job, receipt, blob
+
+    async def export_status(
+        self, user_id: str, job_id: str | None = None
+    ) -> dict[str, Any] | None:
+        owned = await self._owned_export(user_id, job_id)
+        if owned is None:
+            return None
+        job, receipt, blob = owned
+        status = str(_enum_value(job.status))
+        now = utc_now()
+        expired = blob is not None and blob.expires_at is not None and blob.expires_at <= now
+        ready = (
+            status == JobStatus.SUCCEEDED.value
+            and blob is not None
+            and blob.mime_type == "application/json"
+            and not expired
+        )
+        failure_code: str | None = None
+        if status in {
+            JobStatus.FAILED.value,
+            JobStatus.DEAD.value,
+            JobStatus.CANCELLED.value,
+        }:
+            error = job.last_error_json if isinstance(job.last_error_json, dict) else {}
+            failure_code = str(error.get("code") or f"EXPORT_{status}")[:100]
+        elif status == JobStatus.SUCCEEDED.value and expired:
+            failure_code = "EXPORT_ARTIFACT_EXPIRED"
+        elif status == JobStatus.SUCCEEDED.value and not ready:
+            failure_code = "EXPORT_ARTIFACT_UNAVAILABLE"
+        return {
+            "job_id": job.id,
+            "status": status,
+            "download_ready": ready,
+            "download_url": f"/api/v1/me/export/{job.id}/download" if ready else None,
+            "expires_at": blob.expires_at if blob is not None else None,
+            "failure_code": failure_code,
+            "updated_at": job.updated_at,
+        }
+
+    async def export_artifact(
+        self, user_id: str, job_id: str
+    ) -> tuple[dict[str, Any], StoredBlob | None] | None:
+        owned = await self._owned_export(user_id, job_id)
+        if owned is None:
+            return None
+        _job, _receipt, blob = owned
+        status = await self.export_status(user_id, job_id)
+        if status is None:  # pragma: no cover - the locked identity was just loaded.
+            return None
+        return status, blob
 
     async def request_deletion(self, user_id: str) -> dict[str, Any]:
         user = await self.session.get(User, user_id)

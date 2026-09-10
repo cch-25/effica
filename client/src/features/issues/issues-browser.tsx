@@ -1,5 +1,7 @@
 "use client";
 
+import { AnalysisReadinessNotice } from "@/features/articles/analysis-readiness-notice";
+
 import { ChevronDown, ChevronUp, Filter, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -252,7 +254,7 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
                     </Link>
                   </li>
                 ))}
-              </ul> : <p className="issue-ranking__empty">현재 기준을 충족한 주요 이슈를 검증하고 있습니다.</p>}
+              </ul> : activeFilterCount > 0 ? <p className="issue-ranking__empty">선택한 주제와 기간에 비교 준비를 마친 주요 이슈가 없습니다.</p> : <AnalysisReadinessNotice />}
             </section>
           {topicGroups.length > 0 ? (
             <section className="issue-group topic-directory" aria-labelledby="topic-issues-title">
@@ -286,7 +288,7 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
             </section>
           ) : null}
         </div>
-      ) : (
+      ) : activeFilterCount === 0 ? <AnalysisReadinessNotice /> : (
         <section className="issue-filter-empty">
           <p className="eyebrow">No matched issue</p>
           <h2>조건에 맞는 이슈가 없습니다.</h2>

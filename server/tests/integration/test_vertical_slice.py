@@ -58,12 +58,20 @@ def test_external_network_free_full_vertical_slice() -> None:
                 headers=member,
             )
             assert response.status_code == 200
-        questionnaire_id = next(iter(state.questionnaires))
+        questionnaire_id = next(
+            identifier
+            for identifier, definition in state.questionnaires.items()
+            if definition["kind"] == "onboarding"
+        )
+        questionnaire = state.questionnaires[questionnaire_id]
         profile = client.post(
             "/api/v1/me/questionnaire-responses",
             json={
                 "questionnaire_version_id": questionnaire_id,
-                "answers": {"economic": -15, "social": 20, "international": 5},
+                "answers": {
+                    question["id"]: 3
+                    for question in questionnaire["schema_json"]["questions"]
+                },
             },
             headers=member,
         )
@@ -146,9 +154,14 @@ def test_external_network_free_full_vertical_slice() -> None:
         aggregate = client.get(f"/api/v1/articles/{article_id}/votes/aggregate").json()
         assert aggregate["qualified_count"] == 1
 
+        efficacy_id = next(
+            identifier
+            for identifier, definition in state.questionnaires.items()
+            if definition["kind"] == "efficacy"
+        )
         efficacy = client.post(
             "/api/v1/me/efficacy-responses",
-            json={"questionnaire_version_id": questionnaire_id, "answers": {"q1": 60, "q2": 80}},
+            json={"questionnaire_version_id": efficacy_id, "answers": {"q1": 60, "q2": 80}},
             headers=member,
         ).json()
         assert efficacy["normalized_score"] == 70
@@ -164,8 +177,9 @@ def test_external_network_free_full_vertical_slice() -> None:
         )
         assert share_job.status_code == 202
         card = next(iter(state.share_cards.values()))
-        assert card["snapshot"]["sensationalism"] is None
-        assert card["snapshot"]["coordinate"]["sensationalism"] is None
+        assert card["snapshot"]["ideology"]["completed"] is True
+        assert card["snapshot"]["diversity_article_count"] == 1
+        assert "sensationalism" not in card["snapshot"]
         render_job = state.jobs[share_job.json()["job_id"]]
         rendered = asyncio.run(render_share_card(render_job["payload"]))
         png = base64.b64decode(rendered.value["png_base64"])

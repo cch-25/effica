@@ -268,6 +268,45 @@ async def _request_export_job(base_url: str) -> str:
         return str(job_id)
 
 
+async def _assert_export_is_downloadable_by_owner(base_url: str, job_id: str) -> None:
+    member_headers = {"X-Debug-Role": "MEMBER"}
+    async with httpx.AsyncClient(base_url=base_url, timeout=10) as client:
+        status = await client.get("/api/v1/me/export", headers=member_headers)
+        status.raise_for_status()
+        assert status.json()["job_id"] == job_id
+        assert status.json()["status"] == "SUCCEEDED"
+        assert status.json()["download_ready"] is True
+
+        unauthenticated = await client.get(f"/api/v1/me/export/{job_id}/download")
+        assert unauthenticated.status_code == 401
+
+        download = await client.get(
+            f"/api/v1/me/export/{job_id}/download", headers=member_headers
+        )
+        download.raise_for_status()
+        assert download.headers["content-type"].startswith("application/json")
+        assert download.headers["cache-control"] == "private, no-store"
+        assert download.headers["x-content-type-options"] == "nosniff"
+        archive = download.json()
+        assert archive["user_id"]
+        assert archive["manifest"]["user_id"] == archive["user_id"]
+        assert archive["records"]["user"]["id"] == archive["user_id"]
+        serialized = json.dumps(archive, ensure_ascii=False)
+        assert "token_hash" not in serialized
+        assert "csrf_hash" not in serialized
+
+        other_user = await client.get("/api/v1/me", headers={"X-Debug-Role": "ANALYST"})
+        other_user.raise_for_status()
+        hidden = await client.get(
+            f"/api/v1/me/export/{job_id}/download",
+            headers={
+                "X-Debug-Role": "MEMBER",
+                "X-Debug-User": str(other_user.json()["id"]),
+            },
+        )
+        assert hidden.status_code == 404
+
+
 async def _job_rows(url: str, job_ids: list[str]) -> list[dict[str, object]]:
     engine = create_async_engine(url, pool_pre_ping=True)
     try:
@@ -357,6 +396,7 @@ def test_mariadb_api_repository_enqueues_and_completes_a_real_job() -> None:
     assert _run_export_worker((DATABASE_URL, "ci-api-worker", job_id))
     rows = asyncio.run(_job_rows(DATABASE_URL, [job_id]))
     assert rows == [{"id": job_id, "status": "SUCCEEDED", "attempts": 1}]
+    asyncio.run(_assert_export_is_downloadable_by_owner(API_BASE_URL, job_id))
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from apps.api.app.jobs.producer import MariaDBJobProducer
+from apps.api.app.jobs.types import USER_JOB_PRIORITY
 
 
 class _Result:
@@ -56,5 +57,22 @@ def test_mariadb_producer_enters_async_transaction_once() -> None:
         assert submission.job_id == "01PRODUCED"
         assert _Transaction.entered == 1
         assert len(session.calls) == 2
+
+    asyncio.run(scenario())
+
+
+def test_mariadb_producer_assigns_user_job_priority() -> None:
+    async def scenario() -> None:
+        session = _Session()
+        producer = MariaDBJobProducer(lambda: session)
+
+        await producer.enqueue(
+            "export_user",
+            {"user_id": "user-1"},
+            job_id="01EXPORT",
+            dedupe_key="user-1",
+        )
+
+        assert session.calls[0][1]["priority"] == USER_JOB_PRIORITY
 
     asyncio.run(scenario())

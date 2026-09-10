@@ -21,6 +21,7 @@ from .types import (
     canonical_payload_json,
     generate_job_id,
     normalize_job_type,
+    resolved_job_priority,
     utc_now,
 )
 
@@ -206,7 +207,7 @@ class MariaDBJobProducer:
             "id": resolved_id,
             "job_type": normalize_job_type(envelope.job_type),
             "dedupe_key": stored_dedupe_key,
-            "priority": int(envelope.priority),
+            "priority": resolved_job_priority(envelope.job_type, envelope.priority),
             "available_at": available,
             "max_attempts": int(envelope.max_attempts),
             "payload_json": canonical_payload_json(envelope.payload),

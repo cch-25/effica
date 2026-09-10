@@ -2,12 +2,14 @@
 
 import { Tooltip } from "@base-ui/react/tooltip";
 import { CircleHelp } from "lucide-react";
+import { useState } from "react";
 
 export function DefinitionTooltip({ label, description }: { label: string; description: string }) {
+  const [open, setOpen] = useState(false);
   return (
-    <Tooltip.Provider>
-      <Tooltip.Root>
-        <Tooltip.Trigger className="definition-tooltip__trigger" aria-label={`${label}: ${description}`}>
+    <Tooltip.Provider delay={0}>
+      <Tooltip.Root open={open} onOpenChange={setOpen}>
+        <Tooltip.Trigger delay={0} closeOnClick={false} onClick={() => setOpen(true)} className="definition-tooltip__trigger" aria-label={`${label}: ${description}`}>
           <span>{label}</span>
           <CircleHelp size={14} aria-hidden="true" />
         </Tooltip.Trigger>

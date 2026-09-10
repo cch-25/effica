@@ -286,6 +286,57 @@ def test_fetcher_blocks_credentials_in_redirect_targets() -> None:
     assert len(transport.requests) == 1
 
 
+def test_redirect_target_preserves_required_trailing_slash() -> None:
+    transport = _RecordingTransport(
+        [
+            httpx.Response(301, headers={"location": "/article/"}),
+            httpx.Response(200, content=b"article"),
+        ]
+    )
+
+    async def scenario() -> None:
+        service = SourceFetchService(
+            transport=transport,
+            resolver=lambda _host, _port: ["93.184.216.34"],
+            max_retries=0,
+            max_redirects=2,
+        )
+        response = await service.fetch("https://public.test/article")
+        assert response.status_code == 200
+        assert response.url == "https://public.test/article"
+
+    asyncio.run(scenario())
+    assert [str(request.url) for request in transport.requests] == [
+        "https://93.184.216.34/article",
+        "https://93.184.216.34/article/",
+    ]
+    assert all(request.headers["host"] == "public.test" for request in transport.requests)
+    assert all(
+        request.extensions["sni_hostname"] == "public.test"
+        for request in transport.requests
+    )
+
+
+def test_same_target_redirect_loop_remains_bounded() -> None:
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(302, headers={"location": "/loop"})
+    )
+
+    async def scenario() -> None:
+        service = SourceFetchService(
+            transport=transport,
+            resolver=lambda _host, _port: ["93.184.216.34"],
+            max_retries=0,
+            max_redirects=2,
+        )
+        with pytest.raises(SourceFetchError) as raised:
+            await service.fetch("https://public.test/loop")
+        assert raised.value.code == "SOURCE_REDIRECT_LIMIT"
+        assert raised.value.details == {"max_redirects": 2}
+
+    asyncio.run(scenario())
+
+
 def test_cross_origin_redirect_drops_body_and_converts_post_to_get() -> None:
     seen: list[httpx.Request] = []
 

@@ -10,7 +10,7 @@ import { isMockMode } from "@/lib/api/mode";
 export default async function SharePage({ params }: { params: Promise<{ shareCardId: string }> }) {
   const { shareCardId } = await params;
   const fixtureStatus = (["queued", "rendering", "failed", "revoked"] as ShareCardView["status"][]).find((status) => shareCardId.endsWith(status)) ?? "ready";
-  const fixture: ShareCardView = { id: shareCardId, status: fixtureStatus, public_token: fixtureStatus === "ready" ? "mock-public-token" : null, etag: null, snapshot: { x: 4, sensationalism: 18, confidence: 0.68 } };
+  const fixture: ShareCardView = { id: shareCardId, status: fixtureStatus, public_token: fixtureStatus === "ready" ? "mock-public-token" : null, etag: null, snapshot: { snapshot_schema_version: "news-consumption-v2", diversity_score: 68, diversity_article_count: 12, ideology: { completed: false, x: 0, y: 0, z: 0, questionnaire_status: "not_completed" } } };
   const card = isMockMode() ? fixture : await serverApiRequest<ShareCardView>(`/share-cards/${encodeURIComponent(shareCardId)}`).catch(() => null);
   if (!card) notFound();
   return <><PageHeader eyebrow="공유 카드 관리" title="공유 카드 상태와 공개 설정" description="카드 생성 상태를 확인하고 공개 링크와 파일을 각각 관리할 수 있습니다." actions={<ButtonLink variant="secondary" href="/progress"><ArrowLeft size={15} aria-hidden="true" /> 내 활동으로 돌아가기</ButtonLink>} /><ShareCardStatus initialCard={card} /></>;

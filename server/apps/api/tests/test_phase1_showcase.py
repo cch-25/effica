@@ -70,9 +70,21 @@ def test_default_showcase_manifest_is_event_scoped_and_policy_gated() -> None:
         == "johnnybae (human operator request in Codex thread, 2026-08-27)"
         for issue in manifest.issues
     )
+    newsis_decisions = [article for article in decisions if article.source == "뉴시스"]
+    assert len(newsis_decisions) == 3
+    assert all(
+        article.policy_status == article.robots_status == article.terms_status == "PENDING"
+        for article in newsis_decisions
+    )
+    assert all(
+        article.policy_reference.startswith("PENDING:")
+        and "https://nwww.newsis.com/contents/copyright" in article.policy_reference
+        for article in newsis_decisions
+    )
     assert all(
         article.policy_status == article.robots_status == article.terms_status == "APPROVED"
         for article in decisions
+        if article.source != "뉴시스"
     )
     assert all("https://" in article.policy_reference for article in decisions)
     assert sum(article.publisher_kind == "MEDIA" for article in decisions) == 6
@@ -178,7 +190,7 @@ async def test_showcase_refresh_is_idempotent_and_audit_fails_closed() -> None:
     }
 
     async with factory() as session:
-        await session.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(64))"))
+        await session.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32))"))
         await session.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
             {"revision": REQUIRED_DB_REVISION},

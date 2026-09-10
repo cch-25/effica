@@ -6,6 +6,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { NavigationScrollReset } from "@/components/layout/navigation-scroll-reset";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { isMockMode } from "@/lib/api/mode";
+import { PROFILE_UPDATED_KEY } from "@/lib/api/profile-sync";
 
 export function Providers({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -27,6 +28,16 @@ export function Providers({ children }: { children: ReactNode }) {
     window.addEventListener("api-auth-redirect", handleRedirect);
     return () => window.removeEventListener("api-auth-redirect", handleRedirect);
   }, [router]);
+
+  useEffect(() => {
+    const refreshProfile = (event: StorageEvent) => {
+      if (event.key !== PROFILE_UPDATED_KEY || event.newValue === null) return;
+      void client.invalidateQueries({ queryKey: ["me"] });
+      void client.invalidateQueries({ queryKey: ["visualization", "points"] });
+    };
+    window.addEventListener("storage", refreshProfile);
+    return () => window.removeEventListener("storage", refreshProfile);
+  }, [client]);
 
   return (
     <QueryClientProvider client={client}>

@@ -26,6 +26,7 @@ from apps.api.app.db.models import Article, Job, Source, User
 from apps.api.app.db.ulid import new_ulid
 from apps.api.app.db.utc import utc_now
 from apps.api.app.jobs.payloads import JobPayloadError
+from apps.api.app.jobs.types import USER_JOB_PRIORITY
 from apps.api.app.main import app
 from apps.api.app.repositories.platform import MariaDBPlatformRepository
 from apps.api.app.state import PlatformState
@@ -84,7 +85,9 @@ def test_oauth_nonce_return_path_and_provider_contract() -> None:
                 follow_redirects=False,
             )
             assert callback.status_code == 302
-            assert callback.headers["location"] == "http://localhost:3000/articles/article-1?tab=history"
+            assert callback.headers["location"] == (
+                "http://localhost:3000/articles/article-1?tab=history"
+            )
 
             failed_start = client.get(
                 "/api/v1/auth/mock/start",
@@ -105,7 +108,7 @@ def test_oauth_nonce_return_path_and_provider_contract() -> None:
                 "http://localhost:3000/login?oauthError=failed&returnTo=%2Farticles%2Farticle-1"
             )
 
-            state.users[state.default_users["MEMBER"]]["onboarding_complete"] = False
+            state.users[state.default_users["MEMBER"]]["consent_complete"] = False
             onboarding_start = client.get(
                 "/api/v1/auth/mock/start",
                 params={
@@ -220,6 +223,7 @@ def test_memory_enqueue_contract_and_retry_reset_attempt_budget() -> None:
         state.enqueue("export_user", "malformed", {})
 
     job = state.enqueue("export_user", "retry-user", {"user_id": "retry-user"})
+    assert job["priority"] == USER_JOB_PRIORITY
     job.update(
         {
             "status": "DEAD",
@@ -248,6 +252,7 @@ def test_memory_enqueue_contract_and_retry_reset_attempt_budget() -> None:
         assert job["lease_owner"] is None
         assert job["lease_expires_at"] is None
         assert job["available_at"] > utc_now() - timedelta(seconds=1)
+        assert job["priority"] == USER_JOB_PRIORITY
     finally:
         app.dependency_overrides.clear()
 

@@ -18,8 +18,8 @@ export function CheckboxField({ label, description, className = "", ...props }: 
   return <label className={`check-row ${className}`}><Checkbox.Root className="base-checkbox" aria-labelledby={labelledBy} aria-describedby={describedBy} {...props}><Checkbox.Indicator className="base-checkbox__indicator"><Check size={12} strokeWidth={3} /></Checkbox.Indicator></Checkbox.Root><span><strong id={labelId}>{label}</strong>{description && <small id={descriptionId}>{description}</small>}</span></label>;
 }
 
-export function RadioScale({ name, values, required }: { name: string; values: number[]; required?: boolean }) {
-  return <RadioGroup name={name} required={required} className="radio-scale">{values.map((value) => <label className="radio-card" key={value}><Radio.Root value={String(value)} className="base-radio"><Radio.Indicator className="base-radio__indicator" /></Radio.Root><span>{value}</span></label>)}</RadioGroup>;
+export function RadioScale({ name, values, required, value, onValueChange }: { name: string; values: number[]; required?: boolean; value?: string; onValueChange?: (value: string) => void }) {
+  return <RadioGroup name={name} required={required} value={value} onValueChange={onValueChange} className="radio-scale">{values.map((value) => <label className="radio-card" key={value}><Radio.Root value={String(value)} className="base-radio"><Radio.Indicator className="base-radio__indicator" /></Radio.Root><span>{value}</span></label>)}</RadioGroup>;
 }
 
 export function TextField({ label, description, className = "", ...props }: ComponentProps<typeof Input> & { label: ReactNode; description?: ReactNode; className?: string }) {

@@ -1,0 +1,279 @@
+{
+  "provisional": true,
+  "scale": {
+    "minimum": 1,
+    "maximum": 5
+  },
+  "questions": [
+    {
+      "id": "economic_01",
+      "label": "소득 격차를 줄이기 위해 정부의 재분배 정책을 강화해야 한다.",
+      "axis": "x",
+      "direction": -1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "economic_02",
+      "label": "경제 성장을 위해 기업과 시장의 자율성을 우선해야 한다.",
+      "axis": "x",
+      "direction": 1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "economic_03",
+      "label": "고소득층에 더 높은 세율을 적용해 공공서비스 재원을 늘려야 한다.",
+      "axis": "x",
+      "direction": -1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "economic_04",
+      "label": "일자리와 투자를 늘리려면 기업 규제를 줄여야 한다.",
+      "axis": "x",
+      "direction": 1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "economic_05",
+      "label": "의료와 주거 같은 기본 서비스는 국가가 더 넓게 보장해야 한다.",
+      "axis": "x",
+      "direction": -1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "economic_06",
+      "label": "공공서비스에도 민간 경쟁을 확대하면 효율성이 높아질 수 있다.",
+      "axis": "x",
+      "direction": 1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "economic_07",
+      "label": "기업의 비용이 늘더라도 노동자의 고용과 협상 권리를 더 보호해야 한다.",
+      "axis": "x",
+      "direction": -1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "economic_08",
+      "label": "복지보다 개인의 선택과 책임을 중심에 둔 경제정책이 바람직하다.",
+      "axis": "x",
+      "direction": 1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "economic_09",
+      "label": "전기와 교통 같은 핵심 기반 서비스는 공공 부문이 주도해야 한다.",
+      "axis": "x",
+      "direction": -1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "economic_10",
+      "label": "정부 지출을 줄일 수 있다면 세금 부담도 낮추는 편이 낫다.",
+      "axis": "x",
+      "direction": 1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "social_01",
+      "label": "사회 질서를 지키기 위해 개인의 자유를 일부 제한할 수 있다.",
+      "axis": "y",
+      "direction": -1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "social_02",
+      "label": "불편하거나 인기 없는 주장도 표현의 자유로 보호해야 한다.",
+      "axis": "y",
+      "direction": 1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "social_03",
+      "label": "긴 토론보다 강한 지도자의 신속한 결정이 더 효과적일 때가 많다.",
+      "axis": "y",
+      "direction": -1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "social_04",
+      "label": "다수와 다른 생활방식과 가족 형태도 동등하게 보호해야 한다.",
+      "axis": "y",
+      "direction": 1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "social_05",
+      "label": "범죄 예방을 위해 국가의 정보 수집과 감시 권한을 넓힐 수 있다.",
+      "axis": "y",
+      "direction": -1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "social_06",
+      "label": "법과 제도는 새로운 가치관과 생활방식을 적극 반영해야 한다.",
+      "axis": "y",
+      "direction": 1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "social_07",
+      "label": "사회 통합을 위해 공동체가 공유하는 가치와 규범을 강조해야 한다.",
+      "axis": "y",
+      "direction": -1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "social_08",
+      "label": "타인에게 직접 피해를 주지 않는 사적 선택에는 국가가 개입하지 않아야 한다.",
+      "axis": "y",
+      "direction": 1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "social_09",
+      "label": "중대한 범죄에는 교화보다 강한 처벌을 우선해야 한다.",
+      "axis": "y",
+      "direction": -1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "social_10",
+      "label": "효율적인 정책 집행보다 권력에 대한 견제와 절차가 더 중요하다.",
+      "axis": "y",
+      "direction": 1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "international_01",
+      "label": "국제 협약보다 국가의 독자적인 결정권을 우선해야 한다.",
+      "axis": "z",
+      "direction": -1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "international_02",
+      "label": "기후와 감염병 문제는 다자 협력을 중심으로 해결해야 한다.",
+      "axis": "z",
+      "direction": 1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "international_03",
+      "label": "무역 갈등이 생기더라도 국내 산업과 일자리를 먼저 보호해야 한다.",
+      "axis": "z",
+      "direction": -1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "international_04",
+      "label": "국가 간 공통 규범을 넓히면 장기적으로 모두에게 도움이 된다.",
+      "axis": "z",
+      "direction": 1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "international_05",
+      "label": "국가 정체성과 사회 안정을 위해 이민을 엄격히 제한해야 한다.",
+      "axis": "z",
+      "direction": -1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "international_06",
+      "label": "난민 보호와 인도적 책임은 여러 국가가 함께 분담해야 한다.",
+      "axis": "z",
+      "direction": 1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "international_07",
+      "label": "안보는 국제기구보다 자국의 군사력과 동맹 선택에 맡겨야 한다.",
+      "axis": "z",
+      "direction": -1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "international_08",
+      "label": "분쟁 해결에서 국제기구의 조정 권한을 더 강화해야 한다.",
+      "axis": "z",
+      "direction": 1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "international_09",
+      "label": "국내 문제가 충분히 해결되기 전에는 해외 원조를 줄여야 한다.",
+      "axis": "z",
+      "direction": -1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "international_10",
+      "label": "국경을 넘는 문제에는 국내 정책 일부를 국제 기준과 조정할 필요가 있다.",
+      "axis": "z",
+      "direction": 1,
+      "required": true,
+      "minimum": 1,
+      "maximum": 5
+    }
+  ]
+}

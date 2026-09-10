@@ -138,6 +138,8 @@ export type IssueComparison = {
 };
 
 export type Vote = {
+  save_status?: "created" | "updated";
+  credit_delta?: number;
   x: number;
   y: number;
   z: number;

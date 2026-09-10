@@ -21,7 +21,7 @@ test("public issue comparison is accessible and does not overflow on mobile", as
   expect(mobile.violations.filter(({ impact }) => impact === "critical" || impact === "serious")).toEqual([]);
 });
 
-test("real OAuth challenge callback creates a session and restores returnTo", async ({ page }) => {
+test("real OAuth callback restores returnTo without requiring the optional ideology test", async ({ page }) => {
   const callbackUri = "http://127.0.0.1:3100/api/v1/auth/mock/callback";
   const start = await page.request.get(
     `/api/v1/auth/mock/start?redirect_uri=${encodeURIComponent(callbackUri)}&returnTo=${encodeURIComponent("/issues?source=oauth")}`,
@@ -37,7 +37,9 @@ test("real OAuth challenge callback creates a session and restores returnTo", as
     { maxRedirects: 0 },
   );
   expect(callback.status()).toBe(302);
-  expect(callback.headers().location).toBe("http://127.0.0.1:3100/issues?source=oauth");
+  const firstDestination = new URL(callback.headers().location);
+  expect(firstDestination.pathname).toBe("/onboarding/consent");
+  expect(firstDestination.searchParams.get("returnTo")).toBe("/issues?source=oauth");
 
   const me = await page.request.get("/api/v1/me");
   expect(me.status()).toBe(200);
@@ -48,6 +50,64 @@ test("real OAuth challenge callback creates a session and restores returnTo", as
     { maxRedirects: 0 },
   );
   expect(replay.status()).toBe(400);
+
+  const csrf = (await page.context().cookies()).find((cookie) => cookie.name === "csrf")?.value;
+  expect(csrf).toBeTruthy();
+  const consents = await (await page.request.get("/api/v1/consents")).json() as Array<{ id: string }>;
+  for (const consent of consents) {
+    const granted = await page.request.post("/api/v1/me/consents", {
+      headers: { "X-CSRF-Token": csrf! },
+      data: { consent_version_id: consent.id, granted: true },
+    });
+    expect(granted.status()).toBe(200);
+  }
+  const afterConsent = await (await page.request.get("/api/v1/me")).json();
+  expect(afterConsent.consent_complete).toBe(true);
+  expect(afterConsent.onboarding_complete).toBe(false);
+  const again = await page.request.get(
+    `/api/v1/auth/mock/start?redirect_uri=${encodeURIComponent(callbackUri)}&returnTo=${encodeURIComponent("/issues?source=oauth")}`,
+    { maxRedirects: 0 },
+  );
+  const nextState = new URL(again.headers().location).searchParams.get("state")!;
+  const returning = await page.request.get(
+    `/api/v1/auth/mock/callback?state=${encodeURIComponent(nextState)}&code=mock-real-e2e`,
+    { maxRedirects: 0 },
+  );
+  expect(returning.status()).toBe(302);
+  expect(returning.headers().location).toBe("http://127.0.0.1:3100/issues?source=oauth");
+});
+
+test("a questionnaire saved in a separate tab refreshes the original consumption card", async ({ page, context }) => {
+  await context.setExtraHTTPHeaders(memberHeaders);
+  const consents = await (await page.request.get("/api/v1/consents", { headers: memberHeaders })).json();
+  for (const consent of consents) {
+    await page.request.post("/api/v1/me/consents", { headers: memberHeaders, data: { consent_version_id: consent.id, granted: true } });
+  }
+  const versions = await (await page.request.get("/api/v1/questionnaires?kind=onboarding")).json();
+  const version = versions.find((item: { version: string }) => item.version === "2.0-beta");
+  expect(version).toBeTruthy();
+  const answers = Object.fromEntries(version.schema_json.questions.map((question: { id: string }) => [question.id, 3]));
+  const saved = await page.request.post("/api/v1/me/questionnaire-responses", { headers: memberHeaders, data: { questionnaire_version_id: version.id, answers } });
+  expect(saved.ok()).toBeTruthy();
+  await page.goto("/share/new");
+  await expect(page.getByRole("img", { name: "검사 결과: 경제 0, 사회문화 0, 국제 0", exact: true })).toBeVisible();
+  const popupPromise = page.waitForEvent("popup");
+  await page.getByRole("link", { name: "정치 이념 검사 다시 하기" }).click();
+  const questionnaire = await popupPromise;
+  for (let step = 0; step < 3; step++) {
+    const groups = questionnaire.getByRole("radiogroup");
+    await expect(groups).toHaveCount(10);
+    for (let index = 0; index < 10; index++) {
+      await groups.nth(index).getByRole("radio", { name: step === 0 && index === 0 ? "5" : "3", exact: true }).check();
+    }
+    await questionnaire.getByRole("button", { name: step < 2 ? "다음 문항" : "저장하고 결과 확인", exact: true }).click();
+  }
+  await expect(questionnaire).toHaveURL(/\/share\/new$/);
+  // Do not reload or synthesize focus: the real cross-tab notification must update it.
+  await expect(page.getByRole("img", { name: "검사 결과: 경제 -10, 사회문화 0, 국제 0", exact: true })).toBeVisible();
+  const marker = await page.evaluate(() => localStorage.getItem("effica:profile-updated"));
+  expect(marker).toMatch(/^\d+$/);
+  await questionnaire.close();
 });
 
 test("real API persists onboarding, vote, read-session, and privacy mutations", async ({ page }) => {
@@ -80,7 +140,7 @@ test("real API persists onboarding, vote, read-session, and privacy mutations", 
   expect(onboardingVersions.length).toBeGreaterThan(0);
   const onboardingVersion = onboardingVersions[0];
   const onboardingAnswers = Object.fromEntries(
-    onboardingVersion.keys.map((key, index) => [key, [-20, 10, 5][index] ?? 0]),
+    onboardingVersion.keys.map((key) => [key, 3]),
   );
   const onboarding = await page.request.post("/api/v1/me/questionnaire-responses", {
     data: {

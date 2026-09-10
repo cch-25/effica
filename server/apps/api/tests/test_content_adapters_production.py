@@ -66,6 +66,39 @@ def test_rss_adapter_bounds_ingestion_with_source_max_items() -> None:
     assert [article.title for article in articles] == ["N0", "N1", "N2"]
 
 
+def test_rss_adapter_reads_bounded_google_news_sitemaps() -> None:
+    payload = """<?xml version="1.0" encoding="UTF-8"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+            xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">
+      <url>
+        <loc>https://example.test/article/2?utm_source=sitemap</loc>
+        <lastmod>2026-09-10T12:30:00+09:00</lastmod>
+        <news:news>
+          <news:publication_date>2026-09-10T12:30:00+09:00</news:publication_date>
+          <news:title>&amp;#91;단독&amp;#93; 두 번째 기사</news:title>
+        </news:news>
+      </url>
+      <url>
+        <loc>https://example.test/article/2?utm_medium=duplicate</loc>
+        <news:news><news:title>중복 기사</news:title></news:news>
+      </url>
+      <url>
+        <loc>https://example.test/article/3</loc>
+        <news:news><news:title>세 번째 기사</news:title></news:news>
+      </url>
+    </urlset>"""
+
+    articles = RSSAdapter("source", {"max_items": 1}).parse(payload)
+
+    assert len(articles) == 1
+    assert articles[0].url == "https://example.test/article/2"
+    assert articles[0].title == "[단독] 두 번째 기사"
+    assert articles[0].body == ""
+    assert articles[0].external_id == "https://example.test/article/2"
+    assert articles[0].published_at is not None
+    assert articles[0].published_at.year == 2026
+
+
 def test_crawler_prefers_body_txt_direct_text_over_page_controls() -> None:
     html = """
     <html><head><title>Site title</title></head><body>

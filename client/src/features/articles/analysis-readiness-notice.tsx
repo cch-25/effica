@@ -1,0 +1,49 @@
+"use client";
+
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { apiRequest } from "@/lib/api/client";
+import { Button } from "@/components/ui/button";
+
+export type Readiness = { status: string; reason: string; checked_at: string; next_eligible_at: string | null; refresh_interval_seconds?: number };
+
+const reasons: Record<string, { title: string; description: string }> = {
+  ANALYSIS_AVAILABLE: { title: "분석 결과가 준비되었습니다.", description: "공개 기준을 충족한 분석을 확인할 수 있습니다." },
+  ANALYSIS_RUNNING: { title: "AI가 이 기사를 분석하고 있습니다.", description: "분석과 공개 기준 확인이 끝나면 결과가 표시됩니다." },
+  QUEUED_FOR_ANALYSIS: { title: "분석 순서를 기다리고 있습니다.", description: "기사 확보 상태와 처리 순서에 따라 걸리는 시간이 달라집니다." },
+  DAILY_SELECTION_DEFERRED: { title: "다음 분석 기회를 기다리고 있습니다.", description: "하루 분석 대상과 처리량 제한에 따라 대기 중입니다. 재개 가능 시각은 완료 예정 시각이 아닙니다." },
+  CONTENT_NOT_ELIGIBLE: { title: "아직 분석 조건을 충족하지 못했습니다.", description: "본문 분량이나 기사 상태 등 분석에 필요한 조건이 부족합니다. 원문과 다른 보도를 함께 확인해 주세요." },
+  SOURCE_CONTENT_UNAVAILABLE: { title: "분석할 본문을 확보하지 못했습니다.", description: "원문 제공 상태를 확인해야 하므로 분석 완료 시각을 안내하기 어렵습니다." },
+  NOT_SELECTED_FOR_DAILY_ANALYSIS: { title: "현재 분석 대상으로 선택되지 않은 기사입니다.", description: "모든 기사를 즉시 분석하지 않습니다. 주요 이슈와 비교에 필요한 기사를 우선 처리하며, 원문은 바로 확인할 수 있습니다." },
+  ANALYSIS_RESULT_UNAVAILABLE: { title: "공개할 수 있는 분석 결과가 없습니다.", description: "분석 실패나 공개 기준 미충족 등으로 결과를 제공하지 못하고 있습니다. 확인되지 않은 점수는 표시하지 않습니다." },
+  CURRENT_EVENT_AVAILABLE: { title: "비교할 수 있는 이슈가 준비되어 있습니다.", description: "같은 사건에 대한 보도가 충분히 모이고 분석 조건을 충족하면 순차적으로 공개합니다." },
+  EVENT_ANALYSIS_IN_PROGRESS: { title: "모인 보도의 분석 조건을 확인하고 있습니다.", description: "서로 다른 출처의 기사는 모였으며 최신 공개 분석이 갖춰진 사건부터 주요 이슈에 표시합니다." },
+  EVENT_CANDIDATE_NEEDS_MORE_SOURCES: { title: "같은 사건을 다룬 다른 출처의 보도가 더 필요합니다.", description: "주요 이슈에는 기사 3개 이상과 출처 3곳 이상의 보도, 최신 공개 분석이 필요합니다." },
+  NO_ELIGIBLE_EVENT: { title: "아직 주요 이슈 공개 조건을 충족한 사건이 없습니다.", description: "기사 3개 이상과 출처 3곳 이상의 보도, 최신 공개 분석이 갖춰진 사건부터 표시합니다." },
+};
+
+export function AnalysisReadinessNotice({ articleId }: { articleId?: string }) {
+  const queryClient = useQueryClient();
+  const query = useQuery({
+    queryKey: ["analysis-readiness", articleId ?? "overall"],
+    queryFn: () => apiRequest<Readiness>(articleId ? `/articles/${encodeURIComponent(articleId)}/analysis-status` : "/analysis-status"),
+    staleTime: 20_000,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const available = query.data?.status === "READY";
+  useEffect(() => {
+    if (!available) return;
+    void queryClient.invalidateQueries({ queryKey: articleId ? ["article", articleId] : ["issues"] });
+  }, [articleId, available, queryClient]);
+  if (query.isPending) return <p role="status">분석 준비 상태를 확인하고 있습니다.</p>;
+  if (query.isError || !query.data) return <div className="analysis-readiness" role="status"><p>현재 분석 준비 상태를 확인하지 못했습니다. 완료 시각은 확인 후 안내할 수 있습니다.</p><Button variant="ghost" onClick={() => void query.refetch()}>상태 다시 확인</Button></div>;
+  const content = reasons[query.data.reason] ?? { title: "분석 상태를 확인 중입니다.", description: "현재 완료 시각을 안내하기 어렵습니다." };
+  const next = query.data.next_eligible_at ? new Date(query.data.next_eligible_at) : null;
+  return <div className="analysis-readiness" role="status" aria-live="polite">
+    <strong>{content.title}</strong><p>{content.description}</p>
+    {!articleId && <p>이슈는 정해진 아침 시각에 한 번 공개하는 방식이 아니라, 약 {Math.round((query.data.refresh_interval_seconds ?? 900) / 60)}분 간격으로 수집 조건을 확인하며 갱신합니다. 오전 이용 시에도 준비된 기사부터 확인할 수 있습니다.</p>}
+    {next && Number.isFinite(next.getTime()) && <p>다음 처리 가능 시각: <time dateTime={next.toISOString()}>{new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Seoul" }).format(next)}</time> (한국 시간). 이 시각에 완료되는 것은 아닙니다.</p>}
+    <small>상태는 30초마다 다시 확인합니다. 완료 시각은 원문 확보와 분석 상황에 따라 달라집니다.</small>
+  </div>;
+}

@@ -10,6 +10,7 @@ vi.mock("@/lib/api/queries", () => ({
   useIssuesQuery: mocks.useIssuesQuery,
   useIssueArticleCollectionsQuery: mocks.useIssueArticleCollectionsQuery,
 }));
+vi.mock("@/features/articles/analysis-readiness-notice", () => ({ AnalysisReadinessNotice: () => <p>주요 이슈 공개 조건을 확인하고 있습니다.</p> }));
 
 beforeEach(() => {
   mocks.useIssuesQuery.mockReturnValue({ data: { items: issues }, hasNextPage: false, isFetchingNextPage: false, fetchNextPage: () => undefined });
@@ -21,6 +22,13 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+
+it("아무 이슈도 없는 초기 상태에는 필터 안내 대신 실제 준비 상태를 보여 준다", () => {
+  mocks.useIssuesQuery.mockReturnValue({ data: { items: [] }, hasNextPage: false, isFetchingNextPage: false });
+  render(<IssuesBrowser fallback={[]} />);
+  expect(screen.getByText("주요 이슈 공개 조건을 확인하고 있습니다.")).toBeVisible();
+  expect(screen.queryByText("조건에 맞는 이슈가 없습니다.")).not.toBeInTheDocument();
+});
 
 it("주제 필터를 열고 선택한 주제의 이슈만 표시한다", () => {
   render(<IssuesBrowser fallback={issues} />);

@@ -10,7 +10,19 @@ from typing import Any
 
 import ulid
 
+from apps.api.app.domains.sharing import (
+    NEWS_CONSUMPTION_SNAPSHOT_VERSION,
+    consumption_diversity,
+    ideology_snapshot,
+)
+from apps.api.app.domains.users import (
+    POLITICAL_QUESTIONNAIRE_STATUS,
+    POLITICAL_QUESTIONNAIRE_VERSION,
+    political_questionnaire_schema,
+    political_questionnaire_scoring,
+)
 from apps.api.app.jobs.payloads import validate_job_payload
+from apps.api.app.jobs.types import resolved_job_priority
 
 
 def new_id() -> str:
@@ -106,7 +118,7 @@ class PlatformState:
                 "created_at": utcnow(),
             }
         self.users[member_id]["consent_complete"] = True
-        self.users[member_id]["onboarding_complete"] = True
+        self.users[member_id]["onboarding_complete"] = False
         self.default_users = {
             "MEMBER": member_id,
             "ANALYST": analyst_id,
@@ -138,18 +150,12 @@ class PlatformState:
         self.questionnaires[questionnaire] = {
             "id": questionnaire,
             "kind": "onboarding",
-            "version": "1.0",
-            "keys": ["economic", "social", "international"],
-            "schema_json": {
-                "questions": [
-                    {"id": key, "required": True, "minimum": -100, "maximum": 100}
-                    for key in ("economic", "social", "international")
-                ]
-            },
-            "scoring_json": {
-                "axes": {"x": "economic", "y": "social", "z": "international"},
-                "confidence": 0.65,
-            },
+            "version": POLITICAL_QUESTIONNAIRE_VERSION,
+            "keys": [
+                question["id"] for question in political_questionnaire_schema()["questions"]
+            ],
+            "schema_json": political_questionnaire_schema(),
+            "scoring_json": political_questionnaire_scoring(),
             "active_from": utcnow(),
         }
         self.questionnaires[efficacy_questionnaire] = {
@@ -362,7 +368,7 @@ class PlatformState:
                 "job_type": job_type,
                 "dedupe_key": dedupe_key,
                 "status": "PENDING",
-                "priority": 0,
+                "priority": resolved_job_priority(job_type),
                 "available_at": utcnow(),
                 "attempts": 0,
                 "max_attempts": 5,
@@ -380,31 +386,12 @@ class PlatformState:
         *,
         publication_confirmed: bool = True,
     ) -> dict[str, Any]:
-        active_profiles = [
-            profile
-            for profile in self.profiles.values()
-            if profile.get("user_id") == user_id and profile.get("active")
-        ]
-        # Keep the memory adapter's profile choice equivalent to the SQL
-        # repository, which reads the newest active profile.  The insertion
-        # index breaks ties for fixture rows with identical timestamps.
-        profile = (
-            max(
-                enumerate(active_profiles),
-                key=lambda item: (str(item[1].get("created_at", "")), item[0]),
-            )[1]
-            if active_profiles
-            else {"x": 0, "y": 0, "z": 0, "confidence": 0}
-        )
-        profile_kind = str(profile.get("kind", "")).casefold()
-        is_behavioral = profile_kind in {"behavioral", "behavioral_profile"}
-        raw_sensationalism = profile.get("sensationalism") if is_behavioral else None
-        sensationalism = (
-            None if raw_sensationalism is None else float(raw_sensationalism)
-        )
-        total = sum(entry["delta"] for entry in self.credits.get(user_id, []))
-        level = max(1, total // 100 + 1)
-        tier = "Explorer" if level < 3 else "Bridge Builder" if level < 6 else "Navigator"
+        if not publication_confirmed:
+            raise PermissionError("PUBLICATION_CONFIRMATION_REQUIRED")
+        user = self.users.get(user_id)
+        if user is None or not user.get("consent_complete"):
+            raise PermissionError("CONSENT_REQUIRED")
+        consumption_profile = self.consumption_profile(user_id)
         raw_token = secrets.token_urlsafe(32)
         card_id = new_id()
         confirmed_at = utcnow()
@@ -420,27 +407,13 @@ class PlatformState:
             "template": template,
             "display_name": display_name,
             "snapshot": {
-                "x": profile.get("x", 0),
-                "y": profile.get("y", 0),
-                "z": profile.get("z", 0),
-                "sensationalism": sensationalism,
-                "confidence": profile.get("confidence", 0),
-                "coordinate": {
-                    "x": profile.get("x", 0),
-                    "y": profile.get("y", 0),
-                    "z": profile.get("z", 0),
-                    "sensationalism": sensationalism,
-                    "confidence": profile.get("confidence", 0),
-                },
-                "tier": tier,
-                "activity": total,
-                "credit_total": total,
+                "snapshot_schema_version": NEWS_CONSUMPTION_SNAPSHOT_VERSION,
+                **consumption_profile,
                 "created_at": confirmed_at.isoformat(),
                 "political_data_publication_confirmed": publication_confirmed,
                 "publication_consent": {
                     "confirmation_version": "share-card-publication-v1",
                     "confirmed_at": confirmed_at.isoformat(),
-                    "actor_id": user_id,
                 },
             },
             "png": png,
@@ -462,6 +435,58 @@ class PlatformState:
             },
         )
         return card
+
+    def consumption_profile(self, user_id: str) -> dict[str, Any]:
+        """Build the memory adapter's public aggregate without raw answers."""
+
+        credited_session_ids = {
+            str(entry.get("event_key", "")).removeprefix("read:")
+            for entry in self.credits.get(user_id, [])
+            if str(entry.get("event_type", "")).upper() == "QUALIFIED_READ"
+        }
+        read_article_ids = {
+            session["article_id"]
+            for session_id, session in self.read_sessions.items()
+            if session.get("user_id") == user_id and session_id in credited_session_ids
+        }
+        voted_article_ids = {
+            article_id
+            for (vote_user_id, article_id), history in self.votes.items()
+            if vote_user_id == user_id and history and history[-1].get("active")
+        }
+        article_x_values = [
+            float(self.scores[article_id][-1]["x"])
+            for article_id in sorted(read_article_ids | voted_article_ids)
+            if self.scores.get(article_id)
+            and self.scores[article_id][-1].get("x") is not None
+        ]
+        active_profiles = [
+            profile
+            for profile in self.profiles.values()
+            if profile.get("user_id") == user_id
+            and profile.get("active")
+            and str(profile.get("kind", "")).casefold()
+            in {"self_reported", "self_reported_profile"}
+        ]
+        profile = (
+            max(
+                enumerate(active_profiles),
+                key=lambda item: (str(item[1].get("created_at", "")), item[0]),
+            )[1]
+            if active_profiles
+            else None
+        )
+        ideology = ideology_snapshot(
+            source_version=None if profile is None else profile.get("source_version"),
+            required_version=POLITICAL_QUESTIONNAIRE_VERSION,
+            x=None if profile is None else profile.get("x"),
+            y=None if profile is None else profile.get("y"),
+            z=None if profile is None else profile.get("z"),
+            confidence=None if profile is None else profile.get("confidence"),
+        )
+        if ideology["completed"]:
+            ideology["questionnaire_status"] = POLITICAL_QUESTIONNAIRE_STATUS
+        return {**consumption_diversity(article_x_values), "ideology": ideology}
 
 
 STATE = PlatformState()

@@ -12,6 +12,7 @@ import type {
 import type { ConsentView, ErrorEnvelope, ReadResult, ShareCardView, VoteView } from "@/lib/api/contracts";
 import type { IssueComparison } from "@/lib/api/types";
 import { mockResponse } from "../openapi-contract";
+import politicalQuestionnaire from "../fixtures/questionnaire.json";
 
 const prefix = "/api/v1";
 
@@ -19,7 +20,11 @@ const mockConsents: ConsentView[] = [
   { id: "01H00000000000000000000001", purpose: "SERVICE", version: "1.0", body_hash: "service-v1", sensitive: false, granted: false },
   { id: "01H00000000000000000000002", purpose: "POLITICAL_PROFILE", version: "1.0", body_hash: "political-v1", sensitive: true, granted: false },
 ];
-let mockCard: ShareCardView = { id: "01H00000000000000000000006", status: "ready", public_token: "mock-public-token", etag: '"mock"', snapshot: { x: 4, sensationalism: 18, confidence: 0.68 } };
+const mockConsumption = { snapshot_schema_version: "news-consumption-v2", diversity_score: 68, diversity_article_count: 12, ideology: { completed: false, x: 0, y: 0, z: 0, questionnaire_status: "not_completed" } };
+let mockCard: ShareCardView = { id: "01H00000000000000000000006", status: "ready", public_token: "mock-public-token", etag: '"mock"', snapshot: mockConsumption };
+let mockExportRequested = false;
+const mockVotes = new Map<string, VoteView>();
+const mockVoteCredits = new Set<string>();
 let mockEfficacyHistory = {
   baseline: 52,
   responses: [
@@ -66,6 +71,8 @@ const apiIssues = issues.map((issue) => ({
 }));
 
 export const handlers = [
+  http.get(`${prefix}/analysis-status`, () => HttpResponse.json({ status: "READY", reason: "CURRENT_EVENT_AVAILABLE", checked_at: new Date().toISOString(), next_eligible_at: null, refresh_interval_seconds: 900 })),
+  http.get(`${prefix}/articles/:articleId/analysis-status`, ({ params }) => HttpResponse.json({ status: "NOT_SCHEDULED", reason: "NOT_SELECTED_FOR_DAILY_ANALYSIS", article_id: params.articleId, checked_at: new Date().toISOString(), next_eligible_at: null })),
   http.get(`${prefix}/auth/providers`, () => HttpResponse.json(["google"])),
   http.post(`${prefix}/auth/admin/login`, async ({ request }) => {
     const body = await request.json() as { username?: string; password?: string };
@@ -93,6 +100,7 @@ export const handlers = [
     behavioral_profile_active: false,
   }))),
   http.get(`${prefix}/me/progress`, () => HttpResponse.json({
+    ...mockConsumption,
     credit_total: 12,
     level: 1,
     tier: "Explorer",
@@ -120,14 +128,14 @@ export const handlers = [
   http.get(`${prefix}/questionnaires`, ({ request }) => {
     const kind = new URL(request.url).searchParams.get("kind") ?? "onboarding";
     const efficacy = kind === "efficacy";
-    const keys = efficacy ? ["baseline", "current"] : ["economic", "social", "international"];
+    const keys = efficacy ? ["baseline", "current"] : politicalQuestionnaire.questions.map((question) => question.id);
     return HttpResponse.json([mockResponse("QuestionnaireVersionView", {
       id: efficacy ? "01H00000000000000000000004" : "01H00000000000000000000003",
       kind: efficacy ? "efficacy" : "onboarding",
-      version: "1.0",
-      schema_json: {
+      version: efficacy ? "1.0" : "2.0-beta",
+      schema_json: efficacy ? {
         questions: keys.map((id) => ({ id, required: true, minimum: efficacy ? 0 : -100, maximum: efficacy ? 100 : 100 })),
-      },
+      } : politicalQuestionnaire,
       scoring_json: {},
       active_from: "2026-08-18T00:00:00Z",
       keys,
@@ -162,7 +170,9 @@ export const handlers = [
       due_survey: false,
     }));
   }),
-  http.post(`${prefix}/me/export`, () => HttpResponse.json(mockResponse("JobAccepted", { job_id: "01H00000000000000000000007", status: "PENDING" }), { status: 202 })),
+  http.post(`${prefix}/me/export`, () => { mockExportRequested = true; return HttpResponse.json(mockResponse("JobAccepted", { job_id: "01H00000000000000000000007", status: "PENDING" }), { status: 202 }); }),
+  http.get(`${prefix}/me/export`, () => mockExportRequested ? HttpResponse.json({ job_id: "01H00000000000000000000007", status: "SUCCEEDED", download_ready: true, download_url: "/api/v1/me/export/01H00000000000000000000007/download", expires_at: new Date(Date.now() + 86_400_000).toISOString(), failure_code: null }) : HttpResponse.json(errorEnvelope("EXPORT_NOT_FOUND", "아직 요청한 파일이 없습니다."), { status: 404 })),
+  http.get(`${prefix}/me/export/:jobId/download`, () => HttpResponse.json({ demo: true, records: [] }, { headers: { "Content-Disposition": 'attachment; filename="effica-data.json"' } })),
   http.delete(`${prefix}/me`, () => HttpResponse.json(mockResponse("JobAccepted", { job_id: "01H00000000000000000000008", status: "PENDING" }), { status: 202 })),
   http.get(`${prefix}/feed`, async () => {
     await delay(120);
@@ -406,6 +416,7 @@ export const handlers = [
   http.get(`${prefix}/articles/:articleId/vote`, ({ params }) => (
     params.articleId === "article-05"
       ? HttpResponse.json(errorEnvelope("AUTH_REQUIRED", "로그인이 필요합니다."), { status: 401 })
+      : mockVotes.has(String(params.articleId)) ? HttpResponse.json(mockVotes.get(String(params.articleId)))
       : HttpResponse.json(errorEnvelope("NOT_FOUND", "활성 투표를 찾을 수 없습니다."), { status: 404 })
   )),
   http.get(`${prefix}/articles/:articleId/votes/aggregate`, () => HttpResponse.json({
@@ -416,16 +427,23 @@ export const handlers = [
     generated_at: null,
     status: "ready",
   })),
-  http.put(`${prefix}/articles/:articleId/vote`, async ({ request }) => {
+  http.put(`${prefix}/articles/:articleId/vote`, async ({ request, params }) => {
+    const articleId = String(params.articleId);
+    const previous = mockVotes.get(articleId);
     const body = await request.json() as Pick<VoteView, "x" | "y" | "z" | "sensationalism">;
-    return HttpResponse.json(mockResponse("VoteView", {
+    const saved = mockResponse("VoteView", {
       ...body,
-      revision: 2,
+      revision: (previous?.revision ?? 0) + 1,
       quality_status: "QUALIFIED",
       active: true,
-    }));
+      credit_delta: mockVoteCredits.has(articleId) ? 0 : 10,
+      save_status: previous ? "updated" : "created",
+    });
+    mockVotes.set(articleId, saved);
+    mockVoteCredits.add(articleId);
+    return HttpResponse.json(saved);
   }),
-  http.delete(`${prefix}/articles/:articleId/vote`, () => new HttpResponse(null, { status: 204 })),
+  http.delete(`${prefix}/articles/:articleId/vote`, ({ params }) => { mockVotes.delete(String(params.articleId)); return new HttpResponse(null, { status: 204 }); }),
   http.post(`${prefix}/share-cards`, () => { mockCard = { ...mockCard, status: "ready" }; return HttpResponse.json(mockResponse("ShareCardJobAccepted", { job_id: "01H0000000000000000000000A", share_card_id: mockCard.id, status: "PENDING" }), { status: 202 }); }),
   http.get(`${prefix}/share-cards/:shareCardId`, ({ params }) => params.shareCardId === mockCard.id ? HttpResponse.json(mockResponse("ShareCardView", mockCard)) : HttpResponse.json(errorEnvelope("NOT_FOUND", "공유 카드를 찾을 수 없습니다."), { status: 404 })),
   http.post(`${prefix}/share-cards/:shareCardId/retry`, ({ params }) => { mockCard = { ...mockCard, status: "queued", etag: null }; return HttpResponse.json(mockResponse("ShareCardJobAccepted", { job_id: "01H0000000000000000000000A", share_card_id: String(params.shareCardId), status: "PENDING" }), { status: 202 }); }),

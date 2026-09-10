@@ -405,8 +405,8 @@ class MariaDBWorkerLookups:
         user_id = str(identifier)
         records: dict[str, Any] = {}
         queries = {
-            "user": "SELECT id, display_name, role, status, created_at, updated_at, deleted_at FROM users WHERE id = :user_id",
-            "consents": "SELECT consent_version_id, granted, granted_at, withdrawn_at FROM user_consents WHERE user_id = :user_id ORDER BY granted_at",
+            "user": "SELECT id, display_name, role, status, created_at, deleted_at FROM users WHERE id = :user_id",
+            "consents": "SELECT consent_version_id, CASE WHEN withdrawn_at IS NULL THEN 1 ELSE 0 END AS granted, granted_at, withdrawn_at FROM user_consents WHERE user_id = :user_id ORDER BY granted_at",
             "profiles": "SELECT kind, x, y, z, confidence, source_version, active, created_at FROM user_profiles WHERE user_id = :user_id ORDER BY created_at",
             "demographics": "SELECT age_band, gender_response, updated_at FROM user_demographics WHERE user_id = :user_id",
             "votes": "SELECT article_id, revision, x, y, z, sensationalism, quality_status, active, created_at FROM votes WHERE user_id = :user_id ORDER BY created_at",
@@ -415,7 +415,10 @@ class MariaDBWorkerLookups:
             "efficacy": "SELECT questionnaire_version_id, normalized_score, submitted_at FROM efficacy_responses WHERE user_id = :user_id ORDER BY submitted_at",
             "share_cards": "SELECT id, template, display_name, snapshot_json, status, expires_at, revoked_at, created_at FROM share_cards WHERE user_id = :user_id ORDER BY created_at",
             "oauth_accounts": "SELECT provider, provider_subject FROM oauth_accounts WHERE user_id = :user_id ORDER BY provider, provider_subject",
-            "sessions": "SELECT token_hash, csrf_hash, expires_at, revoked_at FROM sessions WHERE user_id = :user_id ORDER BY expires_at",
+            # Session timing is useful account history. Authentication hashes
+            # are server credentials and must never enter a downloadable user
+            # archive, even though they are one-way values.
+            "sessions": "SELECT expires_at, revoked_at FROM sessions WHERE user_id = :user_id ORDER BY expires_at",
             "feed_impressions": "SELECT article_id, issue_id, reason_code, rank, created_at FROM feed_impressions WHERE user_id = :user_id ORDER BY created_at",
         }
         for name, query in queries.items():
