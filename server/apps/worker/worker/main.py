@@ -919,6 +919,7 @@ def _default_services(session_factory: Callable[[], Any]) -> dict[str, Any]:
         source_fetcher=services["source_fetcher"],
         base_url=settings.openai_endpoint.removesuffix("/responses"),
         timeout_seconds=settings.llm_timeout_seconds,
+        analysis_max_output_tokens=settings.llm_max_output_tokens,
     )
 
     async def analysis_provider_factory(*, attempt: int = 1) -> HttpLLMProvider:

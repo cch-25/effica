@@ -1162,6 +1162,10 @@ class MariaDBResultApplier:
             for article in candidate.get("articles", []):
                 if not isinstance(article, Mapping):
                     continue
+                if len(articles) >= 8:
+                    break
+                if len(articles) >= 5 and len(str(article.get("additional_context") or "").strip()) < 20:
+                    continue
                 url = str(article.get("canonical_url") or "")
                 publisher = publisher_identity(url)
                 if (not publisher or publisher in publishers or url in seen_urls
@@ -1251,6 +1255,49 @@ class MariaDBResultApplier:
                 request_id=self._request_id(job, result), now=now,
             )
         if edition_ids:
+            # Fill unused front-page slots with still-valid active events. Keep
+            # their opening date, article timestamps, version and review intact.
+            prior_rows = _rows(await self._execute(session, """
+                SELECT i.id AS issue_id, a.id AS article_id, a.canonical_url,
+                       a.published_at, a.created_at
+                FROM issues i JOIN issue_memberships im ON im.issue_id = i.id
+                JOIN articles a ON a.id = im.article_id
+                JOIN article_versions av ON av.id = a.current_version_id AND av.article_id = a.id
+                JOIN sources s ON s.id = a.source_id
+                WHERE i.status='active' AND i.issue_kind='EVENT'
+                  AND i.editorial_key LIKE 'daily-issue:%'
+                  AND i.topic IN ('정치','경제','사회') AND LENGTH(TRIM(i.summary)) > 0
+                  AND a.status='active' AND s.active=1 AND s.policy_status='approved'
+                ORDER BY i.editorial_priority IS NULL, i.editorial_priority,
+                         i.last_activity_at DESC, i.id, a.id
+            """, {}))
+            from apps.api.app.domains.content.retention import expired
+
+            prior_publishers: dict[str, set[str]] = {}
+            for row in prior_rows:
+                prior_id = str(_row(row, "issue_id"))
+                identity = publisher_identity(str(_row(row, "canonical_url") or ""))
+                if (identity and is_current_article(_row(row, "published_at"), now=now)
+                        and not expired(_row(row, "published_at"), _row(row, "created_at"), now)):
+                    prior_publishers.setdefault(prior_id, set()).add(identity)
+            for prior_id, publishers in prior_publishers.items():
+                if len(edition_ids) >= 5:
+                    break
+                if prior_id in edition_ids or len(publishers) < 3:
+                    continue
+                edition_ids.append(prior_id)
+                await self._execute(session, """
+                    UPDATE issues SET editorial_priority=:priority WHERE id=:id
+                """, {"priority": len(edition_ids), "id": prior_id})
+                retained_articles = _rows(await self._execute(
+                    session, COMPARISON_ARTICLES_SQL, {"issue_id": prior_id},
+                ))
+                await self._ensure_event_article_analyses(session, retained_articles, now)
+                if retained_articles:
+                    await self._enqueue_issue_comparisons_for_article(
+                        session, article_id=str(_row(retained_articles[0], "article_id")),
+                        request_id=self._request_id(job, result), now=now,
+                    )
             # Bind every identifier; never interpolate discovery text into SQL.
             params = {f"id{index}": value for index, value in enumerate(edition_ids)}
             placeholders = ",".join(f":{name}" for name in params)

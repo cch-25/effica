@@ -25,7 +25,8 @@ def test_retention_boundary_utc_and_missing_publication_date():
 # Minimal relational fixture keeps real FK restrictions active, including the
 # article/current-version cycle. Tests execute the actual deletion statements.
 DDL = [
-    "CREATE TABLE articles (id TEXT PRIMARY KEY, canonical_url_hash BLOB UNIQUE, published_at DATETIME, created_at DATETIME, current_version_id TEXT REFERENCES article_versions(id), source_id TEXT DEFAULT 'source', title TEXT DEFAULT '기사')",
+    "CREATE TABLE articles (id TEXT PRIMARY KEY, canonical_url_hash BLOB UNIQUE, canonical_url TEXT DEFAULT '', status TEXT DEFAULT 'active', published_at DATETIME, created_at DATETIME, current_version_id TEXT REFERENCES article_versions(id), source_id TEXT DEFAULT 'source', title TEXT DEFAULT '기사')",
+    "CREATE TABLE sources (id TEXT PRIMARY KEY, active INT DEFAULT 1, policy_status TEXT DEFAULT 'approved')",
     "CREATE TABLE article_retention_tombstones (canonical_url_hash BLOB PRIMARY KEY, retired_at DATETIME)",
     "CREATE TABLE stored_blobs (id TEXT PRIMARY KEY)",
     "CREATE TABLE article_versions (id TEXT PRIMARY KEY, article_id TEXT REFERENCES articles(id) ON DELETE RESTRICT, normalized_text_ref TEXT)",
@@ -37,7 +38,7 @@ DDL = [
     "CREATE TABLE share_cards (snapshot_json TEXT, blob_id TEXT REFERENCES stored_blobs(id))",
     "CREATE TABLE credit_ledger (event_key TEXT)",
     "CREATE TABLE issue_memberships (issue_id TEXT, article_id TEXT REFERENCES articles(id) ON DELETE RESTRICT)",
-    "CREATE TABLE issues (id TEXT PRIMARY KEY, version INT DEFAULT 1, status TEXT DEFAULT 'active', editorial_reviewed_at DATETIME, editorial_data_as_of DATETIME)",
+    "CREATE TABLE issues (id TEXT PRIMARY KEY, version INT DEFAULT 1, status TEXT DEFAULT 'active', editorial_reviewed_at DATETIME, editorial_data_as_of DATETIME, issue_kind TEXT DEFAULT 'TOPIC', editorial_key TEXT, topic TEXT, summary TEXT, editorial_priority INT)",
     "CREATE TABLE issue_comparison_snapshots (id TEXT, issue_id TEXT, article_frames_json TEXT)",
     "CREATE TABLE vote_aggregate_snapshots (article_id TEXT REFERENCES articles(id) ON DELETE RESTRICT)",
     "CREATE TABLE fact_check_references (article_id TEXT REFERENCES articles(id))",
@@ -138,3 +139,57 @@ def test_unequal_dates_use_largest_remainder_and_expiry_has_no_exceptions():
 
 def test_future_publication_does_not_defeat_seven_day_storage_expiry():
     assert expired(NOW + timedelta(days=1), NOW - timedelta(days=8), NOW)
+
+
+def test_overflow_keeps_entire_current_issue_before_old_inventory():
+    old = [{"id": f"old-{i}", "source_id": "old", "title": "정치", "published_at": NOW,
+            "created_at": NOW} for i in range(700)]
+    current = [{"id": f"current-{i}", "source_id": f"source-{i}", "title": "정책 논쟁",
+                "canonical_url": f"https://paper-{i}.kr/article", "published_at": NOW - timedelta(days=6),
+                "created_at": NOW - timedelta(days=6)} for i in range(5)]
+    groups = [{"article_ids": [a["id"] for a in current]}]
+    result = inventory_plan(old + current, NOW, groups)
+    assert result["protected_current"] == 5
+    assert result["remaining"] == 300
+    assert not set(groups[0]["article_ids"]) & set(result["article_ids"])
+    assert result["by_date"]["2026-08-30"]["keep"] == 5
+
+    current[0]["published_at"] = NOW - timedelta(days=8)
+    result = inventory_plan(old + current, NOW, groups)
+    assert "current-0" in result["article_ids"]
+    assert result["protected_current"] == 4
+    assert result["protected_expired"] == 0
+
+
+def test_same_publisher_cannot_claim_issue_retention_protection():
+    articles = [{"id": str(i), "source_id": str(i), "title": "정치", "published_at": NOW,
+                 "created_at": NOW, "canonical_url": f"https://desk-{i}.same.co.kr/story"}
+                for i in range(3)]
+    assert inventory_plan(articles, NOW, [{"article_ids": ["0", "1", "2"]}])["protected_current"] == 0
+
+
+async def test_inventory_query_protects_only_approved_current_curated_members():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        for ddl in DDL:
+            await connection.execute(text(ddl))
+    async with async_sessionmaker(engine)() as session:
+        await session.execute(text("""INSERT INTO issues
+            (id, issue_kind, editorial_key, topic, summary, editorial_priority)
+            VALUES ('current','EVENT','daily-issue:policy','정치','정책 쟁점',1)"""))
+        for i in range(3):
+            await session.execute(text("INSERT INTO sources(id) VALUES (:id)"), {"id": f"s{i}"})
+            await session.execute(text("""INSERT INTO articles
+                (id,canonical_url,source_id,published_at,created_at,current_version_id)
+                VALUES (:id,:url,:source,:now,:now,:version)"""),
+                {"id": str(i), "url": f"https://paper-{i}.kr/story", "source": f"s{i}", "now": NOW, "version": f"v{i}"})
+            await session.execute(text("INSERT INTO article_versions(id,article_id) VALUES (:version,:id)"),
+                                  {"id": str(i), "version": f"v{i}"})
+            await session.execute(text("INSERT INTO issue_memberships VALUES ('current',:id)"), {"id": str(i)})
+        assert (await plan(session, NOW))["protected_current"] == 3
+        await session.execute(text("UPDATE sources SET policy_status='denied' WHERE id='s0'"))
+        assert (await plan(session, NOW))["protected_current"] == 0
+        await session.execute(text("UPDATE sources SET policy_status='approved' WHERE id='s0'"))
+        await session.execute(text("UPDATE articles SET current_version_id=NULL WHERE id='0'"))
+        assert (await plan(session, NOW))["protected_current"] == 0
+    await engine.dispose()

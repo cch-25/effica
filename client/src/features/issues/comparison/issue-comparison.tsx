@@ -184,7 +184,8 @@ export function IssueComparison({
       <p className="comparison-hero__meta">
         <span>전체 기사 {snapshot?.issue.article_count ?? issue.articleIds.length}개</span>
         <span>전체 출처 {snapshot?.issue.source_count ?? issue.sourceCount}곳</span>
-        {dataAsOf ? <span>{formatPublishedDate(dataAsOf)} 기준</span> : null}
+        {issue.openedAt ? <span>최초 발행 {formatPublishedDate(issue.openedAt)}</span> : null}
+        {dataAsOf ? <span>최신 보도 {formatPublishedDate(dataAsOf)}</span> : null}
       </p>
       <Link href="/issues">전체 이슈로 돌아가기</Link>
     </header>

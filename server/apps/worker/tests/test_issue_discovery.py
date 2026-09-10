@@ -19,6 +19,7 @@ from apps.worker.worker.handlers.registry import build_default_registry
 from apps.worker.worker.issue_discovery import IssueDiscoveryError, IssueDiscoveryService
 from apps.worker.worker.llm_budget import (
     DailyLLMBudgetExceeded,
+    EssentialLLMBudgetReserved,
     LLMRequestSuppressed,
     MariaDBLLMBudget,
 )
@@ -79,6 +80,7 @@ class _Harness:
         self.urls = URLS.copy()
         self.grounded = URLS.copy()
         self.selected = URLS.copy()
+        self.additional = {}
         self.controversial = True
         self.status = 200
         self.search_evidence = True
@@ -109,6 +111,7 @@ class _Harness:
                 "is_controversial": self.controversial, "political_relevance": True,
                 "summary": TOPIC["summary"], "controversy_reason": TOPIC["controversy_reason"],
                 "article_ids": self.selected,
+                "additional_context": self.additional,
             })
         return httpx.Response(200, json=value)
 
@@ -259,6 +262,70 @@ async def test_shared_cost_limit_stops_discovery_before_provider_submission() ->
     with pytest.raises(DailyLLMBudgetExceeded):
         await fixture.discover()
     assert fixture.paid_requests == []
+
+
+@pytest.mark.parametrize("extra", [False, True])
+async def test_three_to_five_articles_are_normal_and_extras_require_new_context(extra):
+    fixture = _Harness()
+    fixture.urls = [f"https://publisher-{i}.test/news/pension" for i in range(9)]
+    fixture.grounded = fixture.urls.copy()
+    fixture.selected = fixture.urls.copy()
+    fixture.pages = dict.fromkeys(fixture.urls, _html())
+    if extra:
+        fixture.additional = {url: f"추가 쟁점 {i}: 해당 본문에서 앞선 기사에 없는 지역별 부담의 차이를 설명한다."
+                              for i, url in enumerate(fixture.urls[5:])}
+    sources = [{**_sources()[0], "source_id": f"publisher-{i}", "home_url": f"https://publisher-{i}.test/"}
+               for i in range(9)]
+    result = await fixture.discover(sources)
+    assert len(result["issues"][0]["articles"]) == (8 if extra else 5)
+
+
+async def test_discovery_stops_searching_after_filling_the_edition():
+    fixture = _Harness()
+    fixture.service.max_issues = 1
+    fixture.topics.append({**TOPIC, "issue_key": "another-event"})
+    result = await fixture.discover()
+    assert result["stopped_reason"] == "EDITION_FULL"
+    assert len(fixture.paid_requests) == 3
+
+
+async def test_reserved_analysis_capacity_stops_more_search_without_losing_valid_issues():
+    fixture = _Harness()
+    fixture.topics.append({**TOPIC, "issue_key": "another-event"})
+    original = fixture.budget.reserve
+    source_searches = 0
+
+    async def limited(**kwargs):
+        nonlocal source_searches
+        if kwargs["subject_key"].startswith("sources:"):
+            source_searches += 1
+            if source_searches > 1:
+                assert kwargs["protected_cost_microusd"] > 0
+                assert kwargs["protected_requests"] == 4
+                raise EssentialLLMBudgetReserved()
+        return await original(**kwargs)
+
+    fixture.budget.reserve = limited
+    result = await fixture.discover()
+    assert len(result["issues"]) == 1
+    assert result["stopped_reason"] == "ESSENTIAL_LLM_BUDGET_RESERVED"
+    assert len(fixture.paid_requests) == 3
+
+
+async def test_selection_reserves_estimated_article_analysis_before_paid_verification():
+    fixture = _Harness()
+    reservations = []
+    original = fixture.budget.reserve
+
+    async def capture(**kwargs):
+        reservations.append(kwargs)
+        return await original(**kwargs)
+
+    fixture.budget.reserve = capture
+    result = await fixture.discover()
+    assert len(result["issues"]) == 1
+    assert reservations[-1]["protected_cost_microusd"] > 0
+    assert reservations[-1]["protected_requests"] == 4
 
 
 async def test_discovery_handler_is_registered_and_receives_live_service_contract() -> None:

@@ -50,6 +50,7 @@ const issue: Issue = {
   dataAsOf: "2026-08-26T00:00:00Z",
   freshnessStatus: "CURRENT",
   editorialPriority: 1,
+  openedAt: "2026-08-20T00:00:00Z",
   updatedAt: "2026-08-26T00:00:00Z",
   articleIds: ["a", "b"],
 };
@@ -79,6 +80,8 @@ it("shows public article-level analysis while the cross-article review is pendin
   render(<IssueComparison issue={issue} articles={[article("a", "출처 A"), article("b", "출처 B")]} initialArticles="a,b" />);
 
   expect(screen.getByRole("status", { name: "이슈 비교 준비 상태" })).toBeVisible();
+  expect(screen.getByText(/최초 발행/)).toBeVisible();
+  expect(screen.getByText(/최신 보도/)).toBeVisible();
   expect(screen.getByText("비교 준비 완료 기사 2개, 출처 2곳")).toBeVisible();
   expect(screen.getByRole("heading", { name: "기사별 AI 분석 비교" })).toBeVisible();
   expect(screen.getByText("공통 사실과 보도 프레임은 편집 검수 후 공개됩니다.")).toBeVisible();

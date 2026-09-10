@@ -51,6 +51,7 @@ export type Issue = {
   dataAsOf: string | null;
   freshnessStatus: "CURRENT" | "UPDATE_NEEDED";
   editorialPriority: number | null;
+  openedAt?: string;
   updatedAt: string;
   articleIds: string[];
 };

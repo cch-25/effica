@@ -27,6 +27,10 @@ class MariaDBDailyIssueScheduler:
     billed search. Provider request receipts allow safe recovery by operators.
     """
 
+    # WorkerRuntime polls this interface. The durable KST key still permits
+    # only one job per day; polling catches midnight without a process restart.
+    interval_seconds = 60.0
+
     def __init__(self, session_factory: Callable[[], Any], *,
                  clock: Callable[[], datetime] = utc_now) -> None:
         self.session_factory = session_factory

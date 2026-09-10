@@ -132,6 +132,35 @@ class _SessionFactory:
         return SessionLifetime()
 
 
+def test_discovery_cannot_spend_article_analysis_capacity_even_when_essential():
+    async def scenario():
+        db = _Database()
+        budget = MariaDBLLMBudget(_SessionFactory(db))
+        await budget.reserve(category="discovery", estimated_max_cost_microusd=1_900_000, essential=True)
+        with pytest.raises(DailyLLMBudgetExceeded):
+            await budget.reserve(category="discovery", estimated_max_cost_microusd=200_000, essential=True)
+        await budget.reserve(category="article", estimated_max_cost_microusd=2_000_000, essential=True)
+        await budget.reserve(category="comparison", estimated_max_cost_microusd=1_000_000)
+        with pytest.raises(DailyLLMBudgetExceeded):
+            await budget.reserve(category="article", estimated_max_cost_microusd=200_000, essential=True)
+        assert next(iter(db.days.values()))["reserved_microusd"] == 4_900_000
+    asyncio.run(scenario())
+
+
+def test_discovery_respects_larger_pending_analysis_estimates_and_request_slots():
+    async def scenario():
+        db = _Database()
+        budget = MariaDBLLMBudget(_SessionFactory(db))
+        with pytest.raises(DailyLLMBudgetExceeded):
+            await budget.reserve(category="discovery", estimated_max_cost_microusd=1_100_000,
+                                 protected_cost_microusd=4_000_000)
+        with pytest.raises(DailyLLMBudgetExceeded):
+            await budget.reserve(category="discovery", estimated_max_cost_microusd=1,
+                                 protected_requests=110)
+        assert not db.requests
+    asyncio.run(scenario())
+
+
 def test_durable_request_replay_concurrency_and_restart() -> None:
     async def scenario() -> None:
         db = _Database()

@@ -9,10 +9,29 @@ from types import SimpleNamespace
 import pytest
 
 from apps.worker.worker.daily_scheduler import MariaDBDailyIssueScheduler
+from apps.worker.worker.main import WorkerRuntime
 from apps.worker.worker.queue import Job
 from apps.worker.worker.services import MariaDBResultApplier
 
 NOW = datetime(2026, 9, 10, 7, tzinfo=UTC)
+
+
+def test_daily_scheduler_runs_through_the_actual_worker_loop():
+    async def scenario():
+        calls = []
+
+        class Database:
+            async def execute(self, statement, params):
+                calls.append(params["key"])
+                runtime.stop_event.set()
+                return SimpleNamespace(rowcount=1)
+
+        scheduler = MariaDBDailyIssueScheduler(lambda: Database(), clock=lambda: NOW)
+        runtime = WorkerRuntime(SimpleNamespace(), crawl_scheduler=scheduler)
+        await asyncio.wait_for(runtime._crawl_scheduler_loop(), timeout=1)
+        assert calls == ["daily-issues:2026-09-10"]
+        assert scheduler.interval_seconds == 60
+    asyncio.run(scenario())
 
 
 def test_daily_scheduler_deduplicates_concurrent_workers_and_restarts_at_kst_boundary():
@@ -73,11 +92,14 @@ class EditorialSession:
         self.articles = {}
         self.memberships = {}
         self.reject_persistence = reject_persistence
+        self.prior_rows = []
 
     async def execute(self, statement, params):
         sql = " ".join(str(statement).split())
         values = dict(params)
         self.statements.append((sql, values))
+        if sql.startswith("SELECT i.id AS issue_id"):
+            return self.prior_rows
         if sql.startswith("INSERT INTO articles"):
             self.articles[params["url_hash"]] = {
                 "id": params["id"], "article_id": params["id"],
@@ -100,7 +122,7 @@ class EditorialSession:
             self.memberships[params["issue_id"]].append(params["article_id"])
         if sql.startswith("SELECT a.id AS article_id"):
             return [row for row in self.articles.values()
-                    if row["id"] in self.memberships[params["issue_id"]]]
+                    if row["id"] in self.memberships.get(params["issue_id"], [])]
         return []
 
     def writes(self, prefix):
@@ -218,3 +240,40 @@ def test_unrelated_sports_article_gets_no_public_topic_bucket():
         summary="경기 일정과 점수 안내", now=NOW,
     ))
     assert session.statements == []
+
+
+def test_new_edition_keeps_valid_previous_events_without_refreshing_dates():
+    session = EditorialSession()
+    for event in ["expired", "duplicate", "ongoing", "second", "third", "fourth", "overflow"]:
+        for i in range(3):
+            session.prior_rows.append({
+                "issue_id": event, "article_id": f"{event}-{i}",
+                "canonical_url": f"https://paper-{0 if event == 'duplicate' else i}.kr/{event}",
+                "published_at": NOW - timedelta(days=8 if event == "expired" else 2),
+                "created_at": NOW - timedelta(days=2),
+            })
+    asyncio.run(applier()._apply_discover_issues(
+        session, Job(id="daily", job_type="discover_issues", payload={}), {"issues": [issue()]}, NOW,
+    ))
+    assert session.writes("UPDATE issues SET editorial_priority") == [
+        {"id": event, "priority": i + 2} for i, event in enumerate(["ongoing", "second", "third", "fourth"])
+    ]
+    retained = session.writes("UPDATE issues SET status='archived'")[0]
+    assert len(retained) == 5
+    assert {retained[f"id{i}"] for i in range(1, 5)} == {"ongoing", "second", "third", "fourth"}
+    # No UPDATE of their dates, content, issue version or comparison review.
+    assert all("last_activity_at" not in sql and "version=" not in sql for sql, _ in session.statements
+               if sql.startswith("UPDATE issues SET editorial_priority"))
+
+
+def test_persistence_caps_ordinary_articles_at_five_and_extra_context_at_eight():
+    for extra_context, expected in [(False, 5), (True, 8)]:
+        candidate = issue(10)
+        if extra_context:
+            for a in candidate["articles"]:
+                a["additional_context"] = "앞선 보도에 없는 지방 재정 부담에 관한 본문 근거를 추가한다."
+        session = EditorialSession()
+        asyncio.run(applier()._apply_discover_issues(
+            session, Job(id="daily", job_type="discover_issues", payload={}), {"issues": [candidate]}, NOW,
+        ))
+        assert len(session.articles) == expected

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from apps.api.app.db.session import create_engine, dispose_engine
 from apps.api.app.domains.content.retention import MAX_ARTICLES, RETENTION_DAYS, expired, utc
+from apps.api.app.domains.issues.editorial_policy import is_current_article, publisher_identity
 from apps.api.app.domains.issues.topics import infer_issue_topic
 
 
@@ -44,13 +45,21 @@ async def in_query(session, sql: str, ids: set[str] | list[str]):
     return await session.execute(text(sql).bindparams(bindparam("ids", expanding=True)), {"ids": sorted(ids)})
 
 
-def inventory_plan(articles: list[dict], now: datetime) -> dict:
-    """Hamilton date quotas, then equal source coverage and topic coverage.
+def inventory_plan(articles: list[dict], now: datetime, protected_issues: list[dict] | None = None) -> dict:
+    """Protect current editions, then apportion other articles by date/source.
 
     All quotas are computed from the same pre-deletion snapshot. Recomputing
     them after every deletion would compound rounding and distort date ratios.
     """
     stale = {a["id"] for a in articles if expired(a["published_at"], a["created_at"], now)}
+    current = {a["id"]: a for a in articles if a["id"] not in stale}
+    protected: set[str] = set()
+    for issue in protected_issues or []:
+        members = set(issue["article_ids"]) & current.keys()
+        publishers = {publisher_identity(current[aid].get("canonical_url", "")) for aid in members
+                      if is_current_article(current[aid]["published_at"], now)} - {None}
+        if len(publishers) >= 3 and len(protected | members) <= MAX_ARTICLES:
+            protected.update(members)
     by_day: dict[str, list[dict]] = defaultdict(list)
     for article in articles:
         if article["id"] not in stale:
@@ -58,16 +67,18 @@ def inventory_plan(articles: list[dict], now: datetime) -> dict:
             date = effective.astimezone(ZoneInfo("Asia/Seoul")).date().isoformat()
             by_day[date].append(article)
     total = sum(map(len, by_day.values()))
-    budget = min(MAX_ARTICLES, total)
-    quotas = {day: len(items) * budget // total for day, items in by_day.items()} if total else {}
-    remainder_order = sorted(by_day, key=lambda day: (len(by_day[day]) * budget % total, day), reverse=True)
+    remaining = {day: [a for a in items if a["id"] not in protected] for day, items in by_day.items()}
+    remaining_total = total - len(protected)
+    budget = min(MAX_ARTICLES - len(protected), remaining_total)
+    quotas = {day: len(items) * budget // remaining_total for day, items in remaining.items()} if remaining_total else dict.fromkeys(by_day, 0)
+    remainder_order = sorted(by_day, key=lambda day: (len(remaining[day]) * budget % remaining_total, day), reverse=True) if remaining_total else []
     for day in remainder_order[:budget - sum(quotas.values())]:
         quotas[day] += 1
-    kept: set[str] = set()
+    kept: set[str] = set(protected)
     for day, items in sorted(by_day.items()):
-        source_counts: Counter = Counter()
-        topic_counts: Counter = Counter()
-        pool = {a["id"]: {**a, "topic": infer_issue_topic(a.get("title") or "")} for a in items}
+        source_counts = Counter(a["source_id"] for a in items if a["id"] in protected)
+        topic_counts = Counter(infer_issue_topic(a.get("title") or "") for a in items if a["id"] in protected)
+        pool = {a["id"]: {**a, "topic": infer_issue_topic(a.get("title") or "")} for a in remaining[day]}
         for _ in range(quotas[day]):
             choice = min(pool.values(), key=lambda a: (
                 source_counts[a["source_id"]], topic_counts[a["topic"]],
@@ -77,6 +88,7 @@ def inventory_plan(articles: list[dict], now: datetime) -> dict:
             source_counts[choice["source_id"]] += 1
             topic_counts[choice["topic"]] += 1
             del pool[choice["id"]]
+        quotas[day] += sum(a["id"] in protected for a in items)
     targets = {a["id"] for a in articles} - kept
     return {
         "checked_at": now.isoformat(),
@@ -85,6 +97,7 @@ def inventory_plan(articles: list[dict], now: datetime) -> dict:
         "total": len(articles), "expired": len(stale),
         "overflow": max(0, total - MAX_ARTICLES),
         "protected_expired": 0,
+        "protected_current": len(protected),
         "delete_count": len(targets), "remaining": len(articles) - len(targets),
         "by_date": {day: {"before": len(items), "keep": quotas[day], "delete": len(items) - quotas[day]} for day, items in sorted(by_day.items())},
         "sources_before": dict(Counter(a["source_id"] for a in articles)),
@@ -98,10 +111,25 @@ async def lock_inventory(session) -> None:
 
 
 async def plan(session, now: datetime) -> dict:
-    articles = await rows(session, """SELECT a.id, a.source_id, a.title, a.published_at, a.created_at,
+    articles = await rows(session, """SELECT a.id, a.source_id, a.title, a.canonical_url, a.published_at, a.created_at,
         EXISTS (SELECT 1 FROM model_assessments m WHERE m.article_version_id = a.current_version_id
                 AND m.status = 'SUCCEEDED') AS assessed FROM articles a""")
-    return inventory_plan(articles, now)
+    memberships = await rows(session, """
+        SELECT i.id AS issue_id, a.id AS article_id
+        FROM issues i JOIN issue_memberships im ON im.issue_id = i.id
+        JOIN articles a ON a.id = im.article_id
+        JOIN article_versions av ON av.id = a.current_version_id AND av.article_id = a.id
+        JOIN sources s ON s.id = a.source_id
+        WHERE i.status = 'active' AND i.issue_kind = 'EVENT'
+          AND i.editorial_key LIKE 'daily-issue:%' AND i.topic IN ('정치','경제','사회')
+          AND LENGTH(TRIM(i.summary)) > 0 AND a.status = 'active'
+          AND s.active = 1 AND s.policy_status = 'approved'
+        ORDER BY i.editorial_priority IS NULL, i.editorial_priority, i.id
+    """)
+    groups: dict[str, dict] = {}
+    for member in memberships:
+        groups.setdefault(member["issue_id"], {"article_ids": []})["article_ids"].append(member["article_id"])
+    return inventory_plan(articles, now, list(groups.values())[:5])
 
 
 async def delete_batch(session, ids: set[str], now: datetime, *, online: bool = False) -> dict:

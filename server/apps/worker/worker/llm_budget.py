@@ -161,6 +161,8 @@ class MariaDBLLMBudget:
         subject_key: str | None = None,
         article_keys: Sequence[str] | None = None,
         essential: bool = False,
+        protected_cost_microusd: int = 0,
+        protected_requests: int = 0,
     ) -> LLMBudgetReservation:
         if category not in {"article", "comparison", "discovery"}:
             raise ValueError("unsupported LLM budget category")
@@ -186,6 +188,8 @@ class MariaDBLLMBudget:
                 subject_key=subject_key,
                 article_keys=cohort_keys,
                 essential=essential or category == "comparison",
+                protected_cost_microusd=max(0, int(protected_cost_microusd)),
+                protected_requests=max(0, int(protected_requests)),
             )
         except IntegrityError as exc:
             # Concurrent reservations on different KST dates can both miss the
@@ -198,6 +202,8 @@ class MariaDBLLMBudget:
         request_key: str | None, subject_key: str | None,
         article_keys: Sequence[str],
         essential: bool,
+        protected_cost_microusd: int = 0,
+        protected_requests: int = 0,
     ) -> LLMBudgetReservation:
         usage_date = self._usage_date()
         now = datetime.now(UTC).replace(tzinfo=None)
@@ -272,6 +278,14 @@ class MariaDBLLMBudget:
                 articles = int(_row_value(row, "article_request_count", 0) or 0)
                 comparisons = int(_row_value(row, "comparison_request_count", 0) or 0)
                 reserved = int(_row_value(row, "reserved_microusd", 0) or 0)
+                if category == "discovery":
+                    # Discovery cannot spend the capacity needed to analyze its
+                    # selected articles, even though it is an essential job.
+                    cost_floor = max(self.daily_budget_microusd * 3 // 5, protected_cost_microusd)
+                    request_floor = max(min(30, self.daily_request_limit * 3 // 5), protected_requests)
+                    if (reserved + requested + cost_floor > self.daily_budget_microusd
+                            or requests + 1 + request_floor > self.daily_request_limit):
+                        raise EssentialLLMBudgetReserved("remaining capacity is reserved for article and comparison analysis")
                 exhausted = requests >= self.daily_request_limit
                 exhausted = exhausted or reserved + requested > self.daily_budget_microusd
                 if category == "comparison":

@@ -117,6 +117,7 @@ export function mapIssue(dto: IssueDto | IssueDetailDto): Issue {
     sourceCount: dto.source_count ?? 0,
     analysisStatus: dto.analysis_status ?? "PROCESSING",
     dataAsOf: dto.data_as_of ?? null,
+    openedAt: dto.opened_at,
     freshnessStatus: dto.freshness_status ?? "CURRENT",
     editorialPriority: dto.editorial_priority ?? null,
     updatedAt: dto.last_activity_at,
