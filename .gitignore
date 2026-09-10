@@ -23,7 +23,7 @@ AGENTS.md
 output/
 .ops/
 
-# Private project operations and Tommy context
+# Private project operations and context
 /AGENTS.md
 /.env
 /.agents/
