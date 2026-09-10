@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from apps.api.app.api.v1.analysis_status import router as analysis_status_router
 from apps.api.app.api.v1.routes import router
 from apps.api.app.api.v1.schemas import HealthResponse
 from apps.api.app.core.config import get_settings
@@ -16,7 +17,7 @@ from apps.api.app.core.logging import configure_logging
 from apps.api.app.state import new_id
 
 logger = configure_logging(logger_name="effica.api")
-EXPECTED_DB_REVISION = "0019_llm_request_dedup"
+EXPECTED_DB_REVISION = "0020_political_questionnaire_beta"
 
 
 @asynccontextmanager
@@ -60,6 +61,7 @@ app = FastAPI(
 )
 install_error_handlers(app)
 app.include_router(router, tags=["v1"])
+app.include_router(analysis_status_router, tags=["v1"])
 
 
 @app.middleware("http")

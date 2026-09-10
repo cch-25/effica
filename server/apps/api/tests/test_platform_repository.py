@@ -41,6 +41,7 @@ from apps.api.app.db.models import (
 )
 from apps.api.app.db.models import Session as DBSession
 from apps.api.app.db.utc import utc_now
+from apps.api.app.domains.users import POLITICAL_QUESTIONNAIRE_VERSION
 from apps.api.app.repositories.platform import MariaDBPlatformRepository
 
 
@@ -162,7 +163,7 @@ async def test_bootstrap_adds_new_efficacy_revision_without_rewriting_legacy_sch
     await bootstrap(repo)
 
     questionnaire_versions = (await session.scalars(select(QuestionnaireVersion))).all()
-    assert len(questionnaire_versions) == 3
+    assert len(questionnaire_versions) == 4
     legacy = await session.get(QuestionnaireVersion, "01K00000000000000000000102")
     assert legacy is not None
     assert legacy.version == "1.0"
@@ -173,6 +174,12 @@ async def test_bootstrap_adds_new_efficacy_revision_without_rewriting_legacy_sch
         "baseline",
         "current",
     ]
+    beta = next(
+        row for row in questionnaire_versions if row.version == POLITICAL_QUESTIONNAIRE_VERSION
+    )
+    assert beta.kind == QuestionnaireKind.ONBOARDING
+    assert beta.schema_json["provisional"] is True
+    assert len(beta.schema_json["questions"]) == 30
 
 
 async def test_oauth_user_session_csrf_lookup_rotation_and_revocation(
@@ -238,16 +245,14 @@ async def test_consent_withdrawal_disables_behavioral_profile_and_blocks_sensiti
     )
     onboarding = await session.scalar(
         select(QuestionnaireVersion).where(
-            QuestionnaireVersion.kind == "onboarding"
+            QuestionnaireVersion.kind == "onboarding",
+            QuestionnaireVersion.version == POLITICAL_QUESTIONNAIRE_VERSION,
         )
     )
     assert sensitive is not None and onboarding is not None
     await repo.set_consent(user["id"], sensitive.id, True)
-    await repo.submit_questionnaire(
-        user["id"],
-        onboarding.id,
-        {"economic": 20, "social": -10, "international": 30},
-    )
+    answers = {question["id"]: 3 for question in onboarding.schema_json["questions"]}
+    await repo.submit_questionnaire(user["id"], onboarding.id, answers)
 
     behavioral = UserProfile(
         user_id=user["id"],
@@ -266,12 +271,19 @@ async def test_consent_withdrawal_disables_behavioral_profile_and_blocks_sensiti
     withdrawn = await repo.set_consent(user["id"], sensitive.id, False)
     assert withdrawn is not None and withdrawn["granted"] is False
     assert (await session.get(UserProfile, behavioral.id)).active is False
+    self_reported = await session.scalar(
+        select(UserProfile).where(
+            UserProfile.user_id == user["id"],
+            UserProfile.kind == ProfileKind.SELF_REPORTED,
+        )
+    )
+    assert self_reported is not None and self_reported.active is False
     listed = await repo.list_consents(user["id"])
     sensitive_view = next(item for item in listed if item["id"] == sensitive.id)
     assert sensitive_view["granted"] is False
     with pytest.raises(PermissionError, match="CONSENT_REQUIRED"):
         await repo.submit_questionnaire(
-            user["id"], onboarding.id, {"economic": 1, "social": 2, "international": 3}
+            user["id"], onboarding.id, answers
         )
 
 
@@ -285,15 +297,19 @@ async def test_questionnaire_answers_are_encrypted_and_profile_is_persisted(
         select(ConsentVersion).where(ConsentVersion.purpose == "SENSITIVE_POLITICAL")
     )
     onboarding = await session.scalar(
-        select(QuestionnaireVersion).where(QuestionnaireVersion.kind == "onboarding")
+        select(QuestionnaireVersion).where(
+            QuestionnaireVersion.kind == "onboarding",
+            QuestionnaireVersion.version == POLITICAL_QUESTIONNAIRE_VERSION,
+        )
     )
     assert sensitive is not None and onboarding is not None
     await repo.set_consent(user["id"], sensitive.id, True)
 
-    answers = {"economic": 150, "social": -150, "international": 12}
+    answers = {question["id"]: 3 for question in onboarding.schema_json["questions"]}
+    answers.update({"economic_01": 5, "social_02": 5, "international_02": 5})
     profile = await repo.submit_questionnaire(user["id"], onboarding.id, answers)
     assert profile is not None
-    assert (profile["x"], profile["y"], profile["z"]) == (100, -100, 12)
+    assert (profile["x"], profile["y"], profile["z"]) == (-10, 10, 10)
 
     response = await session.scalar(select(QuestionnaireResponse))
     assert response is not None

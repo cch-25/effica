@@ -18,10 +18,10 @@
           "source_home_url": "https://www.newsis.com/",
           "publisher_kind": "MEDIA",
           "source_type": "CRAWLER",
-          "policy_status": "APPROVED",
-          "robots_status": "APPROVED",
-          "terms_status": "APPROVED",
-          "policy_reference": "APPROVED: 뉴시스 공식 RSS가 기사 텍스트 구독을 제공하고 robots.txt가 /view/ 기사 경로를 허용한다. 현재 비상업 비교 서비스에서 텍스트만 제한 수집하고 원문 링크·출처를 유지하며 사진·영상은 제외한다. https://www.newsis.com/RSS/ https://www.newsis.com/robots.txt",
+          "policy_status": "PENDING",
+          "robots_status": "PENDING",
+          "terms_status": "PENDING",
+          "policy_reference": "PENDING: 뉴시스 저작권 정책은 비영리 정보 서비스도 사전 서면 허가 대상으로 안내한다. 공식 RSS와 robots.txt의 기술적 접근 가능성만으로 기사 저장, 분석, 재제공 권리를 승인할 수 없다. 서면 허가 또는 별도 계약 확인 필요. https://nwww.newsis.com/contents/copyright https://www.newsis.com/robots.txt",
           "url": "https://www.newsis.com/view/NISX20260818_0003751865"
         },
         {
@@ -63,10 +63,10 @@
           "source_home_url": "https://www.newsis.com/",
           "publisher_kind": "MEDIA",
           "source_type": "CRAWLER",
-          "policy_status": "APPROVED",
-          "robots_status": "APPROVED",
-          "terms_status": "APPROVED",
-          "policy_reference": "APPROVED: 뉴시스 공식 RSS가 기사 텍스트 구독을 제공하고 robots.txt가 /view/ 기사 경로를 허용한다. 현재 비상업 비교 서비스에서 텍스트만 제한 수집하고 원문 링크·출처를 유지하며 사진·영상은 제외한다. https://www.newsis.com/RSS/ https://www.newsis.com/robots.txt",
+          "policy_status": "PENDING",
+          "robots_status": "PENDING",
+          "terms_status": "PENDING",
+          "policy_reference": "PENDING: 뉴시스 저작권 정책은 비영리 정보 서비스도 사전 서면 허가 대상으로 안내한다. 공식 RSS와 robots.txt의 기술적 접근 가능성만으로 기사 저장, 분석, 재제공 권리를 승인할 수 없다. 서면 허가 또는 별도 계약 확인 필요. https://nwww.newsis.com/contents/copyright https://www.newsis.com/robots.txt",
           "url": "https://www.newsis.com/view/NISX20260820_0003755735"
         },
         {
@@ -108,10 +108,10 @@
           "source_home_url": "https://www.newsis.com/",
           "publisher_kind": "MEDIA",
           "source_type": "CRAWLER",
-          "policy_status": "APPROVED",
-          "robots_status": "APPROVED",
-          "terms_status": "APPROVED",
-          "policy_reference": "APPROVED: 뉴시스 공식 RSS가 기사 텍스트 구독을 제공하고 robots.txt가 /view/ 기사 경로를 허용한다. 현재 비상업 비교 서비스에서 텍스트만 제한 수집하고 원문 링크·출처를 유지하며 사진·영상은 제외한다. https://www.newsis.com/RSS/ https://www.newsis.com/robots.txt",
+          "policy_status": "PENDING",
+          "robots_status": "PENDING",
+          "terms_status": "PENDING",
+          "policy_reference": "PENDING: 뉴시스 저작권 정책은 비영리 정보 서비스도 사전 서면 허가 대상으로 안내한다. 공식 RSS와 robots.txt의 기술적 접근 가능성만으로 기사 저장, 분석, 재제공 권리를 승인할 수 없다. 서면 허가 또는 별도 계약 확인 필요. https://nwww.newsis.com/contents/copyright https://www.newsis.com/robots.txt",
           "url": "https://www.newsis.com/view/NISX20260817_0003751587"
         },
         {

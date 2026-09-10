@@ -11,10 +11,12 @@ test("Google login facade, separate consent, questionnaire, demographics, home",
   }
   await page.getByRole("button", { name: "동의하고 관점 설문으로" }).click();
   await expect(page).toHaveURL(/\/onboarding\/questionnaire/);
-  const neutralAnswers = page.getByRole("radio", { name: "3" });
-  await expect(neutralAnswers.first()).toBeVisible();
-  for (let index = 0; index < await neutralAnswers.count(); index += 1) await neutralAnswers.nth(index).click();
-  await page.getByRole("button", { name: "응답 저장하고 선택 정보로" }).click();
+  for (let step = 0; step < 3; step += 1) {
+    const neutralAnswers = page.getByRole("radio", { name: "3", exact: true });
+    await expect(neutralAnswers).toHaveCount(10);
+    for (let index = 0; index < 10; index += 1) await neutralAnswers.nth(index).click();
+    await page.getByRole("button", { name: step < 2 ? "다음 문항" : "저장하고 결과 확인" }).click();
+  }
   await expect(page).toHaveURL(/\/onboarding\/demographics/);
   await page.getByRole("button", { name: "건너뛰고 홈으로" }).click();
   await expect(page).toHaveURL(/\/$/);
@@ -86,7 +88,15 @@ test("the article perspective map leads to the selected article and its issue", 
 });
 
 test("reader evaluation can be submitted, revised and deleted", async ({ page }) => {
-  await page.goto("/articles/article-01"); await page.getByRole("button", { name: "약간 우편향 +33" }).click(); await page.getByRole("button", { name: "독자 평가 저장" }).click(); await expect(page.getByText(/수정 이력 2번/)).toBeVisible(); await page.getByRole("button", { name: "우편향 +67" }).click(); await page.getByRole("button", { name: "독자 평가 저장" }).click(); await page.getByRole("button", { name: "내 평가 삭제" }).click(); await expect(page.getByText(/현재 독자 평가를 삭제/)).toBeVisible();
+  await page.goto("/articles/article-01");
+  await page.getByRole("button", { name: "약간 우편향 +33" }).click();
+  await page.getByRole("button", { name: "독자 평가 저장" }).click();
+  await expect(page.getByText("크레딧 10이 지급되었습니다.")).toBeVisible();
+  await page.getByRole("button", { name: "우편향 +67" }).click();
+  await page.getByRole("button", { name: "독자 평가 저장" }).click();
+  await expect(page.getByText("수정사항이 반영되었습니다.")).toBeVisible();
+  await page.getByRole("button", { name: "내 평가 삭제" }).click();
+  await expect(page.getByText(/현재 독자 평가를 삭제/)).toBeVisible();
 });
 
 test("efficacy response updates due state and connects to progress", async ({ page }) => { await page.goto("/efficacy"); await page.getByRole("button", { name: "이번 측정 저장" }).click(); await expect(page.getByText(/다음 측정은 30일 후에 가능합니다/)).toBeVisible(); await page.goto("/progress"); await expect(page.getByRole("link", { name: /정치 이슈 이해 자신감 변화/ })).toBeVisible(); });
@@ -105,6 +115,13 @@ test("share card create, ready, public actions and revoke", async ({ page }) => 
   await page.getByRole("button", { name: "폐기 확인" }).click();
   await expect(page.getByText("폐기됨", { exact: true })).toBeVisible();
   expect(pageErrors).toEqual([]);
+});
+
+test("the optional ideology test can be skipped while the card stays unmeasured", async ({ page }) => {
+  await page.goto("/onboarding/questionnaire?returnTo=%2Fshare%2Fnew");
+  await page.getByRole("button", { name: "검사는 나중에 하기" }).click();
+  await expect(page).toHaveURL(/\/share\/new$/);
+  await expect(page.getByText(/검사 미실시 \/ 기본 좌표/)).toBeVisible();
 });
 
 test("admin is fail-closed and accepts the dedicated credentials", async ({ page }) => {

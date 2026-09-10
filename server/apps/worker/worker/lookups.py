@@ -415,7 +415,10 @@ class MariaDBWorkerLookups:
             "efficacy": "SELECT questionnaire_version_id, normalized_score, submitted_at FROM efficacy_responses WHERE user_id = :user_id ORDER BY submitted_at",
             "share_cards": "SELECT id, template, display_name, snapshot_json, status, expires_at, revoked_at, created_at FROM share_cards WHERE user_id = :user_id ORDER BY created_at",
             "oauth_accounts": "SELECT provider, provider_subject FROM oauth_accounts WHERE user_id = :user_id ORDER BY provider, provider_subject",
-            "sessions": "SELECT token_hash, csrf_hash, expires_at, revoked_at FROM sessions WHERE user_id = :user_id ORDER BY expires_at",
+            # Session timing is useful account history. Authentication hashes
+            # are server credentials and must never enter a downloadable user
+            # archive, even though they are one-way values.
+            "sessions": "SELECT expires_at, revoked_at FROM sessions WHERE user_id = :user_id ORDER BY expires_at",
             "feed_impressions": "SELECT article_id, issue_id, reason_code, rank, created_at FROM feed_impressions WHERE user_id = :user_id ORDER BY created_at",
         }
         for name, query in queries.items():

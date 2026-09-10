@@ -28,6 +28,7 @@ from apps.api.app.db.enums import (
 from apps.api.app.db.models import (
     Article,
     ArticleVersion,
+    ConsentVersion,
     Issue,
     IssueComparisonSnapshot,
     IssueMembership,
@@ -39,6 +40,7 @@ from apps.api.app.db.models import (
     ShareCard,
     Source,
     User,
+    UserConsent,
     UserProfile,
     WeightProfileRevision,
 )
@@ -397,6 +399,7 @@ async def test_db_product_engagement_vertical_slice() -> None:
         user_id, source_id, article_id, version_id, issue_id, weight_id, alias_id, assessment_id = (
             new_ulid() for _ in range(8)
         )
+        behavioral_profile_id = new_ulid()
         now = utc_now()
         session.add_all(
             [
@@ -463,6 +466,18 @@ async def test_db_product_engagement_vertical_slice() -> None:
                     z=3,
                     confidence=0.8,
                     source_version="onboarding-v1",
+                    active=True,
+                    created_at=now,
+                ),
+                UserProfile(
+                    id=behavioral_profile_id,
+                    user_id=user_id,
+                    kind=ProfileKind.BEHAVIORAL,
+                    x=-90,
+                    y=80,
+                    z=0,
+                    confidence=0.9,
+                    source_version="behavior-v1",
                     active=True,
                     created_at=now,
                 ),
@@ -541,11 +556,37 @@ async def test_db_product_engagement_vertical_slice() -> None:
             ]
         )
         await session.commit()
+        sensitive_consent_id = new_ulid()
+        session.add_all(
+            [
+                ConsentVersion(
+                    id=sensitive_consent_id,
+                    purpose="SENSITIVE_POLITICAL",
+                    version="1.0",
+                    body_hash=hashlib.sha256(b"sensitive").digest(),
+                    active_from=now,
+                ),
+                UserConsent(
+                    id=new_ulid(),
+                    user_id=user_id,
+                    consent_version_id=sensitive_consent_id,
+                    granted_at=now,
+                    withdrawn_at=None,
+                ),
+            ]
+        )
+        await session.commit()
 
         feed, personalized = await repository.feed_items(
             user_id=user_id, personalized_requested=True
         )
-        assert personalized is True
+        assert personalized is False
+        assert (
+            await repository.visualization_rows(
+                entity_type="user", issue_id=None, user_id=user_id
+            )
+            == []
+        )
         assert feed[0]["article_id"] == article_id
         assert (await repository.issue_view(issue_id))["distribution"]["count"] == 1
         issue_articles = await repository.issue_article_rows(issue_id)
@@ -580,7 +621,69 @@ async def test_db_product_engagement_vertical_slice() -> None:
             values={"x": 1, "y": 2, "z": 3, "sensationalism": 4},
         )
         assert vote and vote["revision"] == 1
-        assert (await repository.vote_aggregate(article_id))["qualified_count"] == 1
+        assert vote["save_status"] == "created"
+        assert vote["credit_delta"] == 10
+        behavioral_profile = await session.get(UserProfile, behavioral_profile_id)
+        assert behavioral_profile is not None
+        assert behavioral_profile.active is True
+        assert behavioral_profile.x == -90
+        one_voter_aggregate = await repository.vote_aggregate(article_id)
+        assert one_voter_aggregate is not None
+        assert one_voter_aggregate["qualified_count"] == 1
+        assert one_voter_aggregate["small_segments_suppressed"] is True
+        assert one_voter_aggregate["qualified"] == {
+            "x": None,
+            "y": None,
+            "z": None,
+            "sensationalism": None,
+        }
+        updated_vote = await repository.put_vote_row(
+            user_id=user_id,
+            article_id=article_id,
+            values={"x": -1, "y": -2, "z": -3, "sensationalism": 5},
+        )
+        assert updated_vote and updated_vote["revision"] == 2
+        assert updated_vote["save_status"] == "updated"
+        assert updated_vote["credit_delta"] == 0
+        vote_credits = [
+            row
+            for row in await repository.credit_rows(user_id)
+            if row["event_type"] == "QUALIFIED_VOTE"
+        ]
+        assert len(vote_credits) == 1
+        assert vote_credits[0]["delta"] == 10
+        cohort_user_ids = [new_ulid() for _ in range(4)]
+        session.add_all(
+            [
+                User(
+                    id=cohort_user_id,
+                    role=UserRole.MEMBER,
+                    status=UserStatus.ACTIVE,
+                    display_name=f"Cohort member {index}",
+                    created_at=now,
+                    deleted_at=None,
+                )
+                for index, cohort_user_id in enumerate(cohort_user_ids, start=2)
+            ]
+        )
+        await session.commit()
+        for cohort_user_id in cohort_user_ids:
+            cohort_vote = await repository.put_vote_row(
+                user_id=cohort_user_id,
+                article_id=article_id,
+                values={"x": -1, "y": -2, "z": -3, "sensationalism": 5},
+            )
+            assert cohort_vote is not None
+        five_voter_aggregate = await repository.vote_aggregate(article_id)
+        assert five_voter_aggregate is not None
+        assert five_voter_aggregate["qualified_count"] == 5
+        assert five_voter_aggregate["small_segments_suppressed"] is False
+        assert five_voter_aggregate["qualified"] == {
+            "x": -1.0,
+            "y": -2.0,
+            "z": -3.0,
+            "sensationalism": 5.0,
+        }
 
         efficacy_version = await session.scalar(
             select(QuestionnaireVersion.id).where(
@@ -603,9 +706,11 @@ async def test_db_product_engagement_vertical_slice() -> None:
         )
         assert job["status"] == "PENDING"
         assert card["public_token"]
-        assert card["snapshot"]["sensationalism"] is None
-        assert card["snapshot"]["coordinate"]["sensationalism"] is None
-        assert card["snapshot"]["activity"] == card["snapshot"]["credit_total"] == 0
+        assert card["snapshot"]["ideology"]["completed"] is False
+        assert card["snapshot"]["ideology"]["x"] == 0
+        assert card["snapshot"]["diversity_article_count"] == 1
+        assert "credit_total" not in card["snapshot"]
+        assert "actor_id" not in card["snapshot"]["publication_consent"]
         assert (await repository.public_share_card(card["public_token"])) is not None
         persisted_job = await session.get(Job, job["id"])
         assert persisted_job is not None

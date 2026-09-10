@@ -14,6 +14,7 @@ from db.seeds.seed import (
 )
 from db.seeds.source_feeds import (
     bootstrap_scheduled_rss_sources,
+    scheduled_publisher_sources,
     scheduled_rss_config,
 )
 
@@ -99,3 +100,38 @@ def test_scheduled_news_feeds_are_broad_hydrated_and_source_diverse() -> None:
     assert newsis["max_hydration_fetches"] == newsis["max_items"]
     assert newsis["allow_empty_result"] is False
     assert len(bootstrap_scheduled_rss_sources()) >= 5
+
+
+def test_scheduled_publisher_catalog_covers_all_requested_newsrooms() -> None:
+    publishers = scheduled_publisher_sources()
+    by_name = {source.name: source for source in publishers}
+
+    assert set(by_name) == {
+        "뉴시스",
+        "이투데이",
+        "조선일보",
+        "문화일보",
+        "세계일보",
+        "경향신문",
+        "한겨레",
+        "오마이뉴스",
+        "동아일보",
+        "중앙일보",
+    }
+    assert all(source.bootstrap for source in publishers)
+    assert {
+        source.name for source in publishers if source.approve_on_bootstrap
+    } == {"이투데이"}
+    assert {
+        source.name for source in publishers if source.feed_format == "news_sitemap"
+    } == {"문화일보", "세계일보", "중앙일보"}
+    assert all(
+        source.approve_on_bootstrap or source.review_note
+        for source in publishers
+    )
+    assert all(source.feed_url.startswith("https://") for source in publishers)
+    assert all(source.policy_reference.startswith("https://") for source in publishers)
+    assert all(
+        scheduled_rss_config(source.home_url)["feed_format"] == source.feed_format
+        for source in publishers
+    )

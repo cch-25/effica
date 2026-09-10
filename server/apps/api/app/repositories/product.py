@@ -65,11 +65,22 @@ from apps.api.app.domains.content.trust import (
 from apps.api.app.domains.engagement.read import evaluate_read_eligibility
 from apps.api.app.domains.feed.ranking import FeedCandidate, rank_feed
 from apps.api.app.domains.issues.topics import normalize_issue_topic
+from apps.api.app.domains.scoring import (
+    PUBLIC_VOTE_AGGREGATE_MIN_SIZE,
+    public_vote_axis_means,
+)
 from apps.api.app.domains.scoring.behavior import (
     BehavioralProfile,
     BehaviorEvent,
     update_behavioral_profile,
 )
+from apps.api.app.domains.sharing import (
+    NEWS_CONSUMPTION_SNAPSHOT_VERSION,
+    consumption_diversity,
+    ideology_snapshot,
+    public_snapshot_view,
+)
+from apps.api.app.domains.users import POLITICAL_QUESTIONNAIRE_VERSION
 
 
 def _value(value: Any) -> Any:
@@ -254,7 +265,12 @@ class ProductRepositoryMixin:
         if user_id:
             profile = await self.session.scalar(
                 select(UserProfile)
-                .where(UserProfile.user_id == user_id, UserProfile.active.is_(True))
+                .where(
+                    UserProfile.user_id == user_id,
+                    UserProfile.kind == ProfileKind.SELF_REPORTED,
+                    UserProfile.source_version == POLITICAL_QUESTIONNAIRE_VERSION,
+                    UserProfile.active.is_(True),
+                )
                 .order_by(UserProfile.created_at.desc())
             )
         personalized = bool(personalized_requested and profile)
@@ -306,9 +322,6 @@ class ProductRepositoryMixin:
             if trusted.get("status") == "READY" and score is not None:
                 candidates.append((article, source, issue_id, score))
         context_by_article = {item[0].id: item for item in candidates}
-        profile_sensationalism = 0.0
-        if profile is not None and _value(profile.kind) == ProfileKind.BEHAVIORAL.value:
-            profile_sensationalism = float(profile.y)
         ranked = rank_feed(
             [
                 FeedCandidate(
@@ -325,7 +338,7 @@ class ProductRepositoryMixin:
                 )
                 for article, source, issue_id, score in candidates
             ],
-            user_coordinates=(profile.x, profile_sensationalism)
+            user_coordinates=(profile.x, 0.0)
             if personalized and profile is not None
             else None,
             # The HTTP layer owns cursor pagination.  Ranking only a fixed
@@ -795,6 +808,11 @@ class ProductRepositoryMixin:
             aggregate = aggregates.get(article_id)
             aggregate_payload = aggregate.aggregate_json if aggregate is not None else {}
             qualified = aggregate_payload.get("qualified", {})
+            qualified_count = int(aggregate_payload.get("qualified_count", 0) or 0)
+            qualified_view = public_vote_axis_means(
+                qualified,
+                qualified_count=qualified_count,
+            )
             source_revision = int(
                 aggregate_payload.get(
                     "source_revision", aggregate_payload.get("version", 0)
@@ -825,15 +843,10 @@ class ProductRepositoryMixin:
                     },
                     "frame": (frames or {}).get(article_id, {}),
                     "vote_aggregate": {
-                        "qualified": {
-                            key: qualified.get(key)
-                            for key in ("x", "y", "z", "sensationalism")
-                        },
-                        "qualified_count": int(
-                            aggregate_payload.get("qualified_count", 0) or 0
-                        ),
-                        "small_segments_suppressed": bool(
-                            aggregate_payload.get("small_segments_suppressed", True)
+                        "qualified": qualified_view,
+                        "qualified_count": qualified_count,
+                        "small_segments_suppressed": (
+                            qualified_count < PUBLIC_VOTE_AGGREGATE_MIN_SIZE
                         ),
                         "snapshot_version": None if aggregate is None else aggregate.version,
                         "generated_at": None if aggregate is None else aggregate.created_at,
@@ -1191,9 +1204,6 @@ class ProductRepositoryMixin:
         source_revision = int(payload.get("source_revision", payload.get("version", 0)) or 0)
         qualified = payload.get("qualified", {})
         qualified_count = int(payload.get("qualified_count", 0) or 0)
-        small_segments_suppressed = bool(
-            payload.get("small_segments_suppressed", True)
-        )
         if snapshot is None:
             qualified_rows = list(
                 (
@@ -1218,13 +1228,15 @@ class ProductRepositoryMixin:
                 key: live_mean(key) for key in ("x", "y", "z", "sensationalism")
             }
             qualified_count = len(qualified_rows)
-            small_segments_suppressed = qualified_count < 5
         return {
-            "qualified": {
-                key: qualified.get(key) for key in ("x", "y", "z", "sensationalism")
-            },
+            "qualified": public_vote_axis_means(
+                qualified,
+                qualified_count=qualified_count,
+            ),
             "qualified_count": qualified_count,
-            "small_segments_suppressed": small_segments_suppressed,
+            "small_segments_suppressed": (
+                qualified_count < PUBLIC_VOTE_AGGREGATE_MIN_SIZE
+            ),
             "snapshot_version": None if snapshot is None else snapshot.version,
             "generated_at": None if snapshot is None else snapshot.created_at,
             "status": "pending" if latest_revision > source_revision else "ready",
@@ -1281,6 +1293,7 @@ class ProductRepositoryMixin:
                 )
             ).all()
         )
+        save_status = "updated" if rows else "created"
         for row in rows:
             if row.active:
                 row.active = False
@@ -1313,35 +1326,67 @@ class ProductRepositoryMixin:
             **values,
         )
         self.session.add(vote)
-        await self._append_behavior_event(
-            user_id=user_id,
-            article_id=article_id,
-            vote_values=values,
-        )
+        credit_delta = 0
+        if save_status == "created":
+            event_key = f"vote:{article_id}"
+            existing_credit = await self.session.scalar(
+                select(CreditLedger).where(
+                    CreditLedger.user_id == user_id,
+                    CreditLedger.event_type == "QUALIFIED_VOTE",
+                    CreditLedger.event_key == event_key,
+                )
+            )
+            if existing_credit is None:
+                credit_delta = 10
+                self.session.add(
+                    CreditLedger(
+                        id=new_ulid(),
+                        user_id=user_id,
+                        event_type="QUALIFIED_VOTE",
+                        event_key=event_key,
+                        delta=credit_delta,
+                        policy_version="vote-credit-v1",
+                        status="posted",
+                        reversed_ledger_id=None,
+                        created_at=now,
+                    )
+                )
         await self.session.flush()
         await self.enqueue(
             "aggregate_votes",
             f"{article_id}:{revision}",
             {"article_id": article_id, "version": revision},
         )
-        return {**values, "revision": revision, "quality_status": "QUALIFIED", "active": True}
+        return {
+            **values,
+            "revision": revision,
+            "quality_status": "QUALIFIED",
+            "active": True,
+            "save_status": save_status,
+            "credit_delta": credit_delta,
+        }
 
     async def _append_behavior_event(
         self,
         *,
         user_id: str,
         article_id: str,
-        vote_values: dict[str, int] | None = None,
         event_weight: float = 1.0,
     ) -> None:
+        latest_sensitive_consent_id = (
+            select(ConsentVersion.id)
+            .where(ConsentVersion.purpose == "SENSITIVE_POLITICAL")
+            .order_by(ConsentVersion.active_from.desc(), ConsentVersion.id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
         sensitive_consent = await self.session.scalar(
             select(func.count())
             .select_from(UserConsent)
-            .join(ConsentVersion, ConsentVersion.id == UserConsent.consent_version_id)
             .where(
                 UserConsent.user_id == user_id,
                 UserConsent.withdrawn_at.is_(None),
-                ConsentVersion.purpose == "SENSITIVE_POLITICAL",
+                UserConsent.consent_version_id == latest_sensitive_consent_id,
             )
         )
         if not sensitive_consent:
@@ -1380,14 +1425,8 @@ class ProductRepositoryMixin:
                     article_y=score["y"],
                     article_z=score["z"],
                     article_sensationalism=float(score.get("sensationalism") or 0),
-                    kind="vote" if vote_values else "read",
+                    kind="read",
                     weight=event_weight,
-                    vote_x=None if vote_values is None else vote_values["x"],
-                    vote_y=None if vote_values is None else vote_values["y"],
-                    vote_z=None if vote_values is None else vote_values["z"],
-                    vote_sensationalism=(
-                        None if vote_values is None else float(vote_values["sensationalism"])
-                    ),
                 )
             ],
             activate=True,
@@ -1523,6 +1562,24 @@ class ProductRepositoryMixin:
                 )
                 or 0
             )
+        article_x_values: list[float] = []
+        if engaged_article_ids:
+            engaged_articles = list(
+                (
+                    await self.session.scalars(
+                        select(Article).where(Article.id.in_(engaged_article_ids))
+                    )
+                ).all()
+            )
+            analysis = await self._analysis_context()
+            article_x_values = [
+                float(context["score"].x)
+                for article in engaged_articles
+                if article.current_version_id
+                and (context := analysis.get(article.current_version_id))
+                and context.get("status") == "READY"
+                and context.get("score") is not None
+            ]
         profiles = list(
             (
                 await self.session.scalars(
@@ -1533,19 +1590,26 @@ class ProductRepositoryMixin:
             ).all()
         )
 
-        def profile_view(kind: ProfileKind) -> dict[str, Any] | None:
-            row = next((item for item in profiles if _value(item.kind) == kind.value), None)
-            if row is None:
-                return None
-            behavioral = kind == ProfileKind.BEHAVIORAL
-            return {
-                "x": row.x,
-                "y": 0 if behavioral else row.y,
-                "z": row.z,
-                "sensationalism": row.y if behavioral else None,
-                "confidence": float(row.confidence),
-            }
-
+        self_reported_profile = next(
+            (
+                item
+                for item in profiles
+                if _value(item.kind) == ProfileKind.SELF_REPORTED.value
+            ),
+            None,
+        )
+        ideology = ideology_snapshot(
+            source_version=(
+                None if self_reported_profile is None else self_reported_profile.source_version
+            ),
+            required_version=POLITICAL_QUESTIONNAIRE_VERSION,
+            x=None if self_reported_profile is None else self_reported_profile.x,
+            y=None if self_reported_profile is None else self_reported_profile.y,
+            z=None if self_reported_profile is None else self_reported_profile.z,
+            confidence=(
+                None if self_reported_profile is None else self_reported_profile.confidence
+            ),
+        )
         return {
             "credit_total": total,
             "level": level,
@@ -1554,8 +1618,8 @@ class ProductRepositoryMixin:
             "read_article_count": len(read_article_ids),
             "compared_issue_count": compared_issue_count,
             "source_diversity_count": source_diversity_count,
-            "self_reported_profile": profile_view(ProfileKind.SELF_REPORTED),
-            "behavioral_profile": profile_view(ProfileKind.BEHAVIORAL),
+            **consumption_diversity(article_x_values),
+            "ideology": ideology,
         }
 
     async def efficacy_view(self, user_id: str) -> dict[str, Any]:
@@ -1635,43 +1699,42 @@ class ProductRepositoryMixin:
         display_name: str | None,
         publication_confirmed: bool = True,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        profile = await self.session.scalar(
-            select(UserProfile)
-            .where(UserProfile.user_id == user_id, UserProfile.active.is_(True))
-            .order_by(UserProfile.created_at.desc())
+        if not publication_confirmed:
+            raise PermissionError("PUBLICATION_CONFIRMATION_REQUIRED")
+        latest_sensitive_consent_id = (
+            select(ConsentVersion.id)
+            .where(ConsentVersion.purpose == "SENSITIVE_POLITICAL")
+            .order_by(ConsentVersion.active_from.desc(), ConsentVersion.id.desc())
+            .limit(1)
+            .scalar_subquery()
         )
-        if profile is None:
-            raise ProductConflictError("PROFILE_REQUIRED")
+        sensitive_consent = await self.session.scalar(
+            select(func.count())
+            .select_from(UserConsent)
+            .where(
+                UserConsent.user_id == user_id,
+                UserConsent.withdrawn_at.is_(None),
+                UserConsent.consent_version_id == latest_sensitive_consent_id,
+            )
+        )
+        if not sensitive_consent:
+            raise PermissionError("CONSENT_REQUIRED")
         progress = await self.progress_view(user_id)
         card_id = new_ulid()
         token = self._share_token(card_id)
         confirmed_at = utc_now()
-        kind = _value(profile.kind)
-        sensationalism = (
-            float(profile.y) if kind == ProfileKind.BEHAVIORAL.value else None
-        )
         snapshot = {
-            "x": profile.x,
-            "y": profile.y,
-            "z": profile.z,
-            "sensationalism": sensationalism,
-            "confidence": float(profile.confidence),
-            "coordinate": {
-                "x": profile.x,
-                "y": profile.y,
-                "z": profile.z,
-                "sensationalism": sensationalism,
-                "confidence": float(profile.confidence),
-            },
-            "tier": progress["tier"],
-            "activity": progress["credit_total"],
-            "credit_total": progress["credit_total"],
+            "snapshot_schema_version": NEWS_CONSUMPTION_SNAPSHOT_VERSION,
+            "diversity_score": progress["diversity_score"],
+            "diversity_article_count": progress["diversity_article_count"],
+            "diversity_perspective_counts": progress["diversity_perspective_counts"],
+            "diversity_policy_version": progress["diversity_policy_version"],
+            "ideology": progress["ideology"],
             "created_at": confirmed_at.isoformat(),
             "political_data_publication_confirmed": bool(publication_confirmed),
             "publication_consent": {
                 "confirmation_version": "share-card-publication-v1",
                 "confirmed_at": confirmed_at.isoformat(),
-                "actor_id": user_id,
             },
         }
         card = ShareCard(
@@ -1732,7 +1795,7 @@ class ProductRepositoryMixin:
             "status": status,
             "public_token": self._share_token(card.id),
             "etag": None if blob is None else f'"{blob.sha256.hex()}"',
-            "snapshot": card.snapshot_json,
+            "snapshot": public_snapshot_view(card.snapshot_json),
         }
 
     async def retry_share_card(
@@ -1824,9 +1887,14 @@ class ProductRepositoryMixin:
             profiles = list(
                 (
                     await self.session.scalars(
-                        select(UserProfile).where(
-                            UserProfile.user_id == user_id, UserProfile.active.is_(True)
-                        ).order_by(UserProfile.created_at.desc())
+                        select(UserProfile)
+                        .where(
+                            UserProfile.user_id == user_id,
+                            UserProfile.kind == ProfileKind.SELF_REPORTED,
+                            UserProfile.source_version == POLITICAL_QUESTIONNAIRE_VERSION,
+                            UserProfile.active.is_(True),
+                        )
+                        .order_by(UserProfile.created_at.desc())
                     )
                 ).all()
             )
@@ -1834,19 +1902,11 @@ class ProductRepositoryMixin:
                 {
                     "entity_type": "user",
                     "entity_id": row.id,
-                    "label": (
-                        "행동 기반 관점"
-                        if _value(row.kind) == ProfileKind.BEHAVIORAL.value
-                        else "자기보고 관점"
-                    ),
+                    "label": "검사 기반 이념 위치",
                     "x": row.x,
                     "y": row.y,
                     "z": row.z,
-                    "sensationalism": (
-                        float(row.y)
-                        if _value(row.kind) == ProfileKind.BEHAVIORAL.value
-                        else None
-                    ),
+                    "sensationalism": None,
                     "confidence": float(row.confidence),
                 }
                 for row in profiles
@@ -1919,7 +1979,12 @@ class ProductRepositoryMixin:
                 (
                     await self.session.scalars(
                         select(UserProfile)
-                        .where(UserProfile.user_id == entity_id)
+                        .where(
+                            UserProfile.user_id == entity_id,
+                            UserProfile.kind == ProfileKind.SELF_REPORTED,
+                            UserProfile.source_version == POLITICAL_QUESTIONNAIRE_VERSION,
+                            UserProfile.active.is_(True),
+                        )
                         .order_by(UserProfile.created_at)
                     )
                 ).all()

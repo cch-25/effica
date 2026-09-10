@@ -38,6 +38,7 @@ from apps.api.app.api.v1.schemas import (
     DemographicsPatch,
     EfficacySubmission,
     EfficacyView,
+    ExportStatusView,
     FeedItem,
     FeedPage,
     IssueComparisonReviewPreview,
@@ -90,6 +91,18 @@ from apps.api.app.domains.engagement.read import (
     create_redirect_token,
     evaluate_read_eligibility,
     verify_redirect_token,
+)
+from apps.api.app.domains.scoring import (
+    PUBLIC_VOTE_AGGREGATE_MIN_SIZE,
+    public_vote_axis_means,
+)
+from apps.api.app.domains.sharing import (
+    NEWS_CONSUMPTION_SNAPSHOT_VERSION,
+    public_snapshot_view,
+)
+from apps.api.app.domains.users import (
+    POLITICAL_QUESTIONNAIRE_VERSION,
+    score_political_questionnaire,
 )
 from apps.api.app.repositories.admin import AdminRepositoryError
 from apps.api.app.repositories.platform import MariaDBPlatformRepository
@@ -374,7 +387,7 @@ async def auth_callback(
         )
         token, csrf = await repository.rotate_session(user["id"])
         complete_user = await repository.get_user(user["id"])
-        onboarding_complete = bool(complete_user and complete_user["onboarding_complete"])
+        consent_complete = bool(complete_user and complete_user["consent_complete"])
     else:
         account_key = (identity.provider, identity.subject)
         user_id = platform.oauth_accounts.get(account_key)
@@ -401,8 +414,8 @@ async def auth_callback(
             "provider": provider,
             "nonce_verified": oauth_nonce_cookie is not None,
         }
-        onboarding_complete = bool(platform.users[user_id]["onboarding_complete"])
-    if onboarding_complete:
+        consent_complete = bool(platform.users[user_id]["consent_complete"])
+    if consent_complete:
         target = _web_return_target(settings, challenge.get("return_to"), "/")
     else:
         onboarding_path = "/onboarding/consent"
@@ -574,8 +587,9 @@ async def submit_consent(
     )
     if consent["sensitive"] and not body.granted:
         user["behavioral_profile_active"] = False
+        user["onboarding_complete"] = False
         for profile in platform.profiles.values():
-            if profile["user_id"] == principal.user_id and profile["kind"] == "BEHAVIORAL":
+            if profile["user_id"] == principal.user_id:
                 profile["active"] = False
     return {**consent, "granted": body.granted}
 
@@ -652,18 +666,22 @@ async def submit_questionnaire(
             )
         return profile
     version = platform.questionnaires.get(body.questionnaire_version_id)
-    if not version:
+    if not version or version.get("version") != POLITICAL_QUESTIONNAIRE_VERSION:
         raise ApiError(409, "QUESTIONNAIRE_VERSION_STALE", "The questionnaire version is stale.")
     if not platform.users[principal.user_id]["consent_complete"]:
         raise ApiError(403, "CONSENT_REQUIRED", "Separate political-data consent is required.")
-    values = []
-    for key in version["keys"]:
-        try:
-            values.append(max(-100, min(100, int(body.answers[key]))))
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ApiError(
-                400, "QUESTIONNAIRE_ANSWER_INVALID", f"A numeric {key} answer is required."
-            ) from exc
+    try:
+        score = score_political_questionnaire(
+            schema_json=version["schema_json"],
+            scoring_json=version["scoring_json"],
+            answers=body.answers,
+        )
+    except ValueError as exc:
+        raise ApiError(
+            400,
+            "QUESTIONNAIRE_ANSWER_INVALID",
+            "All 30 answers must be integers from 1 to 5.",
+        ) from exc
     for profile in platform.profiles.values():
         if profile["user_id"] == principal.user_id and profile["kind"] == "SELF_REPORTED":
             profile["active"] = False
@@ -673,11 +691,11 @@ async def submit_questionnaire(
         "id": profile_id,
         "user_id": principal.user_id,
         "kind": "SELF_REPORTED",
-        "x": values[0],
-        "y": values[1],
-        "z": values[2],
+        "x": score.x,
+        "y": score.y,
+        "z": score.z,
         "sensationalism": None,
-        "confidence": min(1.0, 0.5 + len(body.answers) * 0.05),
+        "confidence": score.confidence,
         "source_version": version["version"],
         "active": True,
         "created_at": utcnow(),
@@ -719,6 +737,45 @@ async def patch_demographics(
     return platform.demographics[principal.user_id]
 
 
+def _memory_export_status(
+    platform: PlatformState, user_id: str, job_id: str | None = None
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    jobs = [
+        job
+        for job in platform.jobs.values()
+        if job["job_type"] == "export_user"
+        and job["dedupe_key"] == user_id
+        and (job_id is None or job["id"] == job_id)
+    ]
+    if not jobs:
+        return None
+    job = max(jobs, key=lambda item: str(item["id"]))
+    status = str(job["status"])
+    expires_at = job.get("artifact_expires_at")
+    expired = isinstance(expires_at, datetime) and expires_at <= utcnow()
+    ready = status == "SUCCEEDED" and job.get("artifact") is not None and not expired
+    failure_code = None
+    if status in {"FAILED", "DEAD", "CANCELLED"}:
+        error = job.get("last_error")
+        failure_code = str(
+            (error.get("code") if isinstance(error, dict) else None) or f"EXPORT_{status}"
+        )[:100]
+    elif status == "SUCCEEDED" and expired:
+        failure_code = "EXPORT_ARTIFACT_EXPIRED"
+    elif status == "SUCCEEDED" and not ready:
+        failure_code = "EXPORT_ARTIFACT_UNAVAILABLE"
+    view = {
+        "job_id": job["id"],
+        "status": status,
+        "download_ready": ready,
+        "download_url": f"/api/v1/me/export/{job['id']}/download" if ready else None,
+        "expires_at": expires_at,
+        "failure_code": failure_code,
+        "updated_at": job.get("updated_at") or job["available_at"],
+    }
+    return view, job
+
+
 @router.post(
     "/me/export",
     response_model=JobAccepted,
@@ -735,7 +792,105 @@ async def export_me(
         job = await repository.request_export(principal.user_id)
         return {"job_id": job["id"], "status": job["status"]}
     job = platform.enqueue("export_user", principal.user_id, {"user_id": principal.user_id})
-    return {"job_id": job["id"], "status": "PENDING"}
+    if job["status"] not in {"PENDING", "LEASED"}:
+        now = utcnow()
+        job["max_attempts"] = int(job["attempts"]) + 5
+        job.update(
+            {
+                "status": "PENDING",
+                "available_at": now,
+                "last_error": None,
+                "updated_at": now,
+            }
+        )
+        job.pop("artifact", None)
+        job.pop("artifact_expires_at", None)
+    return {"job_id": job["id"], "status": job["status"]}
+
+
+@router.get(
+    "/me/export",
+    response_model=ExportStatusView,
+    operation_id="get_export_status",
+)
+async def get_export_status(
+    principal: Principal = Depends(require_member),
+    platform: PlatformState = Depends(get_state),
+    repository: MariaDBPlatformRepository | None = Depends(get_repository),
+) -> dict[str, Any]:
+    if repository is not None:
+        status = await repository.export_status(principal.user_id)
+    else:
+        memory_result = _memory_export_status(platform, principal.user_id)
+        status = None if memory_result is None else memory_result[0]
+    if status is None:
+        raise ApiError(404, "EXPORT_NOT_FOUND", "No data export request was found.")
+    return status
+
+
+@router.get(
+    "/me/export/{job_id}/download",
+    operation_id="download_export",
+)
+async def download_export(
+    job_id: str,
+    principal: Principal = Depends(require_member),
+    platform: PlatformState = Depends(get_state),
+    repository: MariaDBPlatformRepository | None = Depends(get_repository),
+) -> Response:
+    blob = None
+    artifact: Any = None
+    if repository is not None:
+        result = await repository.export_artifact(principal.user_id, job_id)
+        if result is None:
+            raise ApiError(404, "EXPORT_NOT_FOUND", "The data export was not found.")
+        status, blob = result
+    else:
+        memory_result = _memory_export_status(platform, principal.user_id, job_id)
+        if memory_result is None:
+            raise ApiError(404, "EXPORT_NOT_FOUND", "The data export was not found.")
+        status, job = memory_result
+        artifact = job.get("artifact")
+
+    state = str(status["status"])
+    if state in {"PENDING", "LEASED"}:
+        raise ApiError(
+            409,
+            "EXPORT_NOT_READY",
+            "The data export is still being prepared.",
+            retryable=True,
+        )
+    if state in {"FAILED", "DEAD"}:
+        raise ApiError(
+            409,
+            "EXPORT_FAILED",
+            "The data export could not be prepared.",
+            details={"failure_code": status.get("failure_code") or "EXPORT_FAILED"},
+        )
+    if state == "CANCELLED":
+        raise ApiError(409, "EXPORT_CANCELLED", "The data export was cancelled.")
+    if status.get("failure_code") == "EXPORT_ARTIFACT_EXPIRED":
+        raise ApiError(410, "EXPORT_EXPIRED", "The data export has expired.")
+    if not status.get("download_ready"):
+        raise ApiError(410, "EXPORT_UNAVAILABLE", "The data export is unavailable.")
+
+    if blob is not None:
+        payload = blob.payload
+        media_type = "application/json"
+    else:
+        payload = artifact if isinstance(artifact, bytes) else json.dumps(
+            artifact, ensure_ascii=False, sort_keys=True, default=str
+        ).encode("utf-8")
+        media_type = "application/json"
+    return Response(
+        content=payload,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": f'attachment; filename="effica-data-export-{job_id}.json"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.delete(
@@ -791,7 +946,11 @@ async def feed(
             (
                 p
                 for p in platform.profiles.values()
-                if p["user_id"] == principal.user_id and p["active"]
+                if p["user_id"] == principal.user_id
+                and p["active"]
+                and str(p.get("kind", "")).casefold()
+                in {"self_reported", "self_reported_profile"}
+                and p.get("source_version") == POLITICAL_QUESTIONNAIRE_VERSION
             ),
             None,
         )
@@ -802,15 +961,9 @@ async def feed(
     issue_counts: dict[str | None, int] = {}
     articles = sorted(platform.articles.values(), key=lambda row: row["published_at"], reverse=True)
     if personalized and profile:
-        profile_sensationalism = float(profile.get("sensationalism") or 0)
-
         def profile_distance(article: dict[str, Any]) -> float:
             score = (platform.scores.get(article["id"]) or [{"x": 0}])[-1]
-            score_sensationalism = float(score.get("sensationalism") or 0)
-            return (
-                ((float(score["x"]) - float(profile["x"])) / 200.0) ** 2
-                + ((score_sensationalism - profile_sensationalism) / 100.0) ** 2
-            ) ** 0.5
+            return abs(float(score["x"]) - float(profile["x"])) / 200.0
 
         articles.sort(key=profile_distance)
     for article in articles:
@@ -1054,11 +1207,14 @@ async def get_issue_comparison(
                     },
                     "frame": snapshot["article_frames"].get(article_id, {}),
                     "vote_aggregate": {
-                        "qualified": {
-                            key: mean(key) for key in ("x", "y", "z", "sensationalism")
-                        },
+                        "qualified": public_vote_axis_means(
+                            {key: mean(key) for key in ("x", "y", "z", "sensationalism")},
+                            qualified_count=len(qualified),
+                        ),
                         "qualified_count": len(qualified),
-                        "small_segments_suppressed": len(qualified) < 5,
+                        "small_segments_suppressed": (
+                            len(qualified) < PUBLIC_VOTE_AGGREGATE_MIN_SIZE
+                        ),
                         "snapshot_version": max(
                             (row["revision"] for row in active_votes), default=None
                         ),
@@ -1491,9 +1647,17 @@ async def vote_aggregate(
         return round(fmean(row[key] for row in rows), 4) if rows else None
 
     return {
-        "qualified": {key: aggregate(qualified, key) for key in ("x", "y", "z", "sensationalism")},
+        "qualified": public_vote_axis_means(
+            {
+                key: aggregate(qualified, key)
+                for key in ("x", "y", "z", "sensationalism")
+            },
+            qualified_count=len(qualified),
+        ),
         "qualified_count": len(qualified),
-        "small_segments_suppressed": len(qualified) < 5,
+        "small_segments_suppressed": (
+            len(qualified) < PUBLIC_VOTE_AGGREGATE_MIN_SIZE
+        ),
         "snapshot_version": max((vote["revision"] for vote in active), default=None),
         "generated_at": max((vote.get("updated_at") for vote in active), default=None),
         "status": "ready",
@@ -1566,6 +1730,7 @@ async def put_vote(
         raise _not_found("article")
     with platform.lock:
         history = platform.votes.setdefault((principal.user_id, article_id), [])
+        save_status = "updated" if history else "created"
         if history:
             history[-1]["active"] = False
         latest_revision = max(
@@ -1588,14 +1753,46 @@ async def put_vote(
             "updated_at": utcnow(),
         }
         history.append(vote)
+        credit_delta = 0
+        event_key = f"vote:{article_id}"
+        ledger = platform.credits.setdefault(principal.user_id, [])
+        if save_status == "created" and not any(
+            entry.get("event_type") == "QUALIFIED_VOTE"
+            and entry.get("event_key") == event_key
+            for entry in ledger
+        ):
+            credit_delta = 10
+            ledger.append(
+                {
+                    "id": new_id(),
+                    "event_type": "QUALIFIED_VOTE",
+                    "event_key": event_key,
+                    "delta": credit_delta,
+                    "policy_version": "vote-credit-v1",
+                    "status": "POSTED",
+                    "created_at": utcnow(),
+                }
+            )
         platform.enqueue(
             "aggregate_votes",
             f"{article_id}:{revision}",
             {"article_id": article_id, "version": revision},
         )
     return {
-        key: vote[key]
-        for key in ("x", "y", "z", "sensationalism", "revision", "quality_status", "active")
+        **{
+            key: vote[key]
+            for key in (
+                "x",
+                "y",
+                "z",
+                "sensationalism",
+                "revision",
+                "quality_status",
+                "active",
+            )
+        },
+        "save_status": save_status,
+        "credit_delta": credit_delta,
     }
 
 
@@ -1692,35 +1889,6 @@ async def progress(
     compared_issue_ids = {
         issue_id for issue_id, ids in engaged_by_issue.items() if len(ids) >= 2
     }
-    profiles = [
-        row
-        for row in platform.profiles.values()
-        if row.get("user_id") == principal.user_id and row.get("active")
-    ]
-
-    def memory_profile(kind: str) -> dict[str, Any] | None:
-        row = next(
-            (
-                item
-                for item in reversed(profiles)
-                if str(item.get("kind", "")).casefold() in {
-                    kind,
-                    f"{kind}_profile",
-                }
-            ),
-            None,
-        )
-        if row is None:
-            return None
-        behavioral = kind == "behavioral"
-        return {
-            "x": row["x"],
-            "y": 0 if behavioral else row["y"],
-            "z": row["z"],
-            "sensationalism": row.get("sensationalism", row["y"] if behavioral else None),
-            "confidence": row.get("confidence", 0),
-        }
-
     return {
         "credit_total": total,
         "level": level,
@@ -1729,8 +1897,7 @@ async def progress(
         "read_article_count": len(read_article_ids),
         "compared_issue_count": len(compared_issue_ids),
         "source_diversity_count": len(source_ids),
-        "self_reported_profile": memory_profile("self_reported"),
-        "behavioral_profile": memory_profile("behavioral"),
+        **platform.consumption_profile(principal.user_id),
     }
 
 
@@ -1868,12 +2035,7 @@ async def visualization_points(
             {
                 "entity_type": "user",
                 "entity_id": profile.get("id", principal.user_id),
-                "label": (
-                    "행동 기반 관점"
-                    if str(profile.get("kind", "")).casefold()
-                    in {"behavioral", "behavioral_profile"}
-                    else "자기보고 관점"
-                ),
+                "label": "검사 기반 이념 위치",
                 **{
                     key: value
                     for key, value in profile.items()
@@ -1881,7 +2043,11 @@ async def visualization_points(
                 },
             }
             for profile in platform.profiles.values()
-            if profile["user_id"] == principal.user_id and profile["active"]
+            if profile["user_id"] == principal.user_id
+            and profile["active"]
+            and str(profile.get("kind", "")).casefold()
+            in {"self_reported", "self_reported_profile"}
+            and profile.get("source_version") == POLITICAL_QUESTIONNAIRE_VERSION
         ]
     return _page(rows, cursor)
 
@@ -1910,7 +2076,13 @@ async def visualization_timeline(
         if not principal or principal.user_id != entity_id:
             raise ApiError(403, "OWNER_REQUIRED", "User-coordinate history is private.")
         rows = [
-            profile for profile in platform.profiles.values() if profile["user_id"] == entity_id
+            profile
+            for profile in platform.profiles.values()
+            if profile["user_id"] == entity_id
+            and profile["active"]
+            and str(profile.get("kind", "")).casefold()
+            in {"self_reported", "self_reported_profile"}
+            and profile.get("source_version") == POLITICAL_QUESTIONNAIRE_VERSION
         ]
     else:
         rows = [
@@ -1942,6 +2114,10 @@ async def create_share_card(
                 display_name=body.display_name,
                 publication_confirmed=body.political_data_publication_confirmed,
             )
+        except PermissionError as exc:
+            raise ApiError(
+                403, "CONSENT_REQUIRED", "Separate political-data consent is required."
+            ) from exc
         except ProductConflictError as exc:
             raise ApiError(
                 409, "PROFILE_REQUIRED", "An active profile is required for sharing."
@@ -1951,12 +2127,17 @@ async def create_share_card(
             "status": job["status"],
             "share_card_id": _card["id"],
         }
-    card = platform.create_share_card(
-        principal.user_id,
-        body.template,
-        body.display_name,
-        publication_confirmed=body.political_data_publication_confirmed,
-    )
+    try:
+        card = platform.create_share_card(
+            principal.user_id,
+            body.template,
+            body.display_name,
+            publication_confirmed=body.political_data_publication_confirmed,
+        )
+    except PermissionError as exc:
+        raise ApiError(
+            403, "CONSENT_REQUIRED", "Separate political-data consent is required."
+        ) from exc
     job = next(
         job
         for job in platform.jobs.values()
@@ -1982,7 +2163,10 @@ async def get_share_card(
     card = platform.share_cards.get(share_card_id)
     if not card or card["user_id"] != principal.user_id:
         raise _not_found("share_card")
-    return {key: card[key] for key in ("id", "status", "public_token", "etag", "snapshot")}
+    return {
+        **{key: card[key] for key in ("id", "status", "public_token", "etag")},
+        "snapshot": public_snapshot_view(card["snapshot"]),
+    }
 
 
 @router.post(
@@ -2074,7 +2258,7 @@ async def get_public_share(
             "id": repository_card.id,
             "template": repository_card.template,
             "display_name": repository_card.display_name,
-            "snapshot": repository_card.snapshot_json,
+            "snapshot": public_snapshot_view(repository_card.snapshot_json),
             "etag": None if blob is None else f'"{blob.sha256.hex()}"',
         }
     card = _public_card(public_token, platform)
@@ -2082,7 +2266,7 @@ async def get_public_share(
         "id": card["id"],
         "template": card["template"],
         "display_name": card["display_name"],
-        "snapshot": card["snapshot"],
+        "snapshot": public_snapshot_view(card["snapshot"]),
         "etag": card["etag"],
     }
 
@@ -2098,7 +2282,12 @@ async def get_public_share_image(
         result = await repository.public_share_card(public_token)
         if result is None:
             raise _not_found("public_share")
-        _card, blob = result
+        repository_card, blob = result
+        if (
+            repository_card.snapshot_json.get("snapshot_schema_version")
+            != NEWS_CONSUMPTION_SNAPSHOT_VERSION
+        ):
+            raise _not_found("public_share_image")
         if blob is None:
             raise ApiError(
                 409, "SHARE_IMAGE_NOT_READY", "The share image is not ready.", retryable=True
@@ -2109,6 +2298,8 @@ async def get_public_share_image(
             return Response(status_code=304, headers=headers)
         return Response(content=blob.payload, media_type=blob.mime_type, headers=headers)
     card = _public_card(public_token, platform)
+    if card["snapshot"].get("snapshot_schema_version") != NEWS_CONSUMPTION_SNAPSHOT_VERSION:
+        raise _not_found("public_share_image")
     headers = {"ETag": card["etag"], "Cache-Control": "public, max-age=300"}
     if if_none_match == card["etag"]:
         return Response(status_code=304, headers=headers)

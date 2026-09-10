@@ -302,7 +302,10 @@ class WorkerRuntime:
                     if owner_token == "cached":
                         applied = await self._apply_result(job, cached, context)
                         completed = await self.repository.complete(
-                            job.id, self.worker_id, result=applied
+                            job.id,
+                            self.worker_id,
+                            attempt=job.attempts,
+                            result=applied,
                         )
                         if not completed:
                             logger.warning("job lease lost before cached completion: %s", job.id)
@@ -336,7 +339,12 @@ class WorkerRuntime:
                 if self.idempotency_store is not None and owner_token is not None:
                     await self.idempotency_store.complete(idempotency_key, owner_token, applied)
                     idempotency_completed = True
-                completed = await self.repository.complete(job.id, self.worker_id, result=applied)
+                completed = await self.repository.complete(
+                    job.id,
+                    self.worker_id,
+                    attempt=job.attempts,
+                    result=applied,
+                )
                 if not completed:
                     # The lease may have expired between handler completion and
                     # the update.  Durable idempotency still prevents a
@@ -471,6 +479,7 @@ class WorkerRuntime:
                     renewed = await self.repository.heartbeat(
                         job.id,
                         self.worker_id,
+                        attempt=job.attempts,
                         lease_seconds=self.config.lease_seconds,
                     )
                 except Exception as exc:
@@ -496,6 +505,7 @@ class WorkerRuntime:
             job.id,
             self.worker_id,
             error,
+            attempt=job.attempts,
             retryable=retryable,
             backoff_seconds=delay,
         )

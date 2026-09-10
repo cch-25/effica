@@ -9,6 +9,9 @@ from enum import Enum
 from statistics import mean
 from typing import Any
 
+PUBLIC_VOTE_AGGREGATE_MIN_SIZE = 5
+PUBLIC_VOTE_AXIS_KEYS = ("x", "y", "z", "sensationalism")
+
 
 class VoteQuality(str, Enum):
     VALID = "VALID"
@@ -225,6 +228,23 @@ def hide_small_segments(aggregate: Mapping[str, Any], *, min_size: int = 5) -> d
         key: value for key, value in segments.items() if int(value.get("count", 0)) >= min_size
     }
     return result
+
+
+def public_vote_axis_means(
+    aggregate: Mapping[str, Any] | None,
+    *,
+    qualified_count: int,
+    min_size: int = PUBLIC_VOTE_AGGREGATE_MIN_SIZE,
+) -> dict[str, Any]:
+    """Expose overall vote means only after the public cohort reaches k."""
+
+    if min_size < 1:
+        raise ValueError("min_size must be positive")
+    values = aggregate if isinstance(aggregate, Mapping) else {}
+    return {
+        key: values.get(key) if qualified_count >= min_size else None
+        for key in PUBLIC_VOTE_AXIS_KEYS
+    }
 
 
 def detect_vote_anomaly(

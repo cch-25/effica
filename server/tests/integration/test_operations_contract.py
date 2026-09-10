@@ -33,6 +33,8 @@ def test_deploy_manifest_is_runtime_only_and_complete() -> None:
             "db/seeds/tier_policy.json",
         "pyproject.toml",
         "uv.lock",
+        "apps/worker/worker/assets/NotoSansKR.ttf",
+        "apps/worker/worker/assets/OFL.txt",
     }
     expected |= {path.relative_to(ROOT).as_posix() for path in (ROOT / "deploy").iterdir() if path.is_file()}
 

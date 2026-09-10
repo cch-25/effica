@@ -84,7 +84,9 @@ def test_oauth_nonce_return_path_and_provider_contract() -> None:
                 follow_redirects=False,
             )
             assert callback.status_code == 302
-            assert callback.headers["location"] == "http://localhost:3000/articles/article-1?tab=history"
+            assert callback.headers["location"] == (
+                "http://localhost:3000/articles/article-1?tab=history"
+            )
 
             failed_start = client.get(
                 "/api/v1/auth/mock/start",
@@ -105,7 +107,7 @@ def test_oauth_nonce_return_path_and_provider_contract() -> None:
                 "http://localhost:3000/login?oauthError=failed&returnTo=%2Farticles%2Farticle-1"
             )
 
-            state.users[state.default_users["MEMBER"]]["onboarding_complete"] = False
+            state.users[state.default_users["MEMBER"]]["consent_complete"] = False
             onboarding_start = client.get(
                 "/api/v1/auth/mock/start",
                 params={

@@ -217,14 +217,19 @@ class RSSAdapter(SourceAdapter):
         result: list[ArticleCandidate] = []
         seen: set[str] = set()
         feed_url = self.config.get("base_url") or self.config.get("url_base")
+        is_news_sitemap = _local_name(root.tag) == "urlset"
         # Local-name matching handles RSS namespaces and Atom feeds.  Child
         # text is collected recursively because Atom author/content and RSS
-        # extension elements are often nested or wrapped in CDATA/HTML.
+        # extension elements are often nested or wrapped in CDATA/HTML.  News
+        # sitemaps are accepted as bounded discovery feeds when a publisher no
+        # longer offers RSS; they expose canonical links, titles and dates but
+        # never bypass the normal policy-gated article hydration step.
         for node in root.iter():
-            if _local_name(node.tag) not in {"item", "entry"}:
+            node_name = _local_name(node.tag)
+            if node_name not in ({"url"} if is_news_sitemap else {"item", "entry"}):
                 continue
             fields = self._fields(node)
-            link = self._link(node, fields)
+            link = fields.get("loc", "") if is_news_sitemap else self._link(node, fields)
             if feed_url and link and not _is_absolute_http_url(link):
                 link = urljoin(str(feed_url), link)
             if not link:
@@ -234,6 +239,9 @@ class RSSAdapter(SourceAdapter):
             except ValueError:
                 continue
             if canonical in seen:
+                continue
+            title = unescape(fields.get("title", ""))
+            if is_news_sitemap and not title:
                 continue
             seen.add(canonical)
             body = _first_nonempty(
@@ -246,7 +254,7 @@ class RSSAdapter(SourceAdapter):
             result.append(
                 ArticleCandidate(
                     url=canonical,
-                    title=fields.get("title", ""),
+                    title=title,
                     body=_html_to_text(body),
                     author=_author_value(
                         _first_nonempty(
@@ -259,10 +267,16 @@ class RSSAdapter(SourceAdapter):
                             fields.get("published"),
                             fields.get("updated"),
                             fields.get("date"),
+                            fields.get("publication_date"),
+                            fields.get("lastmod"),
                         )
                     ),
                     source_id=self.source_id,
-                    external_id=_first_nonempty(fields.get("guid"), fields.get("id")) or None,
+                    external_id=(
+                        canonical
+                        if is_news_sitemap
+                        else _first_nonempty(fields.get("guid"), fields.get("id")) or None
+                    ),
                     adapter_type=self.adapter_type,
                 )
             )

@@ -9,11 +9,50 @@ from .base import (
     HandlerContext,
     HandlerResult,
     NonRetryableHandlerError,
+    RetryableHandlerError,
     lookup_service,
     stable_digest,
 )
 
 JOB_TYPE = "export_user"
+
+_LOOKUP_NAMES = ("export_records_lookup", "load_export_records", "export_records")
+_PRIVATE_KEYS = frozenset(
+    {
+        "access_token",
+        "api_key",
+        "client_secret",
+        "csrf_hash",
+        "csrf_token",
+        "encryption_key",
+        "encryption_secret",
+        "id_token",
+        "password",
+        "password_hash",
+        "private_key",
+        "refresh_token",
+        "secret",
+        "session_token",
+        "token_hash",
+    }
+)
+
+
+def _export_value(value: Any) -> Any:
+    """Copy export data while removing operational authentication material."""
+
+    if isinstance(value, Mapping):
+        exported: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized_key = str(key)
+            private_key = normalized_key.strip().lower().replace("-", "_")
+            if private_key in _PRIVATE_KEYS:
+                continue
+            exported[normalized_key] = _export_value(item)
+        return exported
+    if isinstance(value, (list, tuple)):
+        return [_export_value(item) for item in value]
+    return value
 
 
 async def handle(payload: Mapping[str, Any], context: HandlerContext | None = None) -> HandlerResult:
@@ -21,17 +60,41 @@ async def handle(payload: Mapping[str, Any], context: HandlerContext | None = No
     if user_id in (None, ""):
         raise NonRetryableHandlerError("user_id is required", code="INVALID_EXPORT_PAYLOAD")
     records = payload.get("records")
+    loaded_from_lookup = records is None
     if records is None:
+        if context is None or not any(name in context.services for name in _LOOKUP_NAMES):
+            raise RetryableHandlerError(
+                "export data lookup is unavailable",
+                code="EXPORT_DATA_UNAVAILABLE",
+            )
         records = await lookup_service(
             context,
-            ("export_records_lookup", "load_export_records", "export_records"),
+            _LOOKUP_NAMES,
             identifier=user_id,
             payload=payload,
         )
-    records = {} if records is None else records
+    if records is None:
+        raise RetryableHandlerError(
+            "export data lookup returned no result",
+            code="EXPORT_DATA_UNAVAILABLE",
+        )
     if not isinstance(records, Mapping):
         raise NonRetryableHandlerError("records must be an object", code="INVALID_EXPORT_RECORDS")
-    normalized_records = {str(key): value for key, value in records.items()}
+    exported_user = records.get("user")
+    if loaded_from_lookup and exported_user is None:
+        raise NonRetryableHandlerError(
+            "export user was not found",
+            code="EXPORT_USER_NOT_FOUND",
+        )
+    if exported_user is not None and (
+        not isinstance(exported_user, Mapping)
+        or str(exported_user.get("id") or "") != str(user_id)
+    ):
+        raise NonRetryableHandlerError(
+            "export data does not belong to the requested user",
+            code="EXPORT_OWNER_MISMATCH",
+        )
+    normalized_records = _export_value(records)
     manifest = {
         "user_id": str(user_id),
         "sections": sorted(normalized_records),

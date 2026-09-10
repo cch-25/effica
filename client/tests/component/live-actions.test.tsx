@@ -8,6 +8,13 @@ vi.mock("@/lib/api/client", () => ({ apiRequest: mocks.apiRequest }));
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
+it("이전 편향 기반 카드는 새 검사를 안내하고 예전 이미지 공유를 노출하지 않는다", () => {
+  render(<ShareCardStatus initialCard={{ id: "card-legacy", status: "ready", public_token: "token-old", snapshot: { legacy: true, x: 85 } }} />);
+  expect(screen.getByRole("link", { name: "새 카드를 만들어 주세요." })).toHaveAttribute("href", "/share/new");
+  expect(screen.queryByRole("link", { name: "PNG 다운로드" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "공개 링크 복사" })).not.toBeInTheDocument();
+});
+
 it("기사 체류 기록은 별도 조작 UI 없이 페이지 이탈 시 자동 전송된다", async () => {
   mocks.apiRequest.mockImplementation((path: string) => path.includes("/read-sessions/session-1/return")
     ? Promise.resolve({ status: "eligible", reason_code: "ELIGIBLE", server_elapsed_ms: 20_000, credit_delta: 12 })

@@ -10,22 +10,26 @@ from .score import (
     canonical_score_json,
 )
 from .votes import (
+    PUBLIC_VOTE_AGGREGATE_MIN_SIZE,
     Vote,
     VoteQuality,
     VoteRevisionStore,
     aggregate_votes,
     detect_vote_anomaly,
     hide_small_segments,
+    public_vote_axis_means,
     quality_status_for,
 )
 
 __all__ = [
+    "PUBLIC_VOTE_AGGREGATE_MIN_SIZE",
     "Vote",
     "VoteQuality",
     "VoteRevisionStore",
     "aggregate_votes",
     "detect_vote_anomaly",
     "hide_small_segments",
+    "public_vote_axis_means",
     "quality_status_for",
     "ArticleScore",
     "ScoreComponents",

@@ -338,7 +338,8 @@ def test_export_records_lookup_covers_oauth_sessions_and_impressions_without_sec
     assert "FROM oauth_accounts" in sql
     assert "provider_subject" in sql
     assert "FROM sessions" in sql
-    assert "token_hash" in sql
+    assert "token_hash" not in sql
+    assert "csrf_hash" not in sql
     assert "expires_at" in sql
     assert "revoked_at" in sql
     assert "FROM feed_impressions" in sql

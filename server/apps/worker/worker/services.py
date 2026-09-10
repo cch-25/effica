@@ -693,12 +693,28 @@ class MariaDBResultApplier:
                 # Serialize replay with the current lease holder.  The query
                 # is intentionally harmless for small fake sessions used by
                 # SQL contract tests.
-                await _maybe_await(
+                locked_result = await _maybe_await(
                     session.execute(
-                        _sql("SELECT id FROM jobs WHERE id = :job_id FOR UPDATE"),
+                        _sql(
+                            "SELECT status, lease_owner, attempts FROM jobs "
+                            "WHERE id = :job_id FOR UPDATE"
+                        ),
                         {"job_id": job.id},
                     )
                 )
+                if job.job_type == "export_user" and context is not None:
+                    locked_rows = _rows(locked_result)
+                    locked_job = locked_rows[0] if locked_rows else None
+                    locked_status = getattr(
+                        _row(locked_job, "status"), "value", _row(locked_job, "status")
+                    )
+                    if (
+                        locked_job is None
+                        or locked_status != "LEASED"
+                        or str(_row(locked_job, "lease_owner") or "") != context.worker_id
+                        or int(_row(locked_job, "attempts", -1)) != context.attempt
+                    ):
+                        raise ResultApplicationError("export job lease generation is no longer current")
 
                 existing = await self._existing_result(session, job.id)
                 if existing is not None:
@@ -787,7 +803,12 @@ class MariaDBResultApplier:
                 "DAILY_LLM_BUDGET_EXCEEDED", "ESSENTIAL_LLM_BUDGET_RESERVED",
             }
         ):
-            await self._defer_budget_work(session, job, now)
+            await self._defer_budget_work(
+                session,
+                job,
+                now,
+                reason=str(result["skip_reason"]),
+            )
             return
         handlers = {
             "crawl": self._apply_crawl,
@@ -811,7 +832,14 @@ class MariaDBResultApplier:
             return
         await handler(session, job, result, now)
 
-    async def _defer_budget_work(self, session: Any, job: Job, now: datetime) -> None:
+    async def _defer_budget_work(
+        self,
+        session: Any,
+        job: Job,
+        now: datetime,
+        *,
+        reason: str,
+    ) -> None:
         """Carry unsubmitted work across KST resets without retrying paid calls."""
         seoul = ZoneInfo("Asia/Seoul")
         resume_at = (now.astimezone(seoul) + timedelta(days=1)).replace(
@@ -825,6 +853,7 @@ class MariaDBResultApplier:
         if resume_at >= deadline:
             return
         payload["budget_defer_deadline"] = deadline.isoformat()
+        payload["budget_defer_reason"] = reason
         fingerprint = hashlib.sha256(_json(payload).encode("utf-8")).hexdigest()
         await self._enqueue_job(
             session, job.job_type, payload,
@@ -1981,18 +2010,63 @@ class MariaDBResultApplier:
         day = now.astimezone(ZoneInfo("Asia/Seoul")).date().isoformat()
         for row in article_rows:
             version_id = str(_row(row, "article_version_id"))
-            existing = _rows(await self._execute(session, """
+            stored = _rows(await self._execute(session, """
                 SELECT ma.id FROM model_assessments ma
                 JOIN model_aliases aliases ON aliases.id = ma.model_alias_id
                 WHERE ma.article_version_id = :version_id AND ma.status = 'SUCCEEDED'
                   AND aliases.provider = 'openai' AND aliases.actual_model_id LIKE 'gpt-%'
-                UNION ALL
-                SELECT id FROM jobs WHERE job_type = 'analyze'
-                  AND status IN ('PENDING', 'LEASED')
-                  AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.article_version_id')) = :version_id
                 LIMIT 1
             """, {"version_id": version_id}))
-            if existing:
+            if stored:
+                continue
+
+            active_jobs = _rows(await self._execute(session, """
+                SELECT id, status, available_at,
+                       JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.budget_defer_reason'))
+                         AS budget_defer_reason
+                FROM jobs
+                WHERE job_type = 'analyze'
+                  AND status IN ('PENDING', 'LEASED')
+                  AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.article_version_id')) = :version_id
+                ORDER BY status = 'LEASED' DESC, available_at ASC, id ASC
+            """, {"version_id": version_id}))
+            if active_jobs:
+                # Only work rejected before a paid request because capacity was
+                # reserved for events may run sooner after clustering promotes
+                # the article. A hard-cap deferral or a leased request keeps its
+                # original boundary so event recovery cannot cause another paid
+                # submission or a tight retry loop.
+                deferred = next(
+                    (
+                        item
+                        for item in active_jobs
+                        if str(_row(item, "status", "")) == "PENDING"
+                        and str(_row(item, "budget_defer_reason", ""))
+                        == "ESSENTIAL_LLM_BUDGET_RESERVED"
+                        and _utc(_row(item, "available_at")) > now
+                    ),
+                    None,
+                )
+                if deferred is not None and not any(
+                    str(_row(item, "status", "")) == "LEASED"
+                    or (
+                        str(_row(item, "status", "")) == "PENDING"
+                        and _utc(_row(item, "available_at")) <= now
+                    )
+                    for item in active_jobs
+                ):
+                    await self._execute(
+                        session,
+                        """
+                        UPDATE jobs
+                        SET available_at = :now, updated_at = :now
+                        WHERE id = :job_id AND status = 'PENDING'
+                          AND available_at > :now
+                          AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.budget_defer_reason'))
+                              = 'ESSENTIAL_LLM_BUDGET_RESERVED'
+                        """,
+                        {"job_id": str(_row(deferred, "id")), "now": now},
+                    )
                 continue
             await self._enqueue_job(
                 session, "analyze", {"article_version_id": version_id},
@@ -2246,7 +2320,26 @@ class MariaDBResultApplier:
             raise ResultApplicationError("export result requires user_id")
         artifact = result.get("artifact") or result.get("manifest") or result
         payload = _bytes(_json(artifact))
-        blob_id = await self._store_blob(session, payload, mime_type="application/json", expires_at=now + timedelta(days=7))
+        expires_at = now + timedelta(days=7)
+        blob_id = await self._store_blob(
+            session,
+            payload,
+            mime_type="application/json",
+            expires_at=expires_at,
+        )
+        # Digest deduplication can return the prior row for an unchanged
+        # archive. Extend that row in the same transaction so a fresh export
+        # request never points back to an already expired artifact.
+        await self._execute(
+            session,
+            """
+            UPDATE stored_blobs
+            SET expires_at = :expires_at
+            WHERE id = :blob_id
+              AND (expires_at IS NULL OR expires_at < :expires_at)
+            """,
+            {"blob_id": blob_id, "expires_at": _database_timestamp(expires_at)},
+        )
         artifact_ref = result.get("artifact_ref") or result.get("export_key") or blob_id
         # There is intentionally no mutable export table in 0001.  The audit
         # result record is the durable, user-scoped artifact pointer.

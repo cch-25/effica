@@ -66,6 +66,16 @@ class JobAccepted(ContractModel):
     status: JobStatus = JobStatus.PENDING
 
 
+class ExportStatusView(ContractModel):
+    job_id: str = Field(pattern=ULID_PATTERN)
+    status: JobStatus
+    download_ready: bool
+    download_url: str | None = None
+    expires_at: datetime | None = None
+    failure_code: str | None = Field(default=None, max_length=100)
+    updated_at: datetime
+
+
 class ShareCardJobAccepted(JobAccepted):
     share_card_id: str = Field(pattern=ULID_PATTERN)
 
@@ -406,6 +416,24 @@ class VoteView(VoteInput):
     revision: int
     quality_status: str
     active: bool
+    save_status: Literal["created", "updated"] | None = None
+    credit_delta: int = 0
+
+
+class PerspectiveCountsView(ContractModel):
+    negative_x: int = Field(ge=0)
+    center: int = Field(ge=0)
+    positive_x: int = Field(ge=0)
+
+
+class IdeologyView(ContractModel):
+    completed: bool
+    x: int = Field(ge=-100, le=100)
+    y: int = Field(ge=-100, le=100)
+    z: int = Field(ge=-100, le=100)
+    confidence: float = Field(ge=0, le=1)
+    questionnaire_version: str | None
+    questionnaire_status: Literal["beta", "not_completed"]
 
 
 class ProgressView(ContractModel):
@@ -416,8 +444,11 @@ class ProgressView(ContractModel):
     read_article_count: int = Field(ge=0)
     compared_issue_count: int = Field(ge=0)
     source_diversity_count: int = Field(ge=0)
-    self_reported_profile: Coordinate | None = None
-    behavioral_profile: Coordinate | None = None
+    diversity_score: int = Field(ge=0, le=100)
+    diversity_article_count: int = Field(ge=0)
+    diversity_perspective_counts: PerspectiveCountsView
+    diversity_policy_version: str
+    ideology: IdeologyView
 
 
 class EfficacySubmission(QuestionnaireSubmission):

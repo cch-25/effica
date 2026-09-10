@@ -330,15 +330,25 @@ async def recover_pipeline(
                         "source": source.name,
                         "home_url": spec.home_url,
                         "action": "NONE" if source.active and approved else "REVIEW_REQUIRED",
+                        "policy_reference": spec.policy_reference,
+                        "review_note": spec.review_note,
                     }
                 )
                 continue
+            initial_status = (
+                SourcePolicyStatus.APPROVED
+                if spec.approve_on_bootstrap
+                else SourcePolicyStatus.PENDING
+            )
             diagnostics["scheduled_rss_source_plans"].append(
                 {
                     "source_id": None,
                     "source": spec.name,
                     "home_url": spec.home_url,
                     "action": "CREATE",
+                    "policy_status": initial_status.value,
+                    "policy_reference": spec.policy_reference,
+                    "review_note": spec.review_note,
                 }
             )
             actions["scheduled_rss_sources_bootstrapped"] += 1
@@ -349,9 +359,9 @@ async def recover_pipeline(
                 name=spec.name,
                 source_type=SourceType.RSS,
                 canonical_url=spec.home_url,
-                policy_status=SourcePolicyStatus.APPROVED,
-                robots_status=SourcePolicyStatus.APPROVED,
-                terms_status=SourcePolicyStatus.APPROVED,
+                policy_status=initial_status,
+                robots_status=initial_status,
+                terms_status=initial_status,
                 active=True,
             )
             session.add(source)
@@ -500,6 +510,25 @@ async def recover_pipeline(
             policy_reference=policy_reference,
         )
         if expected_rss is None:
+            continue
+        statuses_approved = all(
+            _value(value) == SourcePolicyStatus.APPROVED.value
+            for value in (
+                source.policy_status,
+                source.robots_status,
+                source.terms_status,
+            )
+        )
+        if not statuses_approved:
+            diagnostics["scheduled_rss_adapter_plans"].append(
+                {
+                    "source_id": source.id,
+                    "source": source.name,
+                    "source_type_preserved": _value(source.source_type),
+                    "feed_url": expected_rss["feed_url"],
+                    "action": "REVIEW_REQUIRED",
+                }
+            )
             continue
         rss_adapter = next(
             (
@@ -1231,7 +1260,7 @@ async def recover_pipeline(
             "robots_status": _value(source.robots_status),
             "terms_status": _value(source.terms_status),
         }
-        if selected_type == SourceType.CRAWLER.value and any(
+        if any(
             value != SourcePolicyStatus.APPROVED.value for value in statuses.values()
         ):
             deferred["crawl_blocked_policy"] += 1

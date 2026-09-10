@@ -122,6 +122,9 @@ def test_budget_deferral_resumes_at_kst_midnight_and_expires(job_type, payload):
         deferred = next(iter(session.jobs.values()))
         assert deferred["available_at"] == datetime(2026, 9, 7, 15, tzinfo=UTC)
         assert deferred["priority"] == 7
+        assert json.loads(deferred["payload_json"])["budget_defer_reason"] == (
+            "DAILY_LLM_BUDGET_EXCEEDED"
+        )
         job.payload = json.loads(deferred["payload_json"])
         await applier._apply_domain(session, job, skipped, now + timedelta(days=1))
         assert len(session.jobs) == 2
@@ -154,9 +157,16 @@ def test_event_membership_recovers_old_budget_skip_without_duplicating_pending_a
 
         async def execute(self, query, params):
             if "SELECT ma.id" in str(query):
-                if params["version_id"] == "stored-analysis" or params["version_id"] in self.pending:
+                if params["version_id"] == "stored-analysis":
                     return [{"id": "existing"}]
                 return []
+            if "FROM jobs" in str(query) and params["version_id"] in self.pending:
+                return [{
+                    "id": "existing",
+                    "status": "PENDING",
+                    "available_at": datetime(2026, 9, 7, 15, tzinfo=UTC),
+                    "budget_defer_reason": None,
+                }]
             if "INSERT INTO jobs" in str(query):
                 self.created.append(params)
                 self.pending.add(json.loads(params["payload_json"])["article_version_id"])
@@ -173,5 +183,62 @@ def test_event_membership_recovers_old_budget_skip_without_duplicating_pending_a
         await applier._ensure_event_article_analyses(session, versions, now)
         assert len(session.created) == 1
         assert session.created[0]["dedupe_key"] == "article-version:previously-skipped:essential:2026-09-08"
+
+    asyncio.run(scenario())
+
+
+def test_event_membership_wakes_only_capacity_reserved_deferral():
+    now = datetime(2026, 9, 10, 7, tzinfo=UTC)
+    later = now + timedelta(hours=8)
+
+    class Session:
+        def __init__(self):
+            self.updated = []
+            self.jobs = {
+                "reserved": {
+                    "id": "reserved-job",
+                    "status": "PENDING",
+                    "available_at": later,
+                    "budget_defer_reason": "ESSENTIAL_LLM_BUDGET_RESERVED",
+                },
+                "hard-cap": {
+                    "id": "hard-cap-job",
+                    "status": "PENDING",
+                    "available_at": later,
+                    "budget_defer_reason": "DAILY_LLM_BUDGET_EXCEEDED",
+                },
+                "leased": {
+                    "id": "leased-job",
+                    "status": "LEASED",
+                    "available_at": later,
+                    "budget_defer_reason": "ESSENTIAL_LLM_BUDGET_RESERVED",
+                },
+                "ready": {
+                    "id": "ready-job",
+                    "status": "PENDING",
+                    "available_at": now,
+                    "budget_defer_reason": "ESSENTIAL_LLM_BUDGET_RESERVED",
+                },
+            }
+
+        async def execute(self, query, params):
+            statement = str(query)
+            if "SELECT ma.id" in statement:
+                return []
+            if "FROM jobs" in statement:
+                return [self.jobs[params["version_id"]]]
+            if "UPDATE jobs" in statement:
+                self.updated.append(dict(params))
+                return []
+            if "INSERT INTO jobs" in statement:
+                raise AssertionError("active analysis must not be duplicated")
+            return []
+
+    async def scenario():
+        session = Session()
+        applier = MariaDBResultApplier(lambda: None)
+        rows = [{"article_version_id": version_id} for version_id in session.jobs]
+        await applier._ensure_event_article_analyses(session, rows, now)
+        assert session.updated == [{"job_id": "reserved-job", "now": now}]
 
     asyncio.run(scenario())
