@@ -56,10 +56,11 @@ from apps.api.app.db.models import (
 from apps.api.app.db.ulid import new_ulid
 from apps.api.app.db.utc import utc_now
 from apps.api.app.domains.content.trust import (
-    is_trusted_openai_assessment,
+    is_trusted_assessment,
     public_assessment_evidence,
     public_assessment_summary,
     public_score_assessment_summary,
+    score_analysis_provider,
     score_matches_trusted_assessments,
 )
 from apps.api.app.domains.engagement.read import evaluate_read_eligibility
@@ -151,7 +152,7 @@ class ProductRepositoryMixin:
             "components": row.components_json,
             "components_json": row.components_json,
             "status": _value(row.status),
-            "analysis_provider": "openai",
+            "analysis_provider": score_analysis_provider(row),
             "analysis_status": "READY",
             "created_at": row.created_at,
         }
@@ -163,6 +164,7 @@ class ProductRepositoryMixin:
         issue_id: str | None,
         *,
         analysis_status: str = "PROCESSING",
+        analysis_provider: str = "openai",
         summary: str = "",
     ) -> dict[str, Any]:
         return {
@@ -177,7 +179,7 @@ class ProductRepositoryMixin:
             "published_at": article.published_at,
             "current_version_id": article.current_version_id,
             "analysis_status": analysis_status,
-            "analysis_provider": "openai" if analysis_status == "READY" else None,
+            "analysis_provider": analysis_provider if analysis_status == "READY" else None,
             "status": _value(article.status),
         }
 
@@ -230,7 +232,7 @@ class ProductRepositoryMixin:
         trusted_by_version: dict[str, list[tuple[ModelAssessment, ModelAlias]]] = {}
         for assessment, alias in assessment_rows:
             all_by_version.setdefault(assessment.article_version_id, []).append((assessment, alias))
-            if is_trusted_openai_assessment(assessment, alias):
+            if is_trusted_assessment(assessment, alias):
                 trusted_by_version.setdefault(assessment.article_version_id, []).append(
                     (assessment, alias)
                 )
@@ -367,7 +369,7 @@ class ProductRepositoryMixin:
                         "confidence": float(score.confidence),
                     },
                     "published_at": article.published_at,
-                    "analysis_provider": "openai",
+                    "analysis_provider": score_analysis_provider(score),
                     "analysis_status": "READY",
                     "score_version_id": score.id,
                     "reason_code": reason,
@@ -599,6 +601,7 @@ class ProductRepositoryMixin:
                         source,
                         issue_id,
                         analysis_status="READY",
+                        analysis_provider=score_analysis_provider(score),
                         summary=summary,
                     ),
                     "coordinate": {
@@ -700,7 +703,7 @@ class ProductRepositoryMixin:
         )
         assessments_by_version: dict[str, list[tuple[ModelAssessment, ModelAlias]]] = {}
         for assessment, alias in assessment_rows:
-            if is_trusted_openai_assessment(assessment, alias):
+            if is_trusted_assessment(assessment, alias):
                 assessments_by_version.setdefault(assessment.article_version_id, []).append(
                     (assessment, alias)
                 )
@@ -826,6 +829,7 @@ class ProductRepositoryMixin:
                         source,
                         issue_id,
                         analysis_status="READY",
+                        analysis_provider=score_analysis_provider(score),
                         summary=summary,
                     ),
                     "score": self._score_view(score),
@@ -837,7 +841,7 @@ class ProductRepositoryMixin:
                         "summary": summary,
                         "evidence": evidence,
                         "confidence": float(assessment.confidence),
-                        "provider": "openai",
+                        "provider": alias.provider,
                         "created_at": assessment.created_at,
                         "synthetic": False,
                     },
@@ -911,6 +915,7 @@ class ProductRepositoryMixin:
         return self._article_view(
             *context,
             analysis_status=status,
+            analysis_provider=score_analysis_provider(score),
             summary=summary,
         )
 
@@ -934,7 +939,7 @@ class ProductRepositoryMixin:
                     "summary": _linked_assessment_summary(assessment, score),
                     "confidence": float(assessment.confidence),
                     "evidence": public_assessment_evidence(assessment.evidence_json),
-                    "provider": "openai",
+                    "provider": alias.provider,
                     "created_at": assessment.created_at,
                     "synthetic": False,
                 }

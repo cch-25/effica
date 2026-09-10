@@ -34,7 +34,7 @@ export type Article = Omit<AxisScores, "sensationalism"> & {
   reasonCode: "ADJACENT_VIEW" | "SOURCE_DIVERSITY" | "ISSUE_BALANCE" | "RECENT_HIGH_CONFIDENCE";
   scoreVersion: string;
   analysisStatus: "READY" | "PROCESSING" | "PARTIAL" | "UNTRUSTED";
-  analysisProvider: "openai" | null;
+  analysisProvider: "openai" | "codex" | null;
   stale?: boolean;
   claims: string[];
 };
@@ -85,7 +85,7 @@ export type IssueComparison = {
       published_at: string | null;
       current_version_id: string | null;
       analysis_status: "READY";
-      analysis_provider: "openai";
+      analysis_provider: "openai" | "codex";
       status: string;
     };
     score: AxisScores & {
@@ -97,7 +97,7 @@ export type IssueComparison = {
       components: Record<string, unknown>;
       components_json: Record<string, unknown> | null;
       status: string;
-      analysis_provider: "openai";
+      analysis_provider: "openai" | "codex";
       analysis_status: "READY";
       created_at: string;
     };
@@ -109,7 +109,7 @@ export type IssueComparison = {
       summary: string;
       evidence: Array<Record<string, unknown>>;
       confidence: number;
-      provider: "openai";
+      provider: "openai" | "codex";
       created_at: string;
       synthetic: false;
     };

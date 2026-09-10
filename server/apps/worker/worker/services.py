@@ -1317,8 +1317,11 @@ class MariaDBResultApplier:
                   ON aliases.id = assessments.model_alias_id
                 WHERE assessments.article_version_id = :version_id
                   AND assessments.status = 'SUCCEEDED'
-                  AND LOWER(aliases.provider) = 'openai'
-                  AND aliases.actual_model_id LIKE 'gpt-%'
+                  AND ((LOWER(aliases.provider) = 'openai' AND aliases.actual_model_id LIKE 'gpt-%')
+                    OR (aliases.provider = 'codex'
+                        AND aliases.alias = 'codex-direct-20260910'
+                        AND aliases.actual_model_id = 'codex-subagent-direct'
+                        AND assessments.prompt_version = 'codex-direct-bias-sensationalism-v1'))
                 LIMIT 1
                 """,
                 {"version_id": version_id},
@@ -2029,7 +2032,11 @@ class MariaDBResultApplier:
                 SELECT ma.id FROM model_assessments ma
                 JOIN model_aliases aliases ON aliases.id = ma.model_alias_id
                 WHERE ma.article_version_id = :version_id AND ma.status = 'SUCCEEDED'
-                  AND aliases.provider = 'openai' AND aliases.actual_model_id LIKE 'gpt-%'
+                  AND ((aliases.provider = 'openai' AND aliases.actual_model_id LIKE 'gpt-%')
+                    OR (aliases.provider = 'codex'
+                        AND aliases.alias = 'codex-direct-20260910'
+                        AND aliases.actual_model_id = 'codex-subagent-direct'
+                        AND ma.prompt_version = 'codex-direct-bias-sensationalism-v1'))
                 LIMIT 1
             """, {"version_id": version_id}))
             if stored:

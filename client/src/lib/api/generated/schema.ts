@@ -1291,7 +1291,7 @@ export interface components {
         /** ArticleView */
         ArticleView: {
             /** Analysis Provider */
-            analysis_provider?: "openai" | null;
+            analysis_provider?: ("openai" | "codex") | null;
             /** @default PROCESSING */
             analysis_status: components["schemas"]["AnalysisStatus"];
             /** Author */
@@ -1323,7 +1323,7 @@ export interface components {
         /** ArticleWithCoordinate */
         ArticleWithCoordinate: {
             /** Analysis Provider */
-            analysis_provider?: "openai" | null;
+            analysis_provider?: ("openai" | "codex") | null;
             /** @default PROCESSING */
             analysis_status: components["schemas"]["AnalysisStatus"];
             /** Author */
@@ -1523,9 +1523,9 @@ export interface components {
         FeedItem: {
             /**
              * Analysis Provider
-             * @constant
+             * @enum {string}
              */
-            analysis_provider: "openai";
+            analysis_provider: "openai" | "codex";
             /**
              * Analysis Status
              * @constant
@@ -2015,9 +2015,9 @@ export interface components {
             prompt_version: string;
             /**
              * Provider
-             * @constant
+             * @enum {string}
              */
-            provider: "openai";
+            provider: "openai" | "codex";
             /** Summary */
             summary: string;
             /**
@@ -2141,9 +2141,9 @@ export interface components {
             /**
              * Analysis Provider
              * @default openai
-             * @constant
+             * @enum {string}
              */
-            analysis_provider: "openai";
+            analysis_provider: "openai" | "codex";
             /**
              * Analysis Status
              * @default READY

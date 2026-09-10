@@ -165,7 +165,7 @@ class FeedItem(ContractModel):
     source: str
     coordinate: Coordinate
     published_at: datetime | None
-    analysis_provider: Literal["openai"]
+    analysis_provider: Literal["openai", "codex"]
     analysis_status: Literal[AnalysisStatus.READY]
     score_version_id: str
     reason_code: str
@@ -190,7 +190,7 @@ class ArticleView(ContractModel):
     published_at: datetime | None = None
     current_version_id: str | None = None
     analysis_status: AnalysisStatus = AnalysisStatus.PROCESSING
-    analysis_provider: Literal["openai"] | None = None
+    analysis_provider: Literal["openai", "codex"] | None = None
     status: str
 
 
@@ -212,7 +212,7 @@ class ScoreView(Coordinate):
     components: dict[str, Any]
     components_json: dict[str, Any] | None = None
     status: str
-    analysis_provider: Literal["openai"] = "openai"
+    analysis_provider: Literal["openai", "codex"] = "openai"
     analysis_status: Literal[AnalysisStatus.READY] = AnalysisStatus.READY
     created_at: datetime
 
@@ -258,7 +258,7 @@ class PublicAssessment(ContractModel):
     summary: str
     evidence: list[dict[str, Any]]
     confidence: float = Field(ge=0, le=1)
-    provider: Literal["openai"]
+    provider: Literal["openai", "codex"]
     created_at: datetime
     synthetic: Literal[False]
 

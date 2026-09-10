@@ -62,8 +62,9 @@ describe("comparison URL selection", () => {
     });
   });
 
-  it("only accepts ready OpenAI articles with a sensationalism score", () => {
+  it("accepts ready provider or direct Codex assessments with a sensationalism score", () => {
     expect(isComparisonReadyArticle(article("a", "one"))).toBe(true);
+    expect(isComparisonReadyArticle({ ...article("a", "one"), analysisProvider: "codex" })).toBe(true);
     expect(isComparisonReadyArticle({ ...article("b", "two"), analysisStatus: "PROCESSING" })).toBe(false);
     expect(isComparisonReadyArticle({ ...article("c", "three"), analysisProvider: null })).toBe(false);
     expect(isComparisonReadyArticle({ ...article("d", "four"), sensationalism: null })).toBe(false);

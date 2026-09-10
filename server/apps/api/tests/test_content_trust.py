@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from apps.api.app.domains.content.trust import (
+    is_trusted_assessment,
     is_trusted_openai_assessment,
     public_assessment_evidence,
     public_assessment_summary,
@@ -84,3 +85,31 @@ def test_historical_openai_assessment_survives_alias_rotation() -> None:
 
     synthetic_alias = SimpleNamespace(**{**vars(alias), "alias": "deterministic-stub"})
     assert not is_trusted_openai_assessment(assessment, synthetic_alias)
+
+
+def test_direct_codex_import_is_narrow_and_retains_its_provider() -> None:
+    assessment = SimpleNamespace(
+        id="direct-1", status="SUCCEEDED",
+        prompt_version="codex-direct-bias-sensationalism-v1", evidence_json={},
+    )
+    alias = SimpleNamespace(
+        provider="codex", alias="codex-direct-20260910",
+        actual_model_id="codex-subagent-direct",
+    )
+    assert is_trusted_assessment(assessment, alias)
+    assert not is_trusted_openai_assessment(assessment, alias)
+    for field, value in (("provider", "other"), ("alias", "codex-other"),
+                         ("actual_model_id", "gpt-5.6-luna")):
+        assert not is_trusted_assessment(
+            assessment, SimpleNamespace(**{**vars(alias), field: value})
+        )
+    for field, value in (("status", "FAILED"), ("prompt_version", "unknown"),
+                         ("evidence_json", {"synthetic": True})):
+        assert not is_trusted_assessment(
+            SimpleNamespace(**{**vars(assessment), field: value}), alias
+        )
+    score = SimpleNamespace(components_json={
+        "analysis_provider": "codex", "assessment_ids": ["direct-1"],
+    })
+    assert score_matches_trusted_assessments(score, [(assessment, alias)])
+    assert not score_matches_trusted_assessments(score, [(assessment, SimpleNamespace())])

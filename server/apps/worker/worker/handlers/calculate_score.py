@@ -50,7 +50,7 @@ async def handle(
             "score components are required", code="INVALID_SCORE_PAYLOAD"
         )
     components = dict(components)
-    if loaded_components and str(provenance.get("analysis_provider", "")).casefold() == "openai":
+    if loaded_components and str(provenance.get("analysis_provider", "")).casefold() in {"openai", "codex"}:
         assessment_ids = provenance.get("assessment_ids")
         actual_model_ids = provenance.get("actual_model_ids")
         if (

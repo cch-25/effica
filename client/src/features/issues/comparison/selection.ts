@@ -20,7 +20,7 @@ export function defaultComparisonSelection(articles: Article[]): string[] {
 
 export function isComparisonReadyArticle(article: Article): boolean {
   return article.analysisStatus === "READY"
-    && article.analysisProvider === "openai"
+    && (article.analysisProvider === "openai" || article.analysisProvider === "codex")
     && article.sensationalism !== null;
 }
 

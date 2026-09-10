@@ -6,6 +6,33 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 _SYNTHETIC_ALIASES = frozenset({"dummy-crawl-v1", "deterministic-stub"})
+CODEX_DIRECT_ALIAS = "codex-direct-20260910"
+CODEX_DIRECT_MODEL = "codex-subagent-direct"
+CODEX_DIRECT_PROMPT = "codex-direct-bias-sensationalism-v1"
+
+
+def is_trusted_assessment(assessment: Any, alias: Any) -> bool:
+    """Accept provider calls or the explicitly authorized direct Codex import."""
+    if is_trusted_openai_assessment(assessment, alias):
+        return True
+    status = getattr(getattr(assessment, "status", None), "value", None) or getattr(
+        assessment, "status", None
+    )
+    return (
+        str(status).upper() == "SUCCEEDED"
+        and getattr(alias, "provider", None) == "codex"
+        and getattr(alias, "alias", None) == CODEX_DIRECT_ALIAS
+        and getattr(alias, "actual_model_id", None) == CODEX_DIRECT_MODEL
+        and getattr(assessment, "prompt_version", None) == CODEX_DIRECT_PROMPT
+        and not evidence_is_synthetic(getattr(assessment, "evidence_json", None))
+    )
+
+
+def score_analysis_provider(score: Any) -> str:
+    components = getattr(score, "components_json", None)
+    if isinstance(components, Mapping) and components.get("analysis_provider") == "codex":
+        return "codex"
+    return "openai"
 
 
 def evidence_is_synthetic(evidence: Any) -> bool:
@@ -56,6 +83,15 @@ def score_matches_trusted_assessments(
         return False
     declared = _score_assessment_ids(components)
     trusted = {str(getattr(assessment, "id", "")) for assessment, _ in trusted_assessments}
+    if components.get("analysis_provider") == "codex":
+        direct = {
+            str(getattr(assessment, "id", ""))
+            for assessment, alias in trusted_assessments
+            if getattr(alias, "provider", None) == "codex"
+            and is_trusted_assessment(assessment, alias)
+        }
+        if not declared & direct:
+            return False
     return bool(declared & trusted)
 
 
@@ -63,7 +99,7 @@ def _score_assessment_ids(components: Mapping[str, Any]) -> set[str]:
     """Read current provenance or the pre-migration seed shape, never both."""
 
     if "analysis_provider" in components or "assessment_ids" in components:
-        if str(components.get("analysis_provider", "")).casefold() != "openai":
+        if str(components.get("analysis_provider", "")).casefold() not in {"openai", "codex"}:
             return set()
         identifiers = components.get("assessment_ids")
         if not isinstance(identifiers, Sequence) or isinstance(

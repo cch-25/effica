@@ -111,9 +111,14 @@ class MariaDBWorkerLookups:
             SELECT ma.evidence_json
             FROM model_assessments ma
             JOIN model_aliases aliases ON aliases.id = ma.model_alias_id
-            WHERE ma.article_version_id = :version_id AND ma.prompt_version = :prompt_version
-              AND ma.status = 'SUCCEEDED' AND aliases.provider = 'openai'
-              AND aliases.actual_model_id LIKE 'gpt-%'
+            WHERE ma.article_version_id = :version_id
+              AND ma.status = 'SUCCEEDED'
+              AND ((ma.prompt_version = :prompt_version
+                    AND aliases.provider = 'openai' AND aliases.actual_model_id LIKE 'gpt-%')
+                OR (aliases.provider = 'codex'
+                    AND aliases.alias = 'codex-direct-20260910'
+                    AND aliases.actual_model_id = 'codex-subagent-direct'
+                    AND ma.prompt_version = 'codex-direct-bias-sensationalism-v1'))
               AND aliases.alias NOT IN ('dummy-crawl-v1', 'deterministic-stub')
         """, {"version_id": version_id, "prompt_version": prompt_version})
         return any(
@@ -297,13 +302,16 @@ class MariaDBWorkerLookups:
         assessments = await self._all(
             """
             SELECT ma.id, ma.x, ma.y, ma.z, ma.sensationalism, ma.confidence,
-                   ma.evidence_json, aliases.actual_model_id
+                   ma.evidence_json, aliases.actual_model_id, aliases.provider
             FROM model_assessments ma
             JOIN model_aliases aliases ON aliases.id = ma.model_alias_id
             WHERE ma.article_version_id = :version_id
               AND ma.status = 'SUCCEEDED'
-              AND aliases.provider = 'openai'
-              AND aliases.actual_model_id LIKE 'gpt-%'
+              AND ((aliases.provider = 'openai' AND aliases.actual_model_id LIKE 'gpt-%')
+                OR (aliases.provider = 'codex'
+                    AND aliases.alias = 'codex-direct-20260910'
+                    AND aliases.actual_model_id = 'codex-subagent-direct'
+                    AND ma.prompt_version = 'codex-direct-bias-sensationalism-v1'))
               AND aliases.alias NOT IN ('dummy-crawl-v1', 'deterministic-stub')
             ORDER BY ma.id
             """,
@@ -368,7 +376,10 @@ class MariaDBWorkerLookups:
                 "evidence_quality": evidence_quality,
             },
             "provenance": {
-                "analysis_provider": "openai",
+                "analysis_provider": (
+                    "codex" if any(row.get("provider") == "codex" for row in assessments)
+                    else "openai"
+                ),
                 "assessment_ids": [str(row["id"]) for row in assessments],
                 "actual_model_ids": sorted(
                     {str(row["actual_model_id"]) for row in assessments}

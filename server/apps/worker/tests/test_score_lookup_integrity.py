@@ -113,3 +113,19 @@ async def test_model_spread_compares_models_on_bias_axis_only() -> None:
     assert result is not None
     assert result["components"]["model_spread"] == 20.0
     assert result["components"]["evidence_quality"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_direct_codex_score_does_not_claim_a_provider_api_call() -> None:
+    lookup = LookupFixture(assessments=[{
+        "id": "direct-1", "x": 5, "y": 0, "z": 0,
+        "sensationalism": 10, "confidence": 0.8,
+        "provider": "codex", "actual_model_id": "codex-subagent-direct",
+        "evidence_json": {"evidence": [{"quote": "본문 근거"}]},
+    }])
+    result = await lookup.score_components_lookup("version-1")
+    assert result is not None
+    assert result["provenance"] == {
+        "analysis_provider": "codex", "assessment_ids": ["direct-1"],
+        "actual_model_ids": ["codex-subagent-direct"],
+    }

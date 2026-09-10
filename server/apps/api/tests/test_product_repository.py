@@ -214,8 +214,9 @@ async def test_public_issues_and_comparisons_enforce_rolling_four_day_window(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["openai", "codex"])
 async def test_public_feed_enforces_four_day_article_cutoff_without_stale_fallback(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, provider: str,
 ) -> None:
     now = datetime(2026, 9, 4, 12, tzinfo=UTC)
     monkeypatch.setattr("apps.api.app.repositories.product.utc_now", lambda: now)
@@ -252,9 +253,9 @@ async def test_public_feed_enforces_four_day_article_cutoff_without_stale_fallba
                 ),
                 ModelAlias(
                     id=alias_id,
-                    alias="feed-freshness-openai",
-                    provider="openai",
-                    actual_model_id="gpt-5-mini",
+                    alias="codex-direct-20260910" if provider == "codex" else "feed-freshness-openai",
+                    provider=provider,
+                    actual_model_id="codex-subagent-direct" if provider == "codex" else "gpt-5-mini",
                     status=ModelStatus.ACTIVE,
                     config_json={},
                 ),
@@ -317,7 +318,7 @@ async def test_public_feed_enforces_four_day_article_cutoff_without_stale_fallba
                         id=assessment_id,
                         article_version_id=version_id,
                         model_alias_id=alias_id,
-                        prompt_version="feed-freshness-v1",
+                        prompt_version="codex-direct-bias-sensationalism-v1" if provider == "codex" else "feed-freshness-v1",
                         x=0,
                         y=0,
                         z=0,
@@ -339,7 +340,7 @@ async def test_public_feed_enforces_four_day_article_cutoff_without_stale_fallba
                         sensationalism=20,
                         confidence=0.8,
                         components_json={
-                            "analysis_provider": "openai",
+                            "analysis_provider": provider,
                             "assessment_ids": [assessment_id],
                         },
                         status=ScoreStatus.ACTIVE,
@@ -377,6 +378,14 @@ async def test_public_feed_enforces_four_day_article_cutoff_without_stale_fallba
 
         assert personalized is False
         assert [item["article_id"] for item in feed] == [boundary_id]
+        assert feed[0]["analysis_provider"] == provider
+        article_view = await repository.article_view(boundary_id)
+        assert article_view is not None
+        assert article_view["analysis_status"] == "READY"
+        assert article_view["analysis_provider"] == provider
+        assessment_view = await repository.assessment_view(boundary_id)
+        assert assessment_view is not None
+        assert assessment_view["assessments"][0]["provider"] == provider
         excluded_ids = {
             stale_id,
             undated_id,
