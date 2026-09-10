@@ -42,6 +42,7 @@ from apps.api.app.db.models import (
 from apps.api.app.db.models import Session as DBSession
 from apps.api.app.db.utc import utc_now
 from apps.api.app.domains.users import POLITICAL_QUESTIONNAIRE_VERSION
+from apps.api.app.jobs.types import USER_JOB_PRIORITY
 from apps.api.app.repositories.platform import MariaDBPlatformRepository
 
 
@@ -369,6 +370,7 @@ async def test_export_job_is_deduplicated_by_user(
     assert job is not None
     assert job.job_type == "export_user"
     assert job.dedupe_key == user["id"]
+    assert job.priority == USER_JOB_PRIORITY
     assert job.payload_json == {"user_id": user["id"]}
 
 
@@ -405,6 +407,7 @@ async def test_deletion_marks_user_revokes_sessions_and_share_cards(
     assert persisted_card.revoked_at is not None
     deletion_job = await session.get(Job, job_view["id"])
     assert deletion_job is not None
+    assert deletion_job.priority == USER_JOB_PRIORITY
     assert deletion_job.payload_json == {
         "user_id": user["id"],
         "confirmed": True,

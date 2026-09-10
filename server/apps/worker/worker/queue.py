@@ -37,9 +37,9 @@ from typing import (
 from .essential_analysis import essential_article_exists
 
 try:
-    from apps.api.app.jobs.types import JobStatus, utc_now
+    from apps.api.app.jobs.types import USER_JOB_TYPES, JobStatus, utc_now
 except ImportError:  # pragma: no cover - supports ``PYTHONPATH=apps/worker``.
-    from api.app.jobs.types import JobStatus, utc_now  # type: ignore
+    from api.app.jobs.types import USER_JOB_TYPES, JobStatus, utc_now  # type: ignore
 
 
 class JobQueueError(RuntimeError):
@@ -451,7 +451,14 @@ class MemoryQueueRepository:
                     and job.lease_expires_at <= moment
                 )
             ]
-            candidates.sort(key=lambda job: (-job.priority, job.available_at, job.id))
+            candidates.sort(
+                key=lambda job: (
+                    -(job.job_type in USER_JOB_TYPES),
+                    -job.priority,
+                    job.available_at,
+                    job.id,
+                )
+            )
             if not candidates:
                 return None
             selected = candidates[0]
@@ -636,6 +643,7 @@ class MariaDBQueueRepository:
         # analysis and comparisons first. Resolve membership at claim time so
         # already-queued articles gain priority as soon as clustering finishes.
         return f"""CASE
+            WHEN job_type IN ('render_share_card', 'export_user', 'delete_user') THEN 5
             WHEN job_type = 'cluster' THEN 4
             WHEN job_type = 'calculate_score' THEN 3
             WHEN job_type = 'build_issue_comparison' THEN 2

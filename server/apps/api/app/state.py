@@ -22,6 +22,7 @@ from apps.api.app.domains.users import (
     political_questionnaire_scoring,
 )
 from apps.api.app.jobs.payloads import validate_job_payload
+from apps.api.app.jobs.types import resolved_job_priority
 
 
 def new_id() -> str:
@@ -367,7 +368,7 @@ class PlatformState:
                 "job_type": job_type,
                 "dedupe_key": dedupe_key,
                 "status": "PENDING",
-                "priority": 0,
+                "priority": resolved_job_priority(job_type),
                 "available_at": utcnow(),
                 "attempts": 0,
                 "max_attempts": 5,

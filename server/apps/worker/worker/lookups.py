@@ -405,8 +405,8 @@ class MariaDBWorkerLookups:
         user_id = str(identifier)
         records: dict[str, Any] = {}
         queries = {
-            "user": "SELECT id, display_name, role, status, created_at, updated_at, deleted_at FROM users WHERE id = :user_id",
-            "consents": "SELECT consent_version_id, granted, granted_at, withdrawn_at FROM user_consents WHERE user_id = :user_id ORDER BY granted_at",
+            "user": "SELECT id, display_name, role, status, created_at, deleted_at FROM users WHERE id = :user_id",
+            "consents": "SELECT consent_version_id, CASE WHEN withdrawn_at IS NULL THEN 1 ELSE 0 END AS granted, granted_at, withdrawn_at FROM user_consents WHERE user_id = :user_id ORDER BY granted_at",
             "profiles": "SELECT kind, x, y, z, confidence, source_version, active, created_at FROM user_profiles WHERE user_id = :user_id ORDER BY created_at",
             "demographics": "SELECT age_band, gender_response, updated_at FROM user_demographics WHERE user_id = :user_id",
             "votes": "SELECT article_id, revision, x, y, z, sensationalism, quality_status, active, created_at FROM votes WHERE user_id = :user_id ORDER BY created_at",

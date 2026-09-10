@@ -23,7 +23,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
 
@@ -290,6 +290,26 @@ class SourceFetchService:
             raise ValueError(f"{name} must be a non-negative finite number")
         return value
 
+    @staticmethod
+    def _request_url(value: str) -> str:
+        """Canonicalize a target without erasing a required trailing slash.
+
+        Article identity deliberately ignores a non-root trailing slash, but
+        an HTTP origin is allowed to distinguish the two paths.  In
+        particular, a normal redirect from ``/article`` to ``/article/`` must
+        reach the latter on the next hop instead of being canonicalized back
+        into a redirect loop.
+        """
+
+        canonical = canonicalize_url(value)
+        raw_parts = urlsplit(value)
+        canonical_parts = urlsplit(canonical)
+        if raw_parts.path.endswith("/") and canonical_parts.path != "/":
+            return urlunsplit(
+                canonical_parts._replace(path=f"{canonical_parts.path}/")
+            )
+        return canonical
+
     async def __call__(self, source: Mapping[str, Any] | str) -> SourceFetchResponse:
         return await self.fetch(source)
 
@@ -330,7 +350,7 @@ class SourceFetchService:
                 retryable=False,
             ) from exc
         try:
-            url = canonicalize_url(str(raw_url))
+            url = self._request_url(str(raw_url))
         except (TypeError, ValueError) as exc:
             raise SourceFetchError(
                 "source URL is invalid",
@@ -666,7 +686,7 @@ class SourceFetchService:
                                 code="SOURCE_URL_CREDENTIALS_BLOCKED",
                                 retryable=False,
                             )
-                        redirected_url = canonicalize_url(raw_redirect_url)
+                        redirected_url = self._request_url(raw_redirect_url)
                     except (TypeError, ValueError) as exc:
                         raise SourceFetchError(
                             "source redirect target is invalid",
@@ -734,7 +754,7 @@ class SourceFetchService:
                         # ``request_url`` may contain the pinned address.  The
                         # worker contract exposes the canonical source URL,
                         # not the connection address used underneath it.
-                        url=str(current_url),
+                        url=canonicalize_url(str(current_url)),
                         status_code=status,
                         headers=dict(response.headers),
                         body=body,

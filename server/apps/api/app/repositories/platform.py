@@ -48,6 +48,7 @@ from apps.api.app.domains.users import (
     score_political_questionnaire,
 )
 from apps.api.app.jobs.payloads import validate_job_payload
+from apps.api.app.jobs.types import resolved_job_priority
 from apps.api.app.repositories.admin import AdminRepositoryMixin
 from apps.api.app.repositories.product import ProductRepositoryMixin
 
@@ -727,7 +728,7 @@ class MariaDBPlatformRepository(AdminRepositoryMixin, ProductRepositoryMixin):
             "job_type": job_type,
             "dedupe_key": dedupe_key,
             "status": JobStatus.PENDING,
-            "priority": 0,
+            "priority": resolved_job_priority(job_type),
             "available_at": now,
             "lease_owner": None,
             "lease_expires_at": None,

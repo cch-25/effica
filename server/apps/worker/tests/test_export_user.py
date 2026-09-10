@@ -1,17 +1,58 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from apps.api.app.db.base import Base
+from apps.api.app.db.enums import (
+    ArticleStatus,
+    CreditStatus,
+    OAuthProvider,
+    ProfileKind,
+    QuestionnaireKind,
+    ReadSessionStatus,
+    ShareCardStatus,
+    SourcePolicyStatus,
+    SourceType,
+    UserRole,
+    UserStatus,
+    VoteQualityStatus,
+)
+from apps.api.app.db.models import (
+    Article,
+    ConsentVersion,
+    CreditLedger,
+    EfficacyResponse,
+    FeedImpression,
+    OAuthAccount,
+    QuestionnaireResponse,
+    QuestionnaireVersion,
+    ReadSession,
+    ShareCard,
+    Source,
+    User,
+    UserConsent,
+    UserDemographics,
+    UserProfile,
+    Vote,
+)
+from apps.api.app.db.models import Session as DatabaseSession
+from apps.api.app.db.ulid import new_ulid
+from apps.api.app.db.utc import utc_now
 from apps.worker.worker.handlers import export_user
 from apps.worker.worker.handlers.base import (
     HandlerContext,
     NonRetryableHandlerError,
     RetryableHandlerError,
 )
+from apps.worker.worker.lookups import MariaDBWorkerLookups
 from apps.worker.worker.queue import Job
 from apps.worker.worker.services import MariaDBResultApplier, ResultApplicationError
 
@@ -65,6 +106,261 @@ def test_export_uses_owner_records_and_removes_authentication_material() -> None
     # Sanitization builds a copy and cannot damage records used by another
     # retry or audit path.
     assert records["sessions"][0]["token_hash"] == "must-not-be-exported"
+
+
+@pytest.mark.asyncio
+async def test_export_lookup_executes_against_complete_application_schema() -> None:
+    """Exercise every export SELECT against real tables and populated rows."""
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    secret = "schema-backed-export-secret"
+    now = utc_now()
+    user_id = new_ulid()
+    consent_version_id = new_ulid()
+    questionnaire_version_id = new_ulid()
+    source_id = new_ulid()
+    article_id = new_ulid()
+    response_id = new_ulid()
+    user_consent_id = new_ulid()
+    answers = {"economic_01": 4, "social_01": 2}
+    encryption_key = hashlib.sha256(secret.encode()).digest()
+    nonce = b"n" * 12
+    encrypted_answers = nonce + AESGCM(encryption_key).encrypt(
+        nonce,
+        json.dumps(answers, sort_keys=True, separators=(",", ":")).encode(),
+        response_id.encode(),
+    )
+
+    try:
+        async with factory() as session:
+            session.add_all(
+                [
+                    User(
+                        id=user_id,
+                        role=UserRole.MEMBER,
+                        status=UserStatus.ACTIVE,
+                        display_name="Export tester",
+                        created_at=now,
+                        deleted_at=None,
+                    ),
+                    ConsentVersion(
+                        id=consent_version_id,
+                        purpose="SERVICE",
+                        version="export-test",
+                        body_hash=b"c" * 32,
+                        active_from=now,
+                    ),
+                    QuestionnaireVersion(
+                        id=questionnaire_version_id,
+                        kind=QuestionnaireKind.ONBOARDING,
+                        version="export-test",
+                        schema_json={"questions": []},
+                        scoring_json={},
+                        active_from=now,
+                    ),
+                    Source(
+                        id=source_id,
+                        name="Export source",
+                        source_type=SourceType.RSS,
+                        canonical_url="https://export.example.test",
+                        policy_status=SourcePolicyStatus.APPROVED,
+                        robots_status=SourcePolicyStatus.APPROVED,
+                        terms_status=SourcePolicyStatus.APPROVED,
+                        active=True,
+                    ),
+                ]
+            )
+            await session.commit()
+            session.add_all(
+                [
+                    OAuthAccount(
+                        id=new_ulid(),
+                        user_id=user_id,
+                        provider=OAuthProvider.MOCK,
+                        provider_subject="export-subject",
+                        created_at=now,
+                    ),
+                    DatabaseSession(
+                        id=new_ulid(),
+                        user_id=user_id,
+                        token_hash=b"t" * 32,
+                        csrf_hash=b"s" * 32,
+                        expires_at=now + timedelta(hours=1),
+                        revoked_at=None,
+                    ),
+                    UserConsent(
+                        id=user_consent_id,
+                        user_id=user_id,
+                        consent_version_id=consent_version_id,
+                        granted_at=now,
+                        withdrawn_at=None,
+                    ),
+                    UserDemographics(
+                        user_id=user_id,
+                        age_band="30-39",
+                        gender_response="self-described",
+                        consent_version_id=consent_version_id,
+                        updated_at=now,
+                    ),
+                    UserProfile(
+                        id=new_ulid(),
+                        user_id=user_id,
+                        kind=ProfileKind.SELF_REPORTED,
+                        x=10,
+                        y=-20,
+                        z=30,
+                        confidence=Decimal("0.7500"),
+                        source_version="export-profile-v1",
+                        active=True,
+                        created_at=now,
+                    ),
+                    QuestionnaireResponse(
+                        id=response_id,
+                        user_id=user_id,
+                        questionnaire_version_id=questionnaire_version_id,
+                        encrypted_payload=encrypted_answers,
+                        submitted_at=now,
+                    ),
+                    EfficacyResponse(
+                        id=new_ulid(),
+                        user_id=user_id,
+                        questionnaire_version_id=questionnaire_version_id,
+                        normalized_score=Decimal("72.5000"),
+                        submitted_at=now,
+                    ),
+                    Article(
+                        id=article_id,
+                        source_id=source_id,
+                        canonical_url="https://export.example.test/article",
+                        canonical_url_hash=b"a" * 32,
+                        title="Export article",
+                        author=None,
+                        published_at=now,
+                        current_version_id=None,
+                        status=ArticleStatus.ACTIVE,
+                        created_at=now,
+                        updated_at=now,
+                    ),
+                    ShareCard(
+                        id=new_ulid(),
+                        user_id=user_id,
+                        public_token_hash=b"p" * 32,
+                        template="default",
+                        display_name="Export tester",
+                        snapshot_json={"x": 10, "y": -20, "z": 30},
+                        status=ShareCardStatus.READY,
+                        blob_id=None,
+                        expires_at=now + timedelta(days=1),
+                        revoked_at=None,
+                        created_at=now,
+                    ),
+                ]
+            )
+            await session.commit()
+            session.add_all(
+                [
+                    Vote(
+                        id=new_ulid(),
+                        user_id=user_id,
+                        article_id=article_id,
+                        revision=1,
+                        x=8,
+                        y=-7,
+                        z=6,
+                        sensationalism=25,
+                        quality_status=VoteQualityStatus.QUALIFIED,
+                        active=True,
+                        created_at=now,
+                        updated_at=now,
+                    ),
+                    ReadSession(
+                        id=new_ulid(),
+                        user_id=user_id,
+                        article_id=article_id,
+                        token_hash=b"r" * 32,
+                        expires_at=now + timedelta(minutes=30),
+                        status=ReadSessionStatus.RETURNED,
+                        outbound_at=now,
+                        returned_at=now + timedelta(minutes=2),
+                        client_elapsed_ms=120_000,
+                        policy_version="read-v1",
+                    ),
+                    CreditLedger(
+                        id=new_ulid(),
+                        user_id=user_id,
+                        event_type="QUALIFIED_VOTE",
+                        event_key=f"vote:{article_id}",
+                        delta=10,
+                        policy_version="vote-credit-v1",
+                        status=CreditStatus.POSTED,
+                        reversed_ledger_id=None,
+                        created_at=now,
+                    ),
+                    FeedImpression(
+                        id=new_ulid(),
+                        user_id=user_id,
+                        article_id=article_id,
+                        issue_id=None,
+                        reason_code="personalized",
+                        rank=1,
+                        created_at=now,
+                    ),
+                ]
+            )
+            await session.commit()
+
+        lookups = MariaDBWorkerLookups(factory, encryption_secret=secret)
+        records = await lookups.export_records_lookup(user_id)
+        expected_sections = {
+            "user",
+            "consents",
+            "profiles",
+            "demographics",
+            "votes",
+            "reads",
+            "credits",
+            "efficacy",
+            "share_cards",
+            "oauth_accounts",
+            "sessions",
+            "feed_impressions",
+            "questionnaire_responses",
+        }
+        assert records.keys() == expected_sections
+        assert all(records[section] for section in expected_sections)
+        assert set(records["user"]) == {
+            "id",
+            "display_name",
+            "role",
+            "status",
+            "created_at",
+            "deleted_at",
+        }
+        assert bool(records["consents"][0]["granted"]) is True
+        assert records["questionnaire_responses"][0]["answers"] == answers
+
+        async with factory() as session:
+            consent = await session.get(UserConsent, user_consent_id)
+            assert consent is not None
+            consent.withdrawn_at = now + timedelta(minutes=5)
+            await session.commit()
+        withdrawn_records = await lookups.export_records_lookup(user_id)
+        assert bool(withdrawn_records["consents"][0]["granted"]) is False
+
+        result = await export_user.handle(
+            {"user_id": user_id},
+            HandlerContext(services={"export_records_lookup": lookups.export_records_lookup}),
+        )
+        artifact_text = json.dumps(result.value["artifact"], default=str)
+        assert result.value["manifest"]["sections"] == sorted(expected_sections)
+        assert "token_hash" not in artifact_text
+        assert "csrf_hash" not in artifact_text
+        assert "encrypted_payload" not in artifact_text
+    finally:
+        await engine.dispose()
 
 
 def test_export_digest_is_stable_across_section_order() -> None:

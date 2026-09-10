@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { RadioScale } from "@/components/ui/form-controls";
 import { apiRequest } from "@/lib/api/client";
+import { notifyProfileUpdated } from "@/lib/api/profile-sync";
 import type { ProfileView, QuestionnaireSubmission, QuestionnaireVersionView } from "@/lib/api/contracts";
 import { withReturnTo } from "@/lib/navigation/return-to";
 
@@ -63,6 +64,7 @@ export function QuestionnaireForm({ returnTo }: { returnTo: string }) {
     setBusy(true); setError("");
     try {
       await apiRequest<ProfileView>("/me/questionnaire-responses", { method: "POST", body: JSON.stringify(body) });
+      notifyProfileUpdated();
       await queryClient.invalidateQueries({ queryKey: ["me"] });
       router.push(returnTo === "/share/new" ? returnTo : withReturnTo("/onboarding/demographics", returnTo));
     } catch { setError("응답을 저장하지 못했습니다. 입력한 답변은 유지되어 있으니 다시 시도해 주세요."); }

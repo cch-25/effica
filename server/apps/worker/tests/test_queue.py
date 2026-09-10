@@ -32,6 +32,37 @@ def test_concurrent_claim_has_one_winner():
     _run(scenario())
 
 
+def test_user_jobs_preempt_existing_background_queue_rows():
+    async def scenario():
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+        repo = MemoryQueueRepository(
+            [
+                Job(id="crawl", job_type="crawl", priority=10, available_at=now),
+                Job(id="analyze", job_type="analyze", priority=10, available_at=now),
+                # Models a row created before producer-side user priority was added.
+                Job(id="export", job_type="export_user", priority=0, available_at=now),
+            ],
+            clock=lambda: now,
+        )
+
+        claimed = await repo.claim("worker", now=now)
+
+        assert claimed is not None
+        assert claimed.id == "export"
+
+    _run(scenario())
+
+
+def test_mariadb_claim_order_prioritizes_user_jobs_before_pipeline_work():
+    order = MariaDBQueueRepository(lambda: None)._claim_order()
+
+    assert order.index(
+        "job_type IN ('render_share_card', 'export_user', 'delete_user')"
+    ) < order.index(
+        "job_type = 'cluster'"
+    )
+
+
 def test_concurrent_workers_execute_one_side_effect():
     async def scenario():
         repo = MemoryQueueRepository([Job(id="01SIDE", job_type="side_effect")])

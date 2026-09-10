@@ -66,6 +66,29 @@ class JobType(str, Enum):
     SPLIT_ISSUE = "split_issue"
 
 
+# Jobs started by a signed-in user must not wait behind bulk ingestion and
+# analysis work. The queue also recognizes these types at claim time so rows
+# created before this priority was introduced are promoted without a data
+# migration.
+USER_JOB_TYPES = frozenset(
+    {
+        JobType.RENDER_SHARE_CARD.value,
+        JobType.EXPORT_USER.value,
+        JobType.DELETE_USER.value,
+    }
+)
+USER_JOB_PRIORITY = 100
+
+
+def resolved_job_priority(job_type: Any, priority: int = 0) -> int:
+    """Apply the minimum priority for work directly requested by a user."""
+
+    requested = int(priority)
+    if normalize_job_type(job_type) in USER_JOB_TYPES:
+        return max(requested, USER_JOB_PRIORITY)
+    return requested
+
+
 def utc_now() -> datetime:
     """Return an aware UTC timestamp suitable for persistence."""
 
