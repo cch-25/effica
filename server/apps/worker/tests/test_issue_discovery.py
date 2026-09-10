@@ -422,6 +422,24 @@ async def test_newsis_mobile_article_uses_same_article_on_canonical_desktop_host
     assert article['canonical_url'] == desktop
 
 
+async def test_removed_articles_do_not_count_toward_publication_or_paid_selection():
+    fixture = _Harness()
+    async def retired(url):
+        return url == URLS[0]
+    fixture.service.retired_article_lookup = retired
+    result = await fixture.discover()
+    assert result['issues'] == []
+    assert len(fixture.paid_requests) == 2
+    assert 'previously removed' in result['rejected_articles'][0]['detail']
+
+
+def test_publication_receipt_uses_persisted_count_instead_of_selected_candidates():
+    from apps.api.app.domains.content.storage import job_receipt
+    receipt = job_receipt('discover_issues', {'issues': [{'title': 'selected but not persisted'}], 'published_issue_count': 0})
+    assert receipt['publication_status'] == 'NO_ISSUES_PUBLISHED'
+    assert receipt['published_issue_count'] == 0
+
+
 def test_budget_migration_uses_existing_constraint_name() -> None:
     output = io.StringIO()
     context = MigrationContext.configure(dialect_name="mariadb", opts={

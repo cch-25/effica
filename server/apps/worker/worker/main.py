@@ -912,11 +912,23 @@ def _default_services(session_factory: Callable[[], Any]) -> dict[str, Any]:
     services["minimum_analysis_content_chars"] = settings.llm_min_article_chars
     from .issue_discovery import IssueDiscoveryService
 
+    async def retired_article_lookup(url: str) -> bool:
+        import hashlib
+
+        from sqlalchemy import text
+
+        async with session_factory() as session:
+            row = await session.execute(text(
+                "SELECT canonical_url_hash FROM article_retention_tombstones WHERE canonical_url_hash=:hash LIMIT 1"
+            ), {"hash": hashlib.sha256(url.encode()).digest()})
+            return row.first() is not None
+
     services["issue_discovery"] = IssueDiscoveryService(
         api_key=settings.openai_api_key,
         model=settings.llm_model,
         budget=llm_budget,
         source_fetcher=services["source_fetcher"],
+        retired_article_lookup=retired_article_lookup,
         base_url=settings.openai_endpoint.removesuffix("/responses"),
         timeout_seconds=settings.llm_timeout_seconds,
         analysis_max_output_tokens=settings.llm_max_output_tokens,

@@ -19,9 +19,10 @@ def compact_job_payload(value: Mapping[str, Any]) -> dict[str, Any]:
 def job_receipt(job_type: str, value: Mapping[str, Any]) -> dict[str, Any]:
     receipt: dict[str, Any] = {"applied": True}
     if job_type == "discover_issues":
+        published = value.get("published_issue_count", len(value.get("issues", [])))
         receipt.update(
-            publication_status="PUBLISHED" if value.get("issues") else "NO_ISSUES_PUBLISHED",
-            published_issue_count=len(value.get("issues", [])),
+            publication_status="PUBLISHED" if published else "NO_ISSUES_PUBLISHED",
+            published_issue_count=published,
             candidate_count=value.get("candidate_count", 0),
             stopped_reason=value.get("stopped_reason"),
             blocked_reason=value.get("blocked_reason"),

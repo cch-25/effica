@@ -11,7 +11,7 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
@@ -134,6 +134,7 @@ class IssueDiscoveryService:
     def __init__(
         self, *, api_key: str, model: str, budget: Any,
         source_fetcher: SourceFetchService,
+        retired_article_lookup: Callable[[str], Awaitable[bool]] | None = None,
         base_url: str = "https://api.openai.com/v1", candidate_limit: int = 10,
         max_issues: int = 5, timeout_seconds: float = 90,
         transport: httpx.AsyncBaseTransport | None = None,
@@ -145,6 +146,7 @@ class IssueDiscoveryService:
         self.model = model
         self.budget = budget
         self.source_fetcher = source_fetcher
+        self.retired_article_lookup = retired_article_lookup
         self.endpoint = base_url.rstrip("/").removesuffix("/responses") + "/responses"
         self.candidate_limit = max(1, min(12, candidate_limit))
         self.max_issues = max(1, min(5, max_issues))
@@ -528,6 +530,8 @@ class IssueDiscoveryService:
         if len(parsed) != 1:
             raise IssueDiscoveryError("publisher page did not identify one article")
         article = parsed[0]
+        if self.retired_article_lookup and await self.retired_article_lookup(article.canonical_url):
+            raise IssueDiscoveryError("article was previously removed from the inventory")
         if publisher_identity(article.canonical_url) != identity:
             raise IssueDiscoveryError("article canonical URL changed publisher")
         if not article.title or len(article.body) < 200:

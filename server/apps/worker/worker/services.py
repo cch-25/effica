@@ -1148,6 +1148,8 @@ class MariaDBResultApplier:
 
         if result.get("status") in {"SKIPPED", "FAILED"}:
             return
+        if isinstance(result, dict):
+            result["published_issue_count"] = 0
         edition_ids: list[str] = []
         seen_urls: set[str] = set()
         for candidate in result.get("issues", []):
@@ -1246,6 +1248,8 @@ class MariaDBResultApplier:
                 """, {"issue_id": issue_id, "article_id": _row(member, "id"), "now": now})
                 seen_urls.add(str(_row(member, "canonical_url")))
             edition_ids.append(issue_id)
+            if isinstance(result, dict):
+                result["published_issue_count"] = len(edition_ids)
             analysis_rows = _rows(await self._execute(
                 session, COMPARISON_ARTICLES_SQL, {"issue_id": issue_id},
             ))
