@@ -263,7 +263,7 @@ class IssueDiscoveryService:
         }
         approved = self._approved_sources(allowed_sources)
         candidate_response = await self._request(
-            run_date, "topics:coverage-v3",
+            run_date, "topics:coverage-v4",
             f"현재 {now.isoformat()}. 실제 웹 검색으로 최근 3일({recent.date()} 이후) "
             f"이슈화된 한국 국내정치 중심 논쟁 {self.candidate_limit}개를 넉넉히 찾으세요. "
             f"부족하면 최근 7일({since.date()} 이후)까지 확장하세요. 경제와 사회도 정책, "
@@ -274,7 +274,8 @@ class IssueDiscoveryService:
             "쟁점을 식별해야 하며 광범위한 키워드(정치,경제,선거)는 안 됩니다. "
             "여러 언론사의 정치면 주요 보도를 먼저 확인하세요. 단일 언론사만 다룬 세부 주제를 "
             "중요 이슈로 부풀리지 마세요. 각 후보의 seed_urls에는 실제 검색에서 확인한 "
-            "서로 다른 언론사 3곳 이상의 개별 기사 URL을 넣으세요. 제목과 요약은 짧게 쓰고, "
+            "개별 기사 URL을 넣으세요. 여러 언론사의 보도가 있는 후보를 우선하되, "
+            "추가 원문은 다음 단계에서 검색하므로 지금 3곳을 확보하지 못했다고 후보 전체를 버리지 마세요. 제목과 요약은 짧게 쓰고, "
             "근거가 충분한 후보가 3~5개뿐이면 그만큼만 반환하세요. "
             'JSON {"topics":[{"title":"...","summary":"...","topic":"정치|경제|사회",'
             '"issue_key":"stable-specific-event-key","controversy_reason":"양쪽의 구체적 충돌",'
@@ -285,6 +286,8 @@ class IssueDiscoveryService:
         raw_candidates = candidate_response.get("topics", [])
         if not isinstance(raw_candidates, list):
             raise IssueDiscoveryError("topic discovery returned no topic list")
+        if not raw_candidates:
+            result["blocked_reason"] = "NO_GROUNDED_TOPIC_CANDIDATES"
         candidates: list[dict[str, Any]] = []
         seen_keys: set[str] = set()
         for raw in raw_candidates[:self.candidate_limit]:
