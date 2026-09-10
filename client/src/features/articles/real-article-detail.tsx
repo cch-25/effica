@@ -2,6 +2,7 @@
 
 import { ArrowLeft, ExternalLink, Info } from "lucide-react";
 import Link from "next/link";
+import { ApiError } from "@/lib/api/client";
 import { Badge } from "@/components/ui/badge";
 import { StatePanel } from "@/components/ui/state-panel";
 import { VoteForm } from "@/features/voting/vote-form";
@@ -28,6 +29,7 @@ export function RealArticleDetail({ articleId }: { articleId: string }) {
   const query = useArticleQuery(articleId);
   const analysis = useArticleAnalysisQuery(articleId);
   const viewer = useViewerQuery();
+  if (query.error instanceof ApiError && [404, 410].includes(query.error.status)) return <section className="issue-readiness" role="status"><div><h1>현재 공개되지 않는 기사입니다.</h1><p>소속 이슈의 발행 목록이 바뀌었거나 공개 기간이 지났습니다.</p><Link href="/issues">현재 이슈 보기</Link></div></section>;
   if (query.isPending) return <StatePanel state="loading" />;
   if (query.isError) return <StatePanel state="error" />;
   const article = query.data;

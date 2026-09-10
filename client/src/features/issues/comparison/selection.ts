@@ -1,4 +1,5 @@
 import type { Article } from "@/lib/api/types";
+import { publisherIdentity } from "@/lib/api/publisher";
 
 type SelectionResult = {
   selected: string[];
@@ -9,10 +10,11 @@ type SelectionResult = {
 export function defaultComparisonSelection(articles: Article[]): string[] {
   const selected: string[] = [];
   const sources = new Set<string>();
-  for (const article of articles) {
-    if (sources.has(article.sourceId)) continue;
+  // The worker's reviewed cohort chooses the first three publisher-distinct IDs.
+  for (const article of [...articles].sort((left, right) => left.id.localeCompare(right.id))) {
+    if (sources.has(publisherIdentity(article))) continue;
     selected.push(article.id);
-    sources.add(article.sourceId);
+    sources.add(publisherIdentity(article));
     if (selected.length === 3) return selected;
   }
   return selected;
@@ -36,7 +38,7 @@ export function parseComparisonSelection(
   }
   const articleById = new Map(articles.map((article) => [article.id, article]));
   const requestedSources = requested
-    .map((articleId) => articleById.get(articleId)?.sourceId)
+    .map((articleId) => { const article = articleById.get(articleId); return article ? publisherIdentity(article) : undefined; })
     .filter((sourceId): sourceId is string => sourceId !== undefined);
   const valid =
     requested.length >= 2 &&

@@ -15,6 +15,7 @@ import {
 } from "@/lib/api/formatters";
 import { useIssueComparisonQuery } from "@/lib/api/queries";
 import type { Article, Issue } from "@/lib/api/types";
+import { publisherIdentity } from "@/lib/api/publisher";
 import { isComparisonReadyArticle, parseComparisonSelection } from "./selection";
 import { IssueReadiness } from "../issue-readiness";
 import { DefinitionTooltip } from "@/components/ui/definition-tooltip";
@@ -89,6 +90,19 @@ function PendingReviewComparison({ articles }: { articles: Article[] }) {
   );
 }
 
+function AcquiredArticles({ articles }: { articles: Article[] }) {
+  return (
+    <section className="available-articles" aria-labelledby="available-articles-title">
+      <div className="comparison-section-title"><h2 id="available-articles-title">확보한 기사</h2><span>{articles.length}개</span></div>
+      <ul>{articles.map((article) => <li key={article.id}>
+        <span>{article.source} / {isComparisonReadyArticle(article) ? "분석 완료" : "분석 준비 중"}</span>
+        <Link href={`/articles/${article.id}`}>{article.title}</Link>
+        <a href={article.originalUrl} target="_blank" rel="noreferrer" aria-label={`${article.source} 확보한 기사 원문 보기, 새 창`}>원문 보기</a>
+      </li>)}</ul>
+    </section>
+  );
+}
+
 export function IssueComparison({
   issue,
   articles,
@@ -105,7 +119,7 @@ export function IssueComparison({
     [articles],
   );
   const readySourceCount = useMemo(
-    () => new Set(readyArticles.map((article) => article.sourceId)).size,
+    () => new Set(readyArticles.map(publisherIdentity)).size,
     [readyArticles],
   );
   const parsed = useMemo(
@@ -136,7 +150,7 @@ export function IssueComparison({
     }
     const candidate = readyArticles.find((article) => article.id === articleId);
     const sourceAlreadySelected = candidate && selected.some((selectedId) => (
-      readyArticles.find((article) => article.id === selectedId)?.sourceId === candidate.sourceId
+      readyArticles.some((article) => article.id === selectedId && publisherIdentity(article) === publisherIdentity(candidate))
     ));
     if (!included && sourceAlreadySelected) {
       setSelectionMessage("같은 출처에서는 기사 1개만 선택할 수 있습니다.");
@@ -160,7 +174,7 @@ export function IssueComparison({
   const selectedArticles = selected
     .map((articleId) => readyArticles.find((article) => article.id === articleId))
     .filter((article): article is Article => article !== undefined);
-  const selectedSourceCount = new Set(selectedArticles.map((article) => article.sourceId)).size;
+  const selectedSourceCount = new Set(selectedArticles.map(publisherIdentity)).size;
 
   const detailHeader = (
     <header className="comparison-hero">
@@ -181,12 +195,7 @@ export function IssueComparison({
       <div className="issue-comparison">
         {detailHeader}
         <IssueReadiness articleCount={readyArticles.length} sourceCount={readySourceCount} />
-        {readyArticles.length ? (
-          <section className="available-articles" aria-labelledby="available-articles-title">
-            <div className="comparison-section-title"><h2 id="available-articles-title">현재 확인할 수 있는 기사</h2></div>
-            <ul>{readyArticles.map((article) => <li key={article.id}><span>{article.source}</span><Link href={`/articles/${article.id}`}>{article.title}</Link></li>)}</ul>
-          </section>
-        ) : null}
+        <AcquiredArticles articles={articles} />
       </div>
     );
   }
@@ -194,6 +203,7 @@ export function IssueComparison({
   return (
     <div className="issue-comparison">
       {detailHeader}
+      {readyArticles.length < articles.length ? <AcquiredArticles articles={articles} /> : null}
 
       <section className="comparison-selector" aria-labelledby="comparison-selector-title">
         <div className="comparison-section-title">

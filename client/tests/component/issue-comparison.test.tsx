@@ -24,7 +24,7 @@ function article(id: string, source: string): Article {
     title: `${source} 기사`,
     dek: "",
     publishedAt: "2026-08-26T00:00:00Z",
-    originalUrl: "https://example.test",
+    originalUrl: `https://${encodeURIComponent(source)}.test/article/${id}`,
     reasonCode: "ISSUE_BALANCE",
     x: 0,
     y: 0,
@@ -190,8 +190,12 @@ it("keeps issue context and hides the selector while fewer than two articles are
   expect(screen.getByText("비교할 이슈의 요약")).toBeVisible();
   expect(screen.getByRole("link", { name: "전체 이슈로 돌아가기" })).toHaveAttribute("href", "/issues");
   expect(screen.getByText("비교 준비 완료 기사 1개, 출처 1곳")).toBeVisible();
-  expect(screen.getByRole("heading", { name: "현재 확인할 수 있는 기사" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "확보한 기사" })).toBeVisible();
   expect(screen.getByRole("link", { name: "출처 A 기사" })).toHaveAttribute("href", "/articles/a");
+  expect(screen.getByRole("link", { name: "출처 B 기사" })).toHaveAttribute("href", "/articles/b");
+  expect(screen.getByText("출처 B / 분석 준비 중")).toBeVisible();
+  expect(screen.getAllByRole("link", { name: /확보한 기사 원문 보기/ })).toHaveLength(2);
+  expect(screen.getByText("확보한 기사의 분석을 준비하고 있습니다.")).toBeVisible();
   expect(screen.queryByRole("heading", { name: "비교할 기사" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("link", { name: /기사 원문 보기, 새 창/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "기사별 AI 분석 비교" })).not.toBeInTheDocument();
 });

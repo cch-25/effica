@@ -25,3 +25,13 @@ it("일일 제한의 재개 가능 시각을 분석 완료 예정으로 표시�
   expect(await screen.findByText("다음 분석 기회를 기다리고 있습니다.")).toBeVisible();
   expect(screen.getByText(/이 시각에 완료되는 것은 아닙니다/)).toBeVisible();
 });
+
+it("분석 전이어도 새로 발행한 이슈와 피드를 다시 조회한다", async () => {
+  mocks.apiRequest.mockResolvedValue({ status: "PROCESSING", reason: "EVENT_ANALYSIS_IN_PROGRESS", checked_at: "2026-09-10T00:00:00Z", next_eligible_at: null });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const invalidate = vi.spyOn(client, "invalidateQueries");
+  render(<QueryClientProvider client={client}><AnalysisReadinessNotice /></QueryClientProvider>);
+  expect(await screen.findByText("확보한 보도의 분석을 준비하고 있습니다.")).toBeVisible();
+  await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["issues"] }));
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: ["feed"] });
+});

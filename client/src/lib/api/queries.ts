@@ -77,6 +77,7 @@ export function useIssueQuery(issueId: string) {
   return useQuery({
     queryKey: ["issue", issueId],
     queryFn: async () => mapIssue(await apiRequest<IssueDetailDto>(`/issues/${encodeURIComponent(issueId)}`)),
+    refetchInterval: 30_000,
   });
 }
 
@@ -84,6 +85,7 @@ export function useIssueArticlesQuery(issueId: string) {
   return useQuery({
     queryKey: ["issue", issueId, "articles"],
     queryFn: async () => mapArticlePage(await apiRequest<ArticlePageDto>(`/issues/${encodeURIComponent(issueId)}/articles`)),
+    refetchInterval: 30_000,
   });
 }
 
@@ -123,6 +125,8 @@ export function useIssueComparisonQuery(issueId: string, articleIds: string[]) {
       ));
     },
     enabled: normalizedIds.length >= 2 && normalizedIds.length <= 4,
+    retry: (failureCount, error) => !(error instanceof ApiError && error.status < 500) && failureCount < 2,
+    refetchInterval: (query) => query.state.error instanceof ApiError && ["COMPARISON_NOT_READY", "ANALYSIS_NOT_READY"].includes(query.state.error.body.error.code) ? 30_000 : false,
   });
 }
 

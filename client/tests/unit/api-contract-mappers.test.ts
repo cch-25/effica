@@ -23,6 +23,7 @@ it("maps generated issue and visualization contracts to camelCase screen models"
   const points: VisualizationPointPageDto = {
     items: [{ entity_type: "article", entity_id: "a1", label: "기사", x: 4, y: 5, z: 6, confidence: 0.7 }],
   };
-  expect(mapIssuePage(issues).items[0]).toMatchObject({ id: "i1", status: "balanced", articleIds: ["a1", "a2"] });
+  expect(mapIssuePage(issues).items[0]).toMatchObject({ id: "i1", status: "preparing", articleIds: ["a1", "a2"] });
+  expect(mapIssuePage({ items: [{ ...issues.items[0], article_ids: ["a1", "a2", "a3"] }] }).items[0].status).toBe("balanced");
   expect(mapVisualizationPointPage(points).items[0]).toMatchObject({ id: "a1", type: "article", scoreVersion: "current", sensationalism: null });
 });

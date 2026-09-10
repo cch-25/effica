@@ -76,6 +76,15 @@ apps/worker/worker/__init__.py
 apps/worker/worker/analysis_eligibility.py
 apps/worker/worker/assets/NotoSansKR.ttf
 apps/worker/worker/assets/OFL.txt
+apps/worker/worker/assets/ChosunShinMyungjo.ttf
+apps/worker/worker/assets/ChosunBoldMyungjo.ttf
+apps/worker/worker/assets/ChosunMyungjo-LICENSE.txt
+apps/worker/worker/assets/README.md
+apps/api/app/domains/issues/editorial_policy.py
+apps/worker/worker/daily_scheduler.py
+apps/worker/worker/handlers/discover_issues.py
+apps/worker/worker/issue_discovery.py
+db/alembic/versions/0022_issue_discovery_budget.py
 apps/worker/worker/comparison_cohort.py
 apps/worker/worker/essential_analysis.py
 apps/worker/worker/handlers/__init__.py

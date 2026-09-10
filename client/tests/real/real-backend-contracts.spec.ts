@@ -21,6 +21,31 @@ test("public issue comparison is accessible and does not overflow on mobile", as
   expect(mobile.violations.filter(({ impact }) => impact === "critical" || impact === "serious")).toEqual([]);
 });
 
+test("published issue membership governs feed and retired content returns to current issues", async ({ page }) => {
+  const response = await page.request.get("/api/v1/issues");
+  const issues = (await response.json()).items as Array<{ id: string; kind: string; topic: string; source_count: number; article_ids: string[] }>;
+  expect(issues.length).toBeGreaterThan(0);
+  expect(issues.length).toBeLessThanOrEqual(5);
+  for (const issue of issues) {
+    expect(issue.kind).toBe("EVENT");
+    expect(["정치", "경제", "사회"]).toContain(issue.topic);
+    expect(issue.source_count).toBeGreaterThanOrEqual(3);
+    const members = await (await page.request.get(`/api/v1/issues/${issue.id}/articles`)).json();
+    expect(members.items.map((article: { id: string }) => article.id).sort()).toEqual([...issue.article_ids].sort());
+  }
+  const publicIds = new Set(issues.flatMap((issue) => issue.article_ids));
+  const feed = await (await page.request.get("/api/v1/feed")).json();
+  expect(feed.items.length).toBeGreaterThan(0);
+  for (const article of feed.items) expect(publicIds.has(article.article_id)).toBe(true);
+
+  await page.goto("/issues/00000000000000000000000000");
+  await expect(page.getByRole("heading", { name: "현재 발행 목록에 없는 이슈입니다." })).toBeVisible();
+  await page.getByRole("link", { name: "현재 이슈 보기", exact: true }).click();
+  await expect(page).toHaveURL(/\/issues$/);
+  await page.goto("/articles/00000000000000000000000000");
+  await expect(page.getByRole("heading", { name: "현재 공개되지 않는 기사입니다." })).toBeVisible();
+});
+
 test("real OAuth callback restores returnTo without requiring the optional ideology test", async ({ page }) => {
   const callbackUri = "http://127.0.0.1:3100/api/v1/auth/mock/callback";
   const start = await page.request.get(

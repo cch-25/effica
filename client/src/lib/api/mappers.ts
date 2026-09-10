@@ -109,8 +109,8 @@ export function mapIssue(dto: IssueDto | IssueDetailDto): Issue {
     topic: dto.topic,
     status: ["active", "open"].includes(status)
       && dto.analysis_status === "READY"
-      && dto.article_ids.length >= 2
-      && (dto.source_count ?? 0) >= 2
+      && dto.article_ids.length >= 3
+      && (dto.source_count ?? 0) >= 3
       ? "balanced"
       : "preparing",
     kind: dto.kind ?? "TOPIC",

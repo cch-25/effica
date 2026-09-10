@@ -16,7 +16,7 @@ function formatIssueDate(issue: Issue): { dateTime: string; label: string } {
 }
 
 export function IssueCard({ issue }: { issue: Issue }) {
-  const ready = issue.analysisStatus === "READY" && issue.articleIds.length >= 2 && issue.sourceCount >= 2;
+  const ready = issue.analysisStatus === "READY" && issue.articleIds.length >= 3 && issue.sourceCount >= 3;
   const statusLabel = ready ? "비교 가능" : issue.analysisStatus === "UNTRUSTED" ? "신뢰 분석 필요" : issue.analysisStatus === "PARTIAL" ? "일부 분석 중" : "분석 준비 중";
   const issueDate = formatIssueDate(issue);
 

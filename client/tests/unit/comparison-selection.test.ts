@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { defaultComparisonSelection, isComparisonReadyArticle, parseComparisonSelection } from "@/features/issues/comparison/selection";
 import type { Article } from "@/lib/api/types";
+import { publisherIdentity } from "@/lib/api/publisher";
 
 function article(id: string, sourceId: string): Article {
   return {
@@ -11,7 +12,7 @@ function article(id: string, sourceId: string): Article {
     title: id,
     dek: "",
     publishedAt: "",
-    originalUrl: "https://example.test",
+    originalUrl: `https://${sourceId}.test/article/${id}`,
     reasonCode: "ISSUE_BALANCE",
     x: 0,
     y: 0,
@@ -30,6 +31,17 @@ const articles = [article("a", "one"), article("b", "one"), article("c", "two"),
 describe("comparison URL selection", () => {
   it("defaults to three distinct sources", () => {
     expect(defaultComparisonSelection(articles)).toEqual(["a", "c", "d"]);
+    expect(defaultComparisonSelection([...articles].reverse())).toEqual(["a", "c", "d"]);
+  });
+
+  it("collapses desktop and mobile publisher domains even with different source records", () => {
+    const desktop = { ...article("a", "desktop"), originalUrl: "https://www.paper.co.kr/news/1" };
+    const mobile = { ...article("b", "mobile"), originalUrl: "https://m.paper.co.kr/news/2" };
+    const other = { ...article("c", "other"), originalUrl: "https://other.co.kr/news/3" };
+    expect(publisherIdentity(desktop)).toBe("paper.co.kr");
+    expect(defaultComparisonSelection([desktop, mobile, other])).toEqual(["a", "c"]);
+    expect(parseComparisonSelection("a,b", [desktop, mobile, other]).correctionNeeded).toBe(true);
+    expect(publisherIdentity({ ...desktop, originalUrl: "" })).toBe("desktop");
   });
 
   it("restores a valid two-to-four article selection", () => {
