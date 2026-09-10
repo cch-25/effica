@@ -34,6 +34,7 @@ TOPIC = {
     "topic": "정치", "issue_key": "pension-reform-2026",
     "controversy_reason": "노후 소득 보장과 미래 세대의 부담을 둘러싼 충돌",
     "is_controversial": True, "political_relevance": True, "priority": 95,
+    "seed_urls": URLS,
 }
 
 
@@ -201,6 +202,7 @@ async def test_publisher_subdomains_cannot_inflate_independent_source_count() ->
     fixture = _Harness()
     duplicate = "https://mobile.publisher-0.test/news/pension"
     fixture.urls = URLS[:2] + [duplicate]
+    fixture.topics[0]["seed_urls"] = fixture.urls.copy()
     fixture.grounded = fixture.urls.copy()
     fixture.pages[duplicate] = _html()
     result = await fixture.discover()
@@ -392,6 +394,32 @@ def test_discovery_receipt_distinguishes_zero_publications_from_a_new_edition():
     assert receipt['publication_status'] == 'NO_ISSUES_PUBLISHED'
     assert receipt['published_issue_count'] == 0
     assert receipt['rejected_issues'][0]['reason'] == 'FEWER_THAN_THREE_PUBLISHERS'
+
+
+async def test_multi_publisher_topics_take_precedence_over_single_report_candidates():
+    fixture = _Harness()
+    fixture.service.max_issues = 1
+    fixture.topics = [{**TOPIC, 'issue_key': 'single-report', 'priority': 99, 'seed_urls': URLS[:1]},
+                      {**TOPIC, 'issue_key': 'widely-covered', 'priority': 80, 'seed_urls': URLS}]
+    result = await fixture.discover()
+    assert result['issues'][0]['issue_key'] == 'widely-covered'
+
+
+async def test_site_logo_is_not_presented_as_a_news_photo():
+    fixture = _Harness()
+    fixture.pages[URLS[0]] = _html().replace('</head>', '<meta property="og:image" content="https://img.publisher-0.test/company/Paper_CI.jpg"></head>')
+    result = await fixture.discover()
+    assert result['issues'][0]['articles'][0]['image_url'] is None
+
+
+async def test_newsis_mobile_article_uses_same_article_on_canonical_desktop_host():
+    fixture = _Harness()
+    desktop = 'https://www.newsis.com/view/NISX20260909_0003783001'
+    fixture.pages[desktop] = _html()
+    source = {**_sources()[0], 'home_url': 'https://www.newsis.com/'}
+    article = await fixture.service._hydrate('https://mobile.newsis.com/view/NISX20260909_0003783001', source, NOW)
+    assert fixture.page_requests == [desktop]
+    assert article['canonical_url'] == desktop
 
 
 def test_budget_migration_uses_existing_constraint_name() -> None:

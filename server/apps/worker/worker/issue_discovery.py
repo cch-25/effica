@@ -261,8 +261,9 @@ class IssueDiscoveryService:
             "candidate_count": 0, "rejected_sources": [], "rejected_articles": [],
             "rejected_issues": [],
         }
+        approved = self._approved_sources(allowed_sources)
         candidate_response = await self._request(
-            run_date, "topics",
+            run_date, "topics:coverage-v3",
             f"현재 {now.isoformat()}. 실제 웹 검색으로 최근 3일({recent.date()} 이후) "
             f"이슈화된 한국 국내정치 중심 논쟁 {self.candidate_limit}개를 넉넉히 찾으세요. "
             f"부족하면 최근 7일({since.date()} 이후)까지 확장하세요. 경제와 사회도 정책, "
@@ -271,11 +272,15 @@ class IssueDiscoveryService:
             "단순 행사, 정보, 시세, 스포츠, 연예, 사고 속보, 기업 홍보는 제외하세요. "
             "동일 사건을 여러 주제로 나누지 마세요. 제목은 편향 없이 구체적인 정책/사건과 "
             "쟁점을 식별해야 하며 광범위한 키워드(정치,경제,선거)는 안 됩니다. "
+            "여러 언론사의 정치면 주요 보도를 먼저 확인하세요. 단일 언론사만 다룬 세부 주제를 "
+            "중요 이슈로 부풀리지 마세요. 각 후보의 seed_urls에는 실제 검색에서 확인한 "
+            "서로 다른 언론사 3곳 이상의 개별 기사 URL을 넣으세요. 제목과 요약은 짧게 쓰고, "
+            "근거가 충분한 후보가 3~5개뿐이면 그만큼만 반환하세요. "
             'JSON {"topics":[{"title":"...","summary":"...","topic":"정치|경제|사회",'
             '"issue_key":"stable-specific-event-key","controversy_reason":"양쪽의 구체적 충돌",'
-            '"is_controversial":true,"political_relevance":true,"priority":0}]}. '
+            '"is_controversial":true,"political_relevance":true,"priority":0,"seed_urls":["기사 URL"]}]}. '
             "priority는 0~100, 국내 정치적 중요성과 최근 논쟁 강도가 클수록 높습니다.",
-            search=True,
+            search=True, search_domains=sorted(approved),
         )
         raw_candidates = candidate_response.get("topics", [])
         if not isinstance(raw_candidates, list):
@@ -288,11 +293,18 @@ class IssueDiscoveryService:
             candidate = self._candidate(raw)
             if candidate is None or candidate["issue_key"] in seen_keys:
                 continue
+            grounded = set(candidate_response.get("_grounded_urls", []))
+            raw_seeds = raw.get("seed_urls", [])
+            candidate["seed_urls"] = list(dict.fromkeys(
+                url for value in (raw_seeds if isinstance(raw_seeds, list) else [])
+                if (url := _url(value)) and url in grounded and publisher_identity(url) in approved
+            ))[:12]
             candidates.append(candidate)
             seen_keys.add(candidate["issue_key"])
-        candidates.sort(key=lambda item: item["priority"], reverse=True)
+        candidates.sort(key=lambda item: (
+            min(3, len({publisher_identity(url) for url in item["seed_urls"]})), item["priority"],
+        ), reverse=True)
         result["candidate_count"] = len(candidates)
-        approved = self._approved_sources(allowed_sources)
         # First discover broadly, then explicitly report publisher policy scarcity.
         if len(approved) < 3:
             result["blocked_reason"] = "INSUFFICIENT_APPROVED_PUBLISHERS"
@@ -401,7 +413,9 @@ class IssueDiscoveryService:
         raw_urls = searched.get("urls", [])
         if not isinstance(raw_urls, list):
             return None
-        urls = list(dict.fromkeys(url for value in raw_urls if (url := _url(value)) and url in grounded))
+        seeds = candidate.get("seed_urls", [])
+        grounded.update(seeds)
+        urls = list(dict.fromkeys(url for value in [*seeds, *raw_urls] if (url := _url(value)) and url in grounded))
         articles: list[dict[str, Any]] = []
         seen: set[str] = set()
         for url in urls[:_MAX_URLS_PER_ISSUE]:
@@ -490,8 +504,13 @@ class IssueDiscoveryService:
 
     async def _hydrate(self, url: str, source: Mapping[str, Any], now: datetime) -> dict[str, Any]:
         source_id = str(source.get("source_id") or source.get("id"))
+        fetch_url = url
+        if urlsplit(url).hostname in {"mobile.newsis.com", "nwww.newsis.com"}:
+            article_id = re.search(r"NISX\d{8}_\d{10}", url)
+            if article_id:
+                fetch_url = f"https://www.newsis.com/view/{article_id.group()}"
         response = await self.source_fetcher.fetch(
-            {**source, "url": url, "source_type": "CRAWLER"}, source_type="CRAWLER",
+            {**source, "url": fetch_url, "source_type": "CRAWLER"}, source_type="CRAWLER",
         )
         identity = publisher_identity(url)
         if publisher_identity(response.url) != identity:

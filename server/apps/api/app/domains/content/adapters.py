@@ -573,7 +573,8 @@ class CrawlerAdapter(SourceAdapter):
         )
         image = parser.meta.get("og:image:secure_url") or parser.meta.get("og:image") or parser.meta.get("twitter:image")
         image_url = urljoin(base_url, image) if image else None
-        if image_url and (not image_url.startswith("https://") or len(image_url) > 2048):
+        if image_url and (not image_url.startswith("https://") or len(image_url) > 2048
+                          or re.search(r"/company/|logo|(?:/|_)ci(?:_|\.)", image_url, re.I)):
             image_url = None
         candidate = ArticleCandidate(
             url=canonical,
