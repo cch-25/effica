@@ -21,7 +21,14 @@ from .handlers.base import (
 )
 from .handlers.registry import HandlerRegistry, build_default_registry
 from .llm_budget import DailyLLMBudgetExceeded, LLMRequestSuppressed, MariaDBLLMBudget
-from .queue import ExponentialBackoff, Job, JobStatus, MariaDBQueueRepository, QueueRepository
+from .queue import (
+    ExponentialBackoff,
+    Job,
+    JobNotFound,
+    JobStatus,
+    MariaDBQueueRepository,
+    QueueRepository,
+)
 from .services import (
     MariaDBCrawlScheduler,
     MariaDBIdempotencyStore,
@@ -501,14 +508,20 @@ class WorkerRuntime:
         # ResultApplicationError defaults to retryable=False so apply conflicts
         # (0 share rows, stale aggregates) become FAILED instead of PENDING.
         delay = self.backoff.delay(job.attempts) if retryable else 0.0
-        status = await self.repository.fail(
-            job.id,
-            self.worker_id,
-            error,
-            attempt=job.attempts,
-            retryable=retryable,
-            backoff_seconds=delay,
-        )
+        try:
+            status = await self.repository.fail(
+                job.id,
+                self.worker_id,
+                error,
+                attempt=job.attempts,
+                retryable=retryable,
+                backoff_seconds=delay,
+            )
+        except JobNotFound:
+            # Inventory expiry can delete a leased job while the provider is
+            # responding. Its late completion is retired, never retried.
+            logger.info("job_retired", extra={"event": "job_retired", "job_id": job.id})
+            return JobStatus.CANCELLED
         self._failed_count += 1
         self._last_job_id = job.id
         logger.warning(

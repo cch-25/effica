@@ -78,6 +78,22 @@ def test_scheduled_crawl_failure_moves_on_to_other_source(slow: bool) -> None:
     asyncio.run(scenario())
 
 
+def test_expired_leased_job_does_not_crash_or_resubmit_paid_work() -> None:
+    async def scenario():
+        repository = MemoryQueueRepository([Job(id="expired", job_type="analyze")])
+
+        async def analyze(payload, context):
+            repository._jobs.pop("expired")
+            raise ResultApplicationError("job was removed by retention")
+
+        runtime = WorkerRuntime(repository, registry=HandlerRegistry({"analyze": analyze}))
+        assert await runtime.process_one()
+        assert not await runtime.process_one()
+        assert runtime._failed_count == 0
+
+    asyncio.run(scenario())
+
+
 class _Result:
     def __init__(self, rows: list[dict[str, Any]] | None = None, *, rowcount: int = 0):
         self._rows = list(rows or [])
