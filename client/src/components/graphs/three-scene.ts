@@ -5,8 +5,7 @@ import { createGraphStage } from "./graph-stage";
 
 export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: (ids: string[]) => void, onOrbit: () => void) {
   const theme = getComputedStyle(host);
-  const blue = new THREE.Color(theme.getPropertyValue("--effica-accent-blue").trim()).getHex();
-  const red = new THREE.Color(theme.getPropertyValue("--effica-accent-red").trim()).getHex();
+  const accent = new THREE.Color(theme.getPropertyValue("--peer-color-accent").trim()).getHex();
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "low-power" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setClearColor(0xffffff, 0);
@@ -85,17 +84,17 @@ export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: 
   });
   const sphere = new THREE.SphereGeometry(1, 32, 24);
   const ink = new THREE.MeshPhysicalMaterial({ color: 0x555b65, roughness: .18, metalness: .8, clearcoat: 1 });
-  const selectedMaterial = new THREE.MeshPhysicalMaterial({ color: red, roughness: .17, metalness: .55, clearcoat: 1, clearcoatRoughness: .1 });
+  const selectedMaterial = new THREE.MeshPhysicalMaterial({ color: accent, roughness: .17, metalness: .55, clearcoat: 1, clearcoatRoughness: .1 });
   const haloGeometry = new THREE.TorusGeometry(1, .035, 8, 64);
-  const haloMaterial = new THREE.MeshBasicMaterial({ color: red, transparent: true, opacity: .75, depthTest: false });
+  const haloMaterial = new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: .75, depthTest: false });
   geometries.push(sphere, haloGeometry); materials.push(ink, selectedMaterial, haloMaterial);
   const halo = new THREE.Mesh(haloGeometry, haloMaterial);
   halo.renderOrder = 3; halo.visible = false; scene.add(halo);
-  const guide = lines(Array.from({ length: 6 }, () => [0, 0, 0]), blue, .65, true);
+  const guide = lines(Array.from({ length: 6 }, () => [0, 0, 0]), accent, .65, true);
   guide.visible = false; scene.add(guide);
   const projections = new THREE.Group(); scene.add(projections);
-  const sliceMaterial = new THREE.MeshBasicMaterial({ color: blue, transparent: true, opacity: .055, side: THREE.DoubleSide, depthWrite: false });
-  const sliceLineMaterial = new THREE.LineBasicMaterial({ color: blue, transparent: true, opacity: .22 });
+  const sliceMaterial = new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: .055, side: THREE.DoubleSide, depthWrite: false });
+  const sliceLineMaterial = new THREE.LineBasicMaterial({ color: accent, transparent: true, opacity: .22 });
   materials.push(sliceMaterial, sliceLineMaterial);
   const slices = [[1.65, 1.65], [2.4, 1.65], [2.4, 1.65]].map(([w, h], index) => {
     const geometry = new THREE.PlaneGeometry(w, h);
@@ -108,7 +107,7 @@ export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: 
     projections.add(plane); return plane;
   });
   const projectionGeometry = new THREE.RingGeometry(.033, .05, 32);
-  const projectionMaterial = new THREE.MeshBasicMaterial({ color: red, side: THREE.DoubleSide, depthTest: false });
+  const projectionMaterial = new THREE.MeshBasicMaterial({ color: accent, side: THREE.DoubleSide, depthTest: false });
   geometries.push(projectionGeometry); materials.push(projectionMaterial);
   const projectionDots = Array.from({ length: 3 }, (_, index) => {
     const dot = new THREE.Mesh(projectionGeometry, projectionMaterial);

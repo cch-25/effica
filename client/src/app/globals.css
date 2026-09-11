@@ -1,24 +1,18 @@
 :root {
   color-scheme: light;
 
-  --peer-color-canvas: #f8fbff;
+  --peer-color-canvas: #ffffff;
   --peer-color-surface-hover: #f4f4f4;
   --peer-color-surface-active: #e8e8e8;
   --peer-color-ink: #17212f;
   --peer-color-ink-muted: #4b5869;
   --peer-color-disabled: #777777;
-  --effica-accent-blue: #174fc4;
-  --effica-accent-blue-hover: #103b94;
-  --effica-accent-blue-soft: #edf3ff;
-  --effica-accent-red: #b72e3d;
-  --effica-accent-red-hover: #922230;
-  --effica-accent-red-soft: #fff0f2;
-  --peer-color-accent: var(--effica-accent-blue);
-  --peer-color-accent-hover: var(--effica-accent-blue-hover);
-  --peer-color-accent-soft: var(--effica-accent-blue-soft);
+  --peer-color-accent: #21734b;
+  --peer-color-accent-hover: #185638;
+  --peer-color-accent-soft: #edf6f0;
   --peer-color-danger-soft: #fff0ee;
   --peer-color-danger: #b42318;
-  --peer-color-success: var(--effica-accent-blue);
+  --peer-color-success: var(--peer-color-accent);
   --peer-color-line: #d5dbe3;
   --peer-color-backdrop: rgb(0 0 0 / 20%);
 
