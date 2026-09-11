@@ -1,6 +1,7 @@
 .next/
 .next-real/
 .next-playwright-*/
+.next-preview-*/
 node_modules/
 playwright-report/
 test-results/
