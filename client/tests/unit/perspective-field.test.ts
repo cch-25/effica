@@ -17,6 +17,11 @@ describe("3D perspective coordinates", () => {
     expect(getSpaceCoordinates(point(0, 20, "user"))).toBeNull();
     expect(getSpaceCoordinates(point(0, null))).toBeNull();
   });
+  it("excludes non-finite measurements before they reach the 3D renderer", () => {
+    expect(getSpaceCoordinates(point(NaN, 20))).toBeNull();
+    expect(getSpaceCoordinates(point(0, Infinity))).toBeNull();
+    expect(getSpaceCoordinates({ ...point(0, 20), confidence: NaN })).toBeNull();
+  });
   it("keeps all coincident articles selectable at their exact coordinates", () => {
     const points = Array.from({ length: 20 }, (_, index) => ({ ...point(0, 5), id: `article-${index}` }));
     const groups = makeSpaceData(points);

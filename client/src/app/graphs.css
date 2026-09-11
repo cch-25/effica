@@ -1,0 +1,57 @@
+.graph-3d { min-width: 0; color: var(--peer-color-ink); }
+.graph-3d__toolbar { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding-block: .5rem; border-block: 1px solid var(--peer-color-line); }
+.graph-3d__views, .graph-3d__tools { display: flex; align-items: center; gap: .125rem; }
+.graph-3d__toolbar .button { min-height: 2.25rem; height: auto; padding: .375rem .625rem; border: 0; font-size: .75rem; white-space: nowrap; }
+.graph-3d__toolbar .button[aria-pressed="true"] { background: #ededeb; color: #171717; font-weight: 700; }
+.graph-3d__tools .button { width: 2.25rem; padding: .375rem; }
+.graph-3d__tools svg { width: 15px; height: 15px; }
+.graph-3d__viewport { position: relative; height: clamp(23rem, 38vw, 29rem); isolation: isolate; }
+.graph-3d__canvas { position: absolute; inset: 0; overflow: hidden; }
+.graph-3d__canvas canvas { display: block; }
+.graph-3d__canvas:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+.graph-3d__labels { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.graph-3d__labels > span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.graph-3d__tick { color: #595959; font-size: 11px; }
+.graph-3d__axis-name { color: #262626; font-size: 12px; font-weight: 700; }
+.graph-3d__count { min-width: 18px; padding: 2px 4px; text-align: center; font-size: 10px; color: #fff; background: #242424; border-radius: 10px; }
+.graph-3d__tooltip { position: absolute; z-index: 3; width: max-content; max-width: min(260px, calc(100% - 16px)); padding: .65rem .8rem; background: #242424; color: #fff; font-size: .75rem; line-height: 1.6; pointer-events: none; word-break: keep-all; overflow-wrap: anywhere; }
+.graph-3d__tooltip strong, .graph-3d__tooltip span { display: block; }
+.graph-3d__tooltip strong { margin-bottom: .3rem; }
+.graph-3d__tooltip span { font-size: .6875rem; }
+.graph-3d__instructions { margin: 0; padding-bottom: .65rem; color: #666; font-size: .6875rem; line-height: 1.7; word-break: keep-all; }
+.graph-3d__axis-key { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; margin: 0; padding-block: .75rem; border-block: 1px solid var(--peer-color-line); }
+.graph-3d__axis-key dt { color: #666; font-size: .6875rem; }
+.graph-3d__axis-key dt strong { display: inline; margin-left: .2rem; color: #262626; font-size: .75rem; }
+.graph-3d__axis-key dd { margin: .3rem 0 0; color: #555; font-size: .6875rem; line-height: 1.6; word-break: keep-all; }
+.graph-3d__axis-key dd span { color: #777; }
+.share-preview .graph-3d__axis-key > div { padding: 0; border: 0; }
+.graph-3d__fallback { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .75rem; padding: 1.5rem; background: #fff; text-align: center; font-size: .8125rem; word-break: keep-all; }
+.graph-3d__fallback span { color: #666; font-size: .75rem; }
+.graph-3d__empty { position: absolute; left: 1rem; right: 1rem; top: 42%; margin: 0; padding: .5rem; background: rgb(255 255 255 / 94%); color: #555; text-align: center; font-size: .8125rem; word-break: keep-all; pointer-events: none; }
+.article-space__selection { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-height: 4rem; }
+.article-space__selection > span { font-size: .75rem; }
+.article-space__selection .article-space__readout { position: static; text-align: left; gap: 1.5rem; }
+.article-space__selection .article-space__readout dt { font-size: .6875rem; }
+.article-space__selection .article-space__readout dd { font-size: .9375rem; }
+.article-space__selection .article-space__navigation { position: static; }
+.article-space__selection .article-space__navigation .button { width: 2.25rem; height: 2.25rem; border: 0; background: #f3f3f1; }
+.article-space__caption .is-selected { background: #fff; box-shadow: 0 0 0 2px #333; width: .4rem; height: .4rem; }
+.ideology-graph { margin-top: .75rem; }
+.ideology-graph .graph-3d__viewport { height: 23rem; }
+.ideology-graph .graph-3d__instructions { margin: 0; }
+.ideology-graph .ideology-coordinates { margin: .75rem 0; }
+@media (max-width: 600px) {
+  .graph-3d__viewport, .ideology-graph .graph-3d__viewport { height: 21rem; }
+  .graph-3d__toolbar { gap: .25rem; }
+  .graph-3d__toolbar .button { min-height: 2.75rem; padding-inline: .5rem; }
+  .graph-3d__tools .button { width: 2.25rem; }
+  .graph-3d__axis-key { gap: .5rem; }
+  .graph-3d__axis-key dt strong { display: block; margin: .25rem 0 0; }
+  .article-space__selection .article-space__readout { gap: 1rem; }
+  .article-space__caption { align-items: start; }
+}
+@media (max-width: 360px) {
+  .graph-3d__toolbar .button { padding-inline: .35rem; font-size: .6875rem; }
+  .graph-3d__tools .button { width: 1.9rem; }
+  .graph-3d__views, .graph-3d__tools { gap: 0; }
+}

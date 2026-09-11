@@ -8,8 +8,8 @@ const mocks = vi.hoisted(() => ({ useVisualizationPointsQuery: vi.fn(), useViewe
 
 vi.mock("@/lib/api/queries", () => ({ useVisualizationPointsQuery: mocks.useVisualizationPointsQuery, useViewerQuery: mocks.useViewerQuery }));
 
-vi.mock("@/features/visualization/space-renderer", () => ({
-  createSpace: vi.fn(() => { throw new Error("WebGL unavailable in this test environment"); }),
+vi.mock("@/components/graphs/three-scene", () => ({
+  createGraphScene: vi.fn(() => { throw new Error("WebGL unavailable in this test environment"); }),
 }));
 
 const point: VisualizationPoint = {

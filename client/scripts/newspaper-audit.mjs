@@ -29,7 +29,7 @@ try {
           return { ready: regular.length > 0 && bold.length > 0 && [...regular, ...bold].every(face => face.status === "loaded"), family };
         } catch (error) { return { ready: false, family, error: String(error) }; }
       });
-      if (route === '/visualization') await page.locator('.article-space[data-status="ready"]').waitFor({ timeout: 10000 }).catch(() => {});
+      if (route === '/visualization') await page.locator('.article-space .graph-3d[data-status="ready"]').waitFor({ timeout: 10000 }).catch(() => {});
       const name = route === '/' ? 'home' : route.slice(1).replaceAll('/', '-');
       await page.screenshot({ path: path.join(output, `${device}-${name}.png`), fullPage: true });
       const metrics = await page.evaluate(() => {

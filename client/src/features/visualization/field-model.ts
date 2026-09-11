@@ -11,10 +11,10 @@ export type SpaceDatum = {
 export const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 export const signed = (value: number) => `${value > 0 ? "+" : ""}${Math.round(value)}`;
 
-// ECharts uses x/y as the floor and z as height. Confidence is a real measured
-// value, not the retired API y/z fields or an artificial offset to spread points.
+// Keep the measured domain order: bias, confidence, sensationalism.
+// The renderer maps these to horizontal, depth and height without artificial offsets.
 export function getSpaceCoordinates(point: VisualizationPoint): [number, number, number] | null {
-  if (point.type === "user" || point.sensationalism === null || !Number.isFinite(point.confidence)) return null;
+  if (point.type === "user" || point.sensationalism === null || ![point.x, point.confidence, point.sensationalism].every(Number.isFinite)) return null;
   return [clamp(point.x, -100, 100), clamp(point.confidence * 100, 0, 100), clamp(point.sensationalism, 0, 100)];
 }
 
