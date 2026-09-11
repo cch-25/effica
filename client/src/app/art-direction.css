@@ -96,7 +96,6 @@ button, input, select, textarea { letter-spacing: -.02em; }
 .text-link { font-size: .7rem; font-weight: 700; }
 .newspaper-briefs { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 1rem; }
 .newspaper-briefs .issue-card { min-height: 0; padding: .25rem 0; border: 0; }
-.newspaper-briefs .issue-card + .issue-card { border-left: 1px solid var(--line); padding-left: 1rem; }
 .issue-card h2 { font-size: 1.15rem; line-height: 1.45; max-width: none; }
 .issue-card > p { font-size: .82rem; line-height: 1.65; }
 .issue-card__topic { font-weight: 700; }
@@ -466,8 +465,22 @@ button, input, select, textarea { letter-spacing: -.02em; }
 }
 .edition-articles { grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); column-gap: 1.5rem; row-gap: .5rem; }
 .edition-articles > article { padding-block: .75rem; }
-.newspaper-briefs { grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); row-gap: .6rem; }
+.home-section--issues { container-type: inline-size; container-name: issue-briefs; }
+.newspaper-briefs { grid-template-columns: 1fr; row-gap: .6rem; }
 .newspaper-briefs .issue-card { grid-row: span 4; grid-template-rows: subgrid; }
+.newspaper-briefs .issue-card + .issue-card { border-top: 1px solid var(--line); }
+@media (min-width: 701px) {
+  @container issue-briefs (min-width: 41rem) {
+    .newspaper-briefs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .newspaper-briefs .issue-card:nth-child(n) { border-top: 0; border-left: 0; padding-left: 0; }
+    .newspaper-briefs .issue-card:nth-child(2n) { border-left: 1px solid var(--line); padding-left: 1rem; }
+  }
+}
+@container issue-briefs (min-width: 62rem) {
+  .newspaper-briefs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .newspaper-briefs .issue-card:nth-child(n) { border-left: 0; padding-left: 0; }
+  .newspaper-briefs .issue-card:not(:nth-child(3n + 1)) { border-left: 1px solid var(--line); padding-left: 1rem; }
+}
 .newspaper-briefs .issue-card h2 { font-size: 1.25rem; }
 .newspaper-briefs .issue-card__foot { padding-top: .35rem; }
 .front-page__analysis { grid-template-columns: minmax(0, 1fr) minmax(0, 460px); gap: 1rem 1.75rem; margin-top: 1.75rem; padding-top: 1rem; }

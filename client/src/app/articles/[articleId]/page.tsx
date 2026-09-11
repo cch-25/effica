@@ -1,4 +1,4 @@
-import { ArrowLeft, ExternalLink, Info } from "lucide-react";
+import { ArrowLeft, ExternalLink } from "lucide-react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +27,6 @@ export default async function ArticlePage({ params }: { params: Promise<{ articl
         <article className="card article-main">
           <div className="news-card__meta"><Badge tone="warning">샘플 데이터</Badge><Badge>{article.source}</Badge><span>{formatPublishedDate(article.publishedAt)}</span></div>
           <h1>{article.title}</h1><p className="article-main__dek">{article.dek}</p>
-          <div className="notice"><Info size={15} aria-hidden="true" /> 편향성과 과장성 점수는 기사의 사실 여부나 품질을 판정하지 않습니다. 각 분석 기록에서 공개 근거 제공 여부를 확인할 수 있으며, 기사 전체 내용은 원문에서 확인해 주세요.</div>
           <div className="section-head"><h2>핵심 주장</h2></div><ol className="claim-list">{article.claims.map((claim) => <li key={claim}>{claim}</li>)}</ol>
           <div className="section-head"><h2>제한 공개 분석</h2></div>
           <p className="notice">이 샘플 화면은 실제 AI 분석 근거와 독자 집계를 재현하지 않습니다. 오른쪽의 수치는 화면 흐름을 확인하기 위한 예시입니다.</p>
