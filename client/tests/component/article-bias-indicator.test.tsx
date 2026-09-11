@@ -63,7 +63,7 @@ describe("기사 LLM 편향 표시", () => {
     expect(screen.getByLabelText(/편향성.*좌편향.*-24/)).toBeVisible();
     expect(screen.getByLabelText("과장성 0/100")).toBeVisible();
     expect(screen.getByRole("button", { name: /편향성: 기사의 주장과 강조점/ })).toBeVisible();
-    expect(screen.getByText(/각 분석 기록에서 공개 근거 제공 여부/)).toBeVisible();
+    expect(screen.getByText(/공개할 수 있는 AI 분석 기록이 없습니다/)).toBeVisible();
     expect(screen.queryByText(/LLM 평가|PROCESSING|READY/)).not.toBeInTheDocument();
     expect(screen.queryByText("사회문화")).not.toBeInTheDocument();
     expect(screen.queryByText(/국가.*대외/)).not.toBeInTheDocument();
