@@ -925,7 +925,6 @@ def _default_services(session_factory: Callable[[], Any]) -> dict[str, Any]:
 
     services["issue_discovery"] = IssueDiscoveryService(
         api_key=settings.openai_api_key,
-        tavily_api_key=settings.tavily_api_key,
         model=settings.llm_model,
         budget=llm_budget,
         source_fetcher=services["source_fetcher"],

@@ -35,7 +35,6 @@ class Settings(BaseSettings):
     )
     llm_provider_mode: str = "auto"
     openai_api_key: str | None = None
-    tavily_api_key: str | None = Field(default=None, repr=False)
     openai_endpoint: str = "https://api.openai.com/v1/responses"
     llm_model: str = "gpt-5.6-luna"
     llm_model_alias: str = "openai-default"
