@@ -132,7 +132,7 @@ h1, h2, h3, h4 { letter-spacing: -.025em; }
   .button.choice-button[data-selected]:hover:not(:disabled) { background: var(--peer-color-accent-hover); color: #fff; }
   .button--danger:hover:not([data-disabled]):not(:disabled) { background: #ffe0dc; color: var(--danger); text-decoration: none; }
   .button--secondary:hover:not([data-disabled]):not(:disabled), .button--ghost:hover:not([data-disabled]):not(:disabled),
-  .button.comparison-selector__item:hover:not(:disabled) { background: var(--peer-color-accent-soft); color: var(--accent); text-decoration: none; }
+  .button.comparison-selector__item:hover:not([data-disabled]):not(:disabled) { background: var(--peer-color-accent-soft); color: var(--accent); text-decoration: none; }
 }
 @media (max-width: 760px) {
   .newspaper-masthead__note { display: none; }

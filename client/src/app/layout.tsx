@@ -7,6 +7,7 @@ import "./consumption.css";
 import "./art-direction.css";
 import "./graphs.css";
 import "./readability.css";
+import "./accent-colors.css";
 import { Providers } from "./providers";
 import { AppShell } from "@/components/layout/app-shell";
 import { serverApiRequest } from "@/lib/api/server";

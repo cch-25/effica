@@ -63,10 +63,10 @@
 .graph-3d__viewport { height: clamp(26rem, 42vw, 33rem); background: radial-gradient(ellipse at 50% 42%, #fff 25%, #f2f3f5 100%); }
 .graph-3d__tick { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 10px; color: #535c6d; }
 .graph-3d__axis-name { font-family: ui-sans-serif, system-ui, sans-serif; color: #30394a; font-size: 11px; font-weight: 600; }
-.graph-3d__count { background: #294993; font-family: ui-sans-serif, system-ui, sans-serif; }
+.graph-3d__count { background: var(--effica-accent-blue); font-family: ui-sans-serif, system-ui, sans-serif; }
 .graph-3d__detail-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .4rem .75rem; padding: .6rem 0; }
 .graph-3d__detail-bar .button { gap: .4rem; height: 2rem; padding: .25rem .5rem; border: 0; font-size: .75rem; white-space: nowrap; }
-.graph-3d__detail-bar .button[aria-pressed="true"] { color: #294993; background: #edf1fa; }
+.graph-3d__detail-bar .button[aria-pressed="true"] { color: var(--accent); background: var(--peer-color-accent-soft); }
 .graph-3d__detail-bar svg { width: 14px; height: 14px; }
 .graph-3d__detail-bar > span { color: #495568; font-size: .6875rem; word-break: keep-all; font-variant-numeric: tabular-nums; }
 .graph-3d__instructions { font-size: .6875rem; padding-block: .25rem .65rem; }
@@ -86,7 +86,7 @@
 .graph-3d:fullscreen .graph-3d__axis-name { font-size: 14px; }
 .graph-3d:fullscreen .graph-3d__detail-bar > span { font-size: .8125rem; }
 .ideology-graph .graph-3d__viewport { height: 26rem; }
-.article-space__caption .is-selected { background: #315bc1; box-shadow: 0 0 0 2px #315bc1; border-color: #fff; }
+.article-space__caption .is-selected { background: var(--effica-accent-red); box-shadow: 0 0 0 2px var(--effica-accent-red); border-color: #fff; }
 @media (max-width: 600px) {
   .graph-3d__toolbar { flex-wrap: wrap; padding: .35rem; gap: .3rem; }
   .graph-3d__views { flex: 1 0 100%; }

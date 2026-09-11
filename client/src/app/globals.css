@@ -7,12 +7,18 @@
   --peer-color-ink: #17212f;
   --peer-color-ink-muted: #4b5869;
   --peer-color-disabled: #777777;
-  --peer-color-accent: #174fc4;
-  --peer-color-accent-hover: #103b94;
-  --peer-color-accent-soft: #edf3ff;
+  --effica-accent-blue: #174fc4;
+  --effica-accent-blue-hover: #103b94;
+  --effica-accent-blue-soft: #edf3ff;
+  --effica-accent-red: #b72e3d;
+  --effica-accent-red-hover: #922230;
+  --effica-accent-red-soft: #fff0f2;
+  --peer-color-accent: var(--effica-accent-blue);
+  --peer-color-accent-hover: var(--effica-accent-blue-hover);
+  --peer-color-accent-soft: var(--effica-accent-blue-soft);
   --peer-color-danger-soft: #fff0ee;
   --peer-color-danger: #b42318;
-  --peer-color-success: #174fc4;
+  --peer-color-success: var(--effica-accent-blue);
   --peer-color-line: #d5dbe3;
   --peer-color-backdrop: rgb(0 0 0 / 20%);
 
