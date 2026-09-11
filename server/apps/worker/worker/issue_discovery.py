@@ -139,6 +139,8 @@ class IssueDiscoveryService:
         max_issues: int = 5, timeout_seconds: float = 90,
         transport: httpx.AsyncBaseTransport | None = None,
         analysis_max_output_tokens: int = 4096,
+        tavily_api_key: str | None = None,
+        tavily_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if not api_key or model != _LUNA_MODEL_ID:
             raise IssueDiscoveryError("configured budgeted discovery credentials are required")
@@ -153,6 +155,66 @@ class IssueDiscoveryService:
         self.timeout_seconds = max(1, min(300, timeout_seconds))
         self.transport = transport
         self.analysis_max_output_tokens = analysis_max_output_tokens
+        self.tavily_api_key = tavily_api_key
+        self.tavily_transport = tavily_transport
+
+    async def _tavily_sources(
+        self, run_date: str, candidate: Mapping[str, Any],
+        approved: Mapping[str, Any], now: datetime,
+        protected_cost: int, protected_requests: int,
+    ) -> list[str]:
+        """One supplementary search, only after successful but sparse discovery.
+
+        Advanced news search costs two credits. Reserve the full $0.016 PAYG
+        price even when free credits apply. Its own durable receipt prevents
+        an uncertain submission or a restarted worker from spending twice.
+        Search snippets never become article bodies or selection evidence.
+        """
+        if not self.tavily_api_key:
+            return []
+        key = hashlib.sha256(_json([candidate["issue_key"], sorted(approved)]).encode()).hexdigest()[:32]
+        reservation = await self.budget.reserve(
+            category="discovery", request_key=f"tavily-news-v1:{run_date}:{key}",
+            subject_key=f"tavily-sources:{key}", estimated_max_cost_microusd=16_000,
+            essential=True, protected_cost_microusd=protected_cost,
+            protected_requests=protected_requests,
+        )
+        if reservation.cached_response is not None:
+            return reservation.cached_response["urls"]
+        body = {
+            "query": str(candidate["title"])[:400],
+            "topic": "news", "search_depth": "advanced", "auto_parameters": False,
+            "start_date": (now - timedelta(days=7)).date().isoformat(),
+            "end_date": (now + timedelta(days=1)).date().isoformat(),
+            "include_domains": sorted(approved), "include_domains_mode": "filter",
+            "max_results": _MAX_URLS_PER_ISSUE,
+            "include_answer": False, "include_raw_content": False, "include_usage": True,
+        }
+        try:
+            async with httpx.AsyncClient(
+                timeout=min(90, self.timeout_seconds), transport=self.tavily_transport,
+                follow_redirects=False,
+            ) as client:
+                response = await client.post(
+                    "https://api.tavily.com/search", json=body,
+                    headers={"Authorization": f"Bearer {self.tavily_api_key}"},
+                )
+            if not response.is_success:
+                raise IssueDiscoveryError(f"Tavily returned HTTP {response.status_code}")
+            value = response.json()
+            if not isinstance(value, dict) or not isinstance(value.get("results"), list):
+                raise IssueDiscoveryError("Tavily returned no search result list")
+            urls = list(dict.fromkeys(
+                url for row in value["results"][:_MAX_URLS_PER_ISSUE]
+                if isinstance(row, dict) and (url := _url(row.get("url")))
+                and publisher_identity(url) in approved
+            ))
+            await self.budget.record_response(reservation, {"urls": urls})
+            return urls
+        except IssueDiscoveryError:
+            raise
+        except Exception as exc:
+            raise IssueDiscoveryError(f"Tavily request failed: {type(exc).__name__}") from exc
 
     def _analysis_cost(self, articles: Sequence[Mapping[str, Any]]) -> int:
         """Use the same conservative estimates as paid analysis, without a call.
@@ -423,20 +485,33 @@ class IssueDiscoveryService:
         urls = list(dict.fromkeys(url for value in [*seeds, *raw_urls] if (url := _url(value)) and url in grounded))
         articles: list[dict[str, Any]] = []
         seen: set[str] = set()
-        for url in urls[:_MAX_URLS_PER_ISSUE]:
-            identity = publisher_identity(url)
-            source = approved.get(identity or "")
-            if source is None:
-                result["rejected_sources"].append({"url": url, "reason": "PUBLISHER_NOT_APPROVED"})
-                continue
-            try:
-                article = await self._hydrate(url, source, now)
-            except Exception as exc:
-                result["rejected_articles"].append({"url": url, "reason": type(exc).__name__, "detail": str(exc)[:250]})
-                continue
-            if article["canonical_url"] not in seen:
-                seen.add(article["canonical_url"])
-                articles.append(article)
+        attempted: set[str] = set()
+
+        async def hydrate_urls(candidates: Sequence[str]) -> None:
+            for url in candidates[:_MAX_URLS_PER_ISSUE]:
+                if url in attempted:
+                    continue
+                attempted.add(url)
+                identity = publisher_identity(url)
+                source = approved.get(identity or "")
+                if source is None:
+                    result["rejected_sources"].append({"url": url, "reason": "PUBLISHER_NOT_APPROVED"})
+                    continue
+                try:
+                    article = await self._hydrate(url, source, now)
+                except Exception as exc:
+                    result["rejected_articles"].append({"url": url, "reason": type(exc).__name__, "detail": str(exc)[:250]})
+                    continue
+                if article["canonical_url"] not in seen:
+                    seen.add(article["canonical_url"])
+                    articles.append(article)
+
+        await hydrate_urls(urls)
+        if len({a["publisher_key"] for a in articles}) < 3 and self.tavily_api_key and len(approved) >= 3:
+            extra_urls = await self._tavily_sources(
+                run_date, candidate, approved, now, protected_cost, protected_requests,
+            )
+            await hydrate_urls(extra_urls)
         if len({a["publisher_key"] for a in articles}) < 3:
             result["rejected_issues"].append({"issue_key": candidate["issue_key"], "reason": "FEWER_THAN_THREE_PUBLISHERS"})
             return None
