@@ -145,6 +145,11 @@ pre {
   outline-offset: -1px;
 }
 
+/* The skip-link destination is a page region, not an interactive control. */
+#main-content:focus {
+  outline: none;
+}
+
 ::selection {
   background: var(--peer-color-ink);
   color: var(--peer-color-canvas);
