@@ -61,7 +61,7 @@ test("today's issues keeps top stories above broad topic sections without horizo
 
 test("home, issue comparison, article analysis, and issue return are one connected path", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("link", { name: "이슈 비교 시작 →" }).click();
+  await page.getByRole("navigation", { name: /^주요 메뉴$|^모바일 주요 메뉴$/ }).getByRole("link", { name: "이슈 비교", exact: true }).click();
   await expect(page).toHaveURL(/\/issues$/);
   await page.getByRole("link", { name: /도심 주택 공급 대책/ }).first().click();
   await expect(page).toHaveURL(/\/issues\/issue-housing/);

@@ -2,7 +2,7 @@
 
 import { AnalysisReadinessNotice } from "@/features/articles/analysis-readiness-notice";
 
-import { ChevronDown, ChevronUp, Filter, RotateCcw } from "lucide-react";
+import { ArrowRight, ChevronDown, ChevronUp, Filter, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
@@ -86,9 +86,8 @@ function TopicSection({
             {row.kind === "issue" ? (
               <Link className="topic-issue-row" href={`/issues/${row.issue.id}`}>
                 <span className="topic-issue-row__copy">
-                  <small>이슈</small>
+                  <small>{isSubstantiveEventIssue(row.issue) ? "비교 가능" : "분석 준비 중"}</small>
                   <strong>{row.issue.title}</strong>
-                  {row.issue.summary ? <span>{row.issue.summary}</span> : null}
                 </span>
                 <IssueCounts issue={row.issue} />
               </Link>
@@ -185,7 +184,7 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
       <PageHeader
         eyebrow="이슈 찾기"
         title="오늘의 이슈"
-        description="정치와 정책을 둘러싼 쟁점을 살펴보고, 같은 이슈를 다룬 여러 언론사의 보도를 비교하세요."
+        description="같은 이슈, 다른 보도. 여러 언론사의 근거와 관점을 비교하세요."
         actions={<Button variant="secondary" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)}><Filter size={16} /> 주제와 기간{activeFilterCount > 0 ? ` ${activeFilterCount}` : ""}</Button>}
       />
 
@@ -207,18 +206,17 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
                 </div>
                 <span>{featuredIssues.length}개 준비</span>
               </header>
-              <p className="issue-group__description">정치와 정책 쟁점 중 기사 3개 이상과 출처 3곳 이상의 보도가 모이고, 최신 AI 분석이 준비된 이슈입니다.</p>
+              <p className="issue-group__description">기사 3개 이상, 출처 3곳 이상을 확보하고 최신 분석을 마친 이슈입니다.</p>
               {featuredIssues.length > 0 ? <ul className="issue-rank-list">
                 {featuredIssues.map((issue) => (
                   <li key={issue.id}>
                     <Link className="issue-rank-row" href={`/issues/${issue.id}`}>
-                      <span className="issue-rank-row__number">비교</span>
                       <span className="issue-rank-row__copy">
                         <small>{issue.topic}</small>
                         <strong>{issue.title}</strong>
                         {issue.summary ? <span>{issue.summary}</span> : null}
                       </span>
-                      <span className="issue-rank-row__meta"><IssueCounts issue={issue} /></span>
+                      <span className="issue-rank-row__meta"><IssueCounts issue={issue} /><span className="issue-rank-row__action">보도 비교하기 <ArrowRight size={16} aria-hidden="true" /></span></span>
                     </Link>
                   </li>
                 ))}
@@ -233,7 +231,7 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
                 </div>
                 <span>{topicGroups.length}개 주제</span>
               </header>
-              <p className="issue-group__description">정치와 사회, 경제 분야에서 선정한 정책 쟁점과 관련 보도를 모았습니다. 분석 중인 이슈도 함께 확인할 수 있습니다.</p>
+              <p className="issue-group__description">주제별 이슈와 관련 기사입니다. 분석 준비 중인 자료도 볼 수 있습니다.</p>
               <nav className="topic-directory__nav" aria-label="대주제 바로가기">
                 {topicGroups.map((group) => <a key={group.topic} href={`#${group.id}`}><strong>{group.topic}</strong><span>{group.issues.length ? `${group.issues.length} 이슈` : "최신 기사"}</span></a>)}
               </nav>

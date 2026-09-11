@@ -1,0 +1,158 @@
+/* Shared screen hierarchy. Editorial headlines keep the newspaper identity;
+   controls and reading copy use the system sans family. Color always has a label. */
+.newspaper-masthead__name, .newspaper-footer > a,
+.front-page__lead h1, .front-page__dispatches h2, .edition-articles h2,
+.issue-card h2, .article-main h1, .comparison-hero h1 {
+  font-family: var(--font-newspaper), Georgia, serif;
+}
+
+body { font-size: .9375rem; line-height: 1.7; }
+h1, h2, h3, h4 { letter-spacing: -.025em; }
+.shell .main-content { padding-top: 1.5rem; }
+.shell .page-header { border-bottom: 1px solid var(--line); padding-bottom: 1.25rem; margin-bottom: 1.25rem; }
+.page-header h1 { font-size: clamp(1.5rem, 2.4vw, 1.875rem); line-height: 1.4; margin-bottom: .5rem; }
+.page-header__description, .form-card__intro { color: var(--muted); font-size: .9375rem; line-height: 1.75; }
+.eyebrow { color: var(--accent); font-size: .8125rem; font-weight: 700; }
+.section-head { border-top: 1px solid var(--line); }
+.section-head h2, .comparison-section-title h2 { font-size: 1.1875rem; }
+.section-head > span, .section-head a, .content-path { font-size: .8125rem; }
+
+/* Navigation is an operating surface, visually distinct from the nameplate. */
+.newspaper-masthead__note { border: 0; color: var(--muted); font-size: .75rem; }
+.newspaper-masthead__note strong { color: var(--ink); font-size: .8125rem; }
+.newspaper-masthead__edition { font-size: .75rem; color: var(--muted); border-bottom-color: var(--line); padding-block: .4rem; }
+.site-nav { border-bottom-color: var(--line); }
+.site-nav__brand, .site-nav__link, .site-nav__account { min-height: 2.875rem; font-size: .875rem; }
+.site-nav__link { font-weight: 600; padding-inline: 1.125rem; transition: background-color 150ms, color 150ms; }
+.site-nav__link.is-active, .site-nav__account[aria-current="page"],
+.nav-link[aria-current="page"], .bottom-nav a[aria-current="page"] {
+  background: var(--peer-color-accent-soft); color: var(--accent); font-weight: 700; text-decoration: none;
+}
+.headline-band__story { min-height: 2.25rem; font-size: .8125rem; color: var(--muted); }
+.headline-band__story::before { color: var(--accent); }
+.newspaper-footer { padding-top: 1.25rem; }
+.newspaper-footer p, .newspaper-footer nav, .newspaper-footer > small { font-size: .8125rem; color: var(--muted); }
+
+/* Filled primary actions, neutral structural borders, and unmistakable states. */
+.button { min-height: 2.75rem; height: auto; padding: .65rem .875rem; font-size: .875rem; line-height: 1.35; font-weight: 600; border: 1px solid #a8b2bf; text-decoration: none; transition: none; }
+.button--primary { background: var(--accent); color: #fff; border-color: transparent; }
+.button--secondary { background: #fff; color: var(--ink); }
+.button--ghost { border-color: transparent; background: transparent; color: var(--accent); }
+.button--danger { background: var(--peer-color-danger-soft); color: var(--danger); border-color: transparent; }
+.button--icon { width: 2.75rem; padding: .5rem; }
+.button:focus-visible, :focus-visible { outline-offset: 3px; }
+.button:active:not([data-disabled]):not(:disabled),
+.button[data-pressed]:not([data-disabled]) { background: var(--peer-color-accent-soft); color: var(--accent); }
+.button--primary:active:not([data-disabled]):not(:disabled) { background: var(--peer-color-accent-hover); color: #fff; }
+.button:disabled, .button[data-disabled] { background: #edf0f4; color: #626d7b; border-color: transparent; }
+.badge { padding: .2rem .45rem; font-size: .75rem; line-height: 1.4; font-weight: 600; background: #f0f2f5; color: var(--muted); border: 0; text-decoration: none; }
+.badge--info, .badge--positive { color: var(--accent); background: var(--peer-color-accent-soft); }
+.badge--warning, .badge--danger { color: var(--danger); background: var(--peer-color-danger-soft); text-decoration: none; }
+.notice, .analysis-readiness { padding: 1rem; background: #f2f5f9; border: 0; color: var(--ink); font-size: .9375rem; }
+.notice--warning { background: var(--peer-color-danger-soft); color: var(--danger); }
+.state-panel--error, .state-panel--fatal, .state-panel--conflict { background: var(--peer-color-danger-soft); padding: 1rem; border: 0; }
+.state-panel--error h3, .state-panel--fatal h3, .state-panel--conflict h3 { color: var(--danger); }
+.notice p, .analysis-readiness p { margin-block: .5rem; }
+.analysis-readiness small { font-size: .8125rem; color: var(--muted); }
+.text-link, .front-page__read, .issue-card__foot a, .news-card__footer nav a,
+.content-path a, .reader-notice a { color: var(--accent); font-weight: 600; }
+
+/* The featured list is the starting point. The directory is a compact index. */
+.issue-filter-status { border-top: 0; border-bottom: 1px solid var(--line); padding: 0 0 1rem; gap: .5rem 1.5rem; color: var(--muted); }
+.issue-filter-status strong { color: var(--accent); font-weight: 700; }
+.issue-groups { grid-template-columns: 1fr; gap: 2rem; }
+.issue-group__head { border-bottom: 0; padding-bottom: .35rem; }
+.issue-group__head h2 { font-size: 1.1875rem; }
+.issue-group__head > span { color: var(--accent); font-weight: 600; }
+.issue-group__description { margin-bottom: 1rem; font-size: .875rem; }
+.issue-rank-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); gap: 0 2rem; border-top: 1px solid var(--line); }
+.issue-rank-list > li { min-width: 0; display: flex; border-bottom: 1px solid var(--line); }
+.issue-rank-list > li + li { border-top: 0; }
+.issue-rank-row { width: 100%; display: flex; flex-direction: column; align-items: stretch; padding: 1.25rem .5rem; gap: .875rem; transition: background-color 150ms; }
+.issue-rank-row__copy { display: grid; gap: .5rem; }
+.issue-rank-row__copy small { color: var(--accent); font-weight: 700; }
+.issue-rank-row__copy strong { color: var(--ink); font-size: 1.1875rem; line-height: 1.55; }
+.issue-rank-row__copy > span { color: #354254; font-size: .9375rem; line-height: 1.75; -webkit-line-clamp: 2; margin: 0; }
+.issue-rank-row__meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; margin-top: auto; color: var(--muted); font-size: .8125rem; }
+.issue-rank-row__action { display: inline-flex; align-items: center; gap: .4rem; color: var(--accent); font-size: .875rem; font-weight: 700; }
+.topic-directory { border-left: 0; padding-left: 0; }
+.topic-directory__nav { border: 0; gap: .5rem; }
+.topic-directory__nav a { min-height: 2.75rem; padding: .5rem .75rem; background: #f2f5f9; color: var(--accent); }
+.topic-directory__nav span { color: var(--muted); }
+.topic-directory__groups { grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); }
+.topic-section__head { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.topic-section__head h3 { font-size: 1rem; }
+.topic-issue-row { padding: 1rem .5rem; }
+.topic-issue-row__copy { gap: .35rem; }
+.topic-issue-row__copy small { color: var(--muted); font-size: .75rem; }
+.topic-issue-row__copy strong { font-size: 1rem; line-height: 1.6; }
+.topic-issue-row__copy > span { -webkit-line-clamp: 2; }
+.topic-issue-row > span:last-child { font-size: .8125rem; }
+.issue-card__status { padding: .2rem .4rem; text-decoration: none; font-weight: 600; }
+.issue-card__status--ready { color: var(--accent); background: var(--peer-color-accent-soft); }
+.issue-card__status--pending { color: var(--muted); background: #f0f2f5; }
+
+/* Long-form reading, comparison evidence and selection. */
+.front-page__dek, .front-page__secondary > p:not(.edition-label),
+.front-page__analysis > div > p:not(.edition-label), .article-main__dek { color: #354254; font-size: 1rem; line-height: 1.8; }
+.news-card p, .issue-card > p, .article-main .claim-list, .article-analysis-record > p { font-size: .9375rem; line-height: 1.8; color: #354254; text-align: left; }
+.comparison-column__frame p, .comparison-column__analysis p, .comparison-column__reader p { color: #354254; }
+.comparison-column__source strong, .comparison-score__head strong, .metric strong { color: var(--accent); }
+.comparison-column__frame > span, .comparison-column__analysis > span, .comparison-column__reader > span { font-weight: 700; }
+.button.comparison-selector__item { padding: .875rem; }
+.button.comparison-selector__item[data-selected] { background: var(--peer-color-accent-soft); color: var(--ink); box-shadow: none; }
+.comparison-selector__item[data-selected] .comparison-selector__check { background: var(--accent); color: #fff; border-color: transparent; }
+.comparison-score__marker, .axis__marker { background: var(--accent); }
+.button.choice-button[data-selected] { background: var(--accent); color: #fff; }
+.common-facts { background: #f5f7fa; padding: 1rem; }
+.common-facts .comparison-section-title { border-bottom-color: var(--line); }
+
+/* Forms, activity and administration use the same readable controls. */
+.input, .textarea, .select { min-height: 2.75rem; font-size: 1rem; line-height: 1.5; }
+.field label, .questionnaire-item legend { font-size: .9375rem; }
+.form-card nav[aria-label="온보딩 단계"] li { font-size: .875rem; }
+.form-card nav[aria-label="온보딩 단계"] li[aria-current="step"],
+.radio-card:has(.base-radio[data-checked]) { background: var(--peer-color-accent-soft); color: var(--accent); text-decoration: none; font-weight: 700; }
+.base-checkbox[data-checked], .base-radio[data-checked] { background: var(--accent); color: #fff; border-color: transparent; }
+.data-table th { background: #f2f5f9; }
+.data-table th, .data-table td { font-size: .875rem; line-height: 1.6; padding: .75rem; }
+.data-table tbody tr:nth-child(even) { background: #fafbfd; }
+.graph-3d__toolbar .button[aria-pressed="true"], .space-view-switch .button[aria-pressed="true"],
+.space-article-list > .button[aria-pressed="true"] { background: var(--peer-color-accent-soft); color: var(--accent); text-decoration: none; box-shadow: none; }
+.graph-3d__instructions, .graph-3d__axis-key dt, .graph-3d__axis-key dd,
+.graph-3d__detail-bar > span, .article-space__caption, .space-summary > span,
+.space-inspector__definitions, .space-article-list__title small { font-size: .8125rem; color: var(--muted); }
+.graph-3d__axis-key dt strong { font-size: .875rem; }
+.space-article-list__title strong { font-size: .9375rem; line-height: 1.6; }
+
+@media (hover: hover) {
+  .site-nav__link:hover, .issue-rank-row:hover, .topic-issue-row:hover { background: #f2f6fc; text-decoration: none; }
+  .issue-rank-row:hover strong, .topic-issue-row:hover strong { color: var(--accent); text-decoration: underline; text-underline-offset: .2em; }
+  .button--primary:hover:not([data-disabled]):not(:disabled) { background: var(--peer-color-accent-hover); color: #fff; text-decoration: none; }
+  .button.choice-button[data-selected]:hover:not(:disabled) { background: var(--peer-color-accent-hover); color: #fff; }
+  .button--danger:hover:not([data-disabled]):not(:disabled) { background: #ffe0dc; color: var(--danger); text-decoration: none; }
+  .button--secondary:hover:not([data-disabled]):not(:disabled), .button--ghost:hover:not([data-disabled]):not(:disabled),
+  .button.comparison-selector__item:hover:not(:disabled) { background: var(--peer-color-accent-soft); color: var(--accent); text-decoration: none; }
+}
+@media (max-width: 760px) {
+  .newspaper-masthead__note { display: none; }
+  .newspaper-masthead__identity { grid-template-columns: 1fr; }
+  .newspaper-masthead__name { font-size: 2.65rem; }
+  .newspaper-masthead__edition { font-size: .6875rem; }
+  .shell .main-content { padding: 1.125rem 1rem 1.75rem; }
+  .newspaper-masthead, .site-nav, .headline-band, .newspaper-footer { width: calc(100% - 2rem); }
+  .page-header__actions { width: 100%; }
+  .issue-rank-list { grid-template-columns: 1fr; }
+  .issue-rank-row { padding-inline: 0; }
+  .issue-groups { gap: 1.5rem; }
+  .bottom-nav { border-top: 1px solid var(--line); }
+  .bottom-nav a { min-height: 3.5rem; font-size: .8125rem; }
+  .bottom-nav a svg { display: block; width: 18px; height: 18px; }
+  .graph-3d__axis-key { grid-template-columns: 1fr; gap: .75rem; }
+  .graph-3d__axis-key dt strong { display: inline; }
+  .graph-3d__axis-key dd { margin-top: .2rem; }
+}
+@media print {
+  .button, .bottom-nav { display: none !important; }
+  .badge, .notice, .common-facts { background: transparent; color: #161616; }
+}

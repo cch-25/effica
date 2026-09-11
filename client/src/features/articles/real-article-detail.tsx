@@ -46,7 +46,7 @@ export function RealArticleDetail({ articleId }: { articleId: string }) {
           {article.dek && <p className="article-main__dek">{article.dek}</p>}
           <div className="notice"><Info size={15} aria-hidden="true" /> 편향성과 과장성 점수는 기사의 사실 여부나 품질을 판정하지 않습니다. 각 분석 기록에서 공개 근거 제공 여부를 확인할 수 있으며, 기사 전체 내용은 원문에서 확인해 주세요.</div>
           {ready ? <p className="article-analysis-confidence"><DefinitionTooltip {...analysisTerms.confidence} /><strong>{formatConfidence(article.confidence)}</strong></p> : <AnalysisStatusNotice status={article.analysisStatus} articleId={articleId} />}
-          {ready && article.confidence < 0.6 ? <div className="notice">분석 신뢰도가 낮아 점수를 확정적 판단으로 해석하면 안 됩니다.</div> : null}
+          {ready && article.confidence < 0.6 ? <div className="notice notice--warning">분석 신뢰도가 낮아 점수를 확정적 판단으로 해석하면 안 됩니다.</div> : null}
           <div className="section-head"><h2>AI 분석 기록</h2><span className="badge">제한 공개</span></div>
           {analysis.isPending ? <StatePanel state="loading" /> : analysis.isError ? <StatePanel state="error" onRetry={() => void analysis.refetch()} /> : analysis.data.assessments.assessments.length === 0 ? <p className="notice">공개할 수 있는 AI 분석 기록이 없습니다. 원문과 다른 보도를 함께 확인해 주세요.</p> : <div className="article-analysis-list">{analysis.data.assessments.assessments.map((assessment, index) => {
             const evidence = Array.isArray(assessment.evidence) ? assessment.evidence : [];

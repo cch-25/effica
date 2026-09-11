@@ -26,7 +26,10 @@ try {
         try {
           const regular = await document.fonts.load(`400 16px ${family}`, "에피카 가나다 ABC");
           const bold = await document.fonts.load(`700 16px ${family}`, "에피카 가나다 ABC");
-          return { ready: regular.length > 0 && bold.length > 0 && [...regular, ...bold].every(face => face.status === "loaded"), family };
+          const editorialFamily = getComputedStyle(document.documentElement).getPropertyValue("--font-newspaper").split(",")[0].trim();
+          const editorial = await Promise.all([400, 700].map(weight => document.fonts.load(`${weight} 16px ${editorialFamily}`, "에피카 가나다")));
+          const editorialReady = editorial.every(faces => faces.length > 0 && faces.every(face => face.status === "loaded"));
+          return { ready: editorialReady && document.fonts.check(`400 16px ${family}`) && document.fonts.check(`700 16px ${family}`) && [...regular, ...bold].every(face => face.status === "loaded"), family };
         } catch (error) { return { ready: false, family, error: String(error) }; }
       });
       if (route === '/visualization') await page.locator('.article-space .graph-3d[data-status="ready"]').waitFor({ timeout: 10000 }).catch(() => {});
@@ -51,4 +54,5 @@ try {
     await context.close();
   }
 } finally { await browser.close(); }
-if (results.some(r => !r.fontLoad?.ready || !r.whiteBackground || r.overflow || r.errors.length || r.colored.length || (r.status !== 200 && r.route !== '/missing-page'))) process.exitCode = 1;
+// Semantic blue and red are expected; font loading, overflow and runtime errors remain failures.
+if (results.some(r => !r.fontLoad?.ready || !r.whiteBackground || r.overflow || r.errors.length || (r.status !== 200 && r.route !== '/missing-page'))) process.exitCode = 1;

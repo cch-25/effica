@@ -4,13 +4,16 @@
   --peer-color-canvas: #ffffff;
   --peer-color-surface-hover: #f4f4f4;
   --peer-color-surface-active: #e8e8e8;
-  --peer-color-ink: #161616;
-  --peer-color-ink-muted: #595959;
+  --peer-color-ink: #17212f;
+  --peer-color-ink-muted: #4b5869;
   --peer-color-disabled: #777777;
-  --peer-color-accent: #303030;
-  --peer-color-danger: #383838;
-  --peer-color-success: #454545;
-  --peer-color-line: rgb(36 36 36 / 25%);
+  --peer-color-accent: #174fc4;
+  --peer-color-accent-hover: #103b94;
+  --peer-color-accent-soft: #edf3ff;
+  --peer-color-danger-soft: #fff0ee;
+  --peer-color-danger: #b42318;
+  --peer-color-success: #174fc4;
+  --peer-color-line: #d5dbe3;
   --peer-color-backdrop: rgb(0 0 0 / 20%);
 
   --effica-cobalt: #747474;
@@ -21,7 +24,7 @@
   --effica-sky: #c1c1c1;
   --effica-cream: #eeeeee;
 
-  --peer-font-sans: var(--font-newspaper), "Batang", "Songti SC", Georgia, serif;
+  --peer-font-sans: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Segoe UI", sans-serif;
   --peer-font-display: var(--peer-font-sans);
   --peer-font-mono: var(--peer-font-sans);
   --peer-text-xs: .75rem;
@@ -46,7 +49,7 @@
   --peer-radius: 0;
   --peer-radius-round: 100%;
   --peer-shadow-popup: none;
-  --peer-focus-ring: 2px solid var(--peer-color-ink);
+  --peer-focus-ring: 2px solid var(--peer-color-accent);
 
   --peer-layout-gutter: clamp(1rem, 3vw, 2rem);
   --peer-layout-reading: 42rem;
@@ -71,9 +74,9 @@
   --surface-muted: var(--peer-color-surface-hover);
   --surface-strong: var(--peer-color-surface-active);
   --ink: var(--peer-color-ink);
-  --focus: var(--peer-color-ink);
+  --focus: var(--peer-color-accent);
   --danger: var(--peer-color-danger);
-  --warning: var(--peer-color-ink-muted);
+  --warning: var(--peer-color-danger);
   --info: var(--peer-color-accent);
   --accent: var(--peer-color-accent);
   --font-display: var(--peer-font-display);
