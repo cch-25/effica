@@ -27,6 +27,7 @@ from apps.api.app.db.enums import (
     ScoreStatus,
     ShareCardStatus,
     SourcePolicyStatus,
+    UserStatus,
     VoteQualityStatus,
 )
 from apps.api.app.db.models import (
@@ -793,9 +794,8 @@ class ProductRepositoryMixin:
         vote_revision_rows = list(
             (
                 await self.session.execute(
-                    select(Vote.article_id, func.max(Vote.revision))
-                    .where(Vote.article_id.in_(article_ids))
-                    .group_by(Vote.article_id)
+                    select(Article.id, Article.vote_revision)
+                    .where(Article.id.in_(article_ids))
                 )
             ).all()
         )
@@ -924,7 +924,10 @@ class ProductRepositoryMixin:
                     }
                 ),
             },
-            "common_facts": list(common_facts or []),
+            "common_facts": [
+                fact for fact in (common_facts or [])
+                if len(set(fact.get("article_ids", [])) & set(article_ids)) >= 2
+            ],
             "dimensions": list(dimensions or []),
             "articles": output_articles,
             "comparison_version": snapshot.id,
@@ -1104,6 +1107,7 @@ class ProductRepositoryMixin:
                 id=session_id,
                 user_id=user_id,
                 article_id=article_id,
+                article_key=article_id,
                 token_hash=hashlib.sha256(token.encode()).digest(),
                 expires_at=expires_at,
                 status=ReadSessionStatus.CREATED,
@@ -1239,7 +1243,7 @@ class ProductRepositoryMixin:
             return None
         latest_revision = int(
             await self.session.scalar(
-                select(func.max(Vote.revision)).where(Vote.article_id == article_id)
+                select(Article.vote_revision).where(Article.id == article_id)
             )
             or 0
         )
@@ -1320,6 +1324,7 @@ class ProductRepositoryMixin:
         # can both submit their first vote at revision 1.
         article = await self.session.scalar(
             select(Article).where(Article.id == article_id).with_for_update()
+            .execution_options(populate_existing=True)
         )
         if article is None:
             return None
@@ -1328,8 +1333,9 @@ class ProductRepositoryMixin:
         # active-row transition below.
         user = await self.session.scalar(
             select(User).where(User.id == user_id).with_for_update()
+            .execution_options(populate_existing=True)
         )
-        if user is None:
+        if user is None or user.status != UserStatus.ACTIVE:
             return None
         rows = list(
             (
@@ -1346,21 +1352,8 @@ class ProductRepositoryMixin:
             if row.active:
                 row.active = False
                 row.updated_at = utc_now()
-        # Use a locking read here.  Under MariaDB's default REPEATABLE READ,
-        # a plain MAX() can keep the transaction's earlier snapshot even after
-        # waiting for the article lock, causing two users to allocate the same
-        # global revision.
-        latest_revision = int(
-            await self.session.scalar(
-                select(Vote.revision)
-                .where(Vote.article_id == article_id)
-                .order_by(Vote.revision.desc())
-                .limit(1)
-                .with_for_update()
-            )
-            or 0
-        )
-        revision = latest_revision + 1
+        article.vote_revision += 1
+        revision = article.vote_revision
         now = utc_now()
         vote = Vote(
             id=new_ulid(),
@@ -1499,6 +1492,7 @@ class ProductRepositoryMixin:
     async def delete_vote_row(self, *, user_id: str, article_id: str) -> bool:
         article = await self.session.scalar(
             select(Article).where(Article.id == article_id).with_for_update()
+            .execution_options(populate_existing=True)
         )
         if article is None:
             return False
@@ -1510,17 +1504,8 @@ class ProductRepositoryMixin:
         )
         if row is None:
             return False
-        latest_revision = int(
-            await self.session.scalar(
-                select(Vote.revision)
-                .where(Vote.article_id == article_id)
-                .order_by(Vote.revision.desc())
-                .limit(1)
-                .with_for_update()
-            )
-            or 0
-        )
-        row.revision = latest_revision + 1
+        article.vote_revision += 1
+        row.revision = article.vote_revision
         row.active = False
         row.updated_at = utc_now()
         await self.session.flush()
@@ -1568,7 +1553,7 @@ class ProductRepositoryMixin:
         read_article_ids = set(
             (
                 await self.session.scalars(
-                    select(ReadSession.article_id).where(
+                    select(func.coalesce(ReadSession.article_key, ReadSession.article_id, ReadSession.id)).where(
                         ReadSession.user_id == user_id,
                         ReadSession.status == ReadSessionStatus.ELIGIBLE,
                     )
@@ -1581,6 +1566,7 @@ class ProductRepositoryMixin:
                     select(Vote.article_id).where(
                         Vote.user_id == user_id,
                         Vote.active.is_(True),
+                        Vote.article_id.is_not(None),
                     )
                 )
             ).all()

@@ -385,15 +385,21 @@ def test_openai_responses_style_sends_reasoning_and_strict_schema():
     assert result.evidence[0].quote == "A short "
 
 
-def test_openai_issue_comparison_uses_strict_schema_and_validates_support():
+@pytest.mark.parametrize("article_count", [2, 4, 8])
+def test_openai_issue_comparison_uses_strict_schema_and_validates_support(article_count):
     seen: list[dict[str, object]] = []
+    articles = _comparison_articles()
+    comparison = _comparison_payload()
+    for index in range(3, article_count + 1):
+        articles.append({**articles[0], "article_id": f"article-{index}", "article_version_id": f"version-{index}"})
+        comparison["article_frames"].append({**comparison["article_frames"][0], "article_id": f"article-{index}"})
 
     def handle(request: httpx.Request) -> httpx.Response:
         seen.append(json.loads(request.content))
         return httpx.Response(
             200,
             json={
-                "output_text": json.dumps(_comparison_payload()),
+                "output_text": json.dumps(comparison),
                 "usage": {"total_tokens": 41},
             },
             request=request,
@@ -409,7 +415,7 @@ def test_openai_issue_comparison_uses_strict_schema_and_validates_support():
         ),
     )
     result = provider.analyze_issue_comparison(
-        _comparison_articles(),
+        articles,
         "issue-comparison-v1",
     )
 
@@ -417,10 +423,13 @@ def test_openai_issue_comparison_uses_strict_schema_and_validates_support():
         "정책 시행의 비용을 중심으로 구성합니다."
     )
     assert result["common_facts"][0]["article_ids"] == ["article-1", "article-2"]
+    assert len(result["article_frames"]) == article_count
+    assert len(seen) == 1
     text_format = seen[0]["text"]
     assert isinstance(text_format, dict)
     assert text_format["format"]["name"] == "issue_comparison"
     assert text_format["format"]["strict"] is True
+    assert text_format["format"]["schema"]["properties"]["article_frames"]["maxItems"] == 8
     assert "publisher identity" in str(seen[0]["input"])
     assert "at least two distinct supplied ARTICLE_ID" in str(seen[0]["input"])
     assert "exactly one article_frames item" in str(seen[0]["input"])

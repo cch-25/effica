@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from sqlalchemy import MetaData, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.article_retention import enforce_inventory, ensure_current_inventory, lock_inventory, plan
@@ -42,33 +42,11 @@ def isolated_database():
                     pytest.fail(log.read_text())
                 time.sleep(0.1)
             subprocess.run([shutil.which("mariadb"), "--no-defaults", "-uroot", f"--socket={socket}", "-e", "CREATE DATABASE inventory_test"], check=True, capture_output=True)
-            url = f"mariadb+asyncmy://root@localhost/inventory_test?unix_socket={socket}"
-            # Start from the previous deployed schema. Full historical rebuilds
-            # have unrelated legacy identifier-length incompatibilities.
-            async def previous_schema():
-                from apps.api.app.db import models  # noqa: F401
-                from apps.api.app.db.base import metadata
-
-                previous = MetaData(naming_convention=metadata.naming_convention)
-                for table in metadata.sorted_tables:
-                    if table.name != "article_inventory_guard":
-                        table.to_metadata(previous)
-                for name in ("votes", "read_sessions"):
-                    column = previous.tables[name].c.article_id
-                    column.nullable = False
-                    for fk in column.foreign_keys:
-                        fk.ondelete = "RESTRICT"
-                        fk.constraint.ondelete = "RESTRICT"
-                database = create_async_engine(url)
-                try:
-                    async with database.begin() as connection:
-                        await connection.run_sync(previous.create_all)
-                finally:
-                    await database.dispose()
-
-            asyncio.run(previous_schema())
+            url = f"mysql+asyncmy://root@localhost/inventory_test?unix_socket={socket}"
+            # Build the actual historical schema, then exercise its upgrade.
+            # Cloning current ORM metadata silently imports future columns.
             env = {**os.environ, "DATABASE_URL": url}
-            subprocess.run([sys.executable, "-m", "alembic", "-c", "db/alembic.ini", "stamp", "0020_questionnaire_beta"], env=env, check=True, capture_output=True)
+            subprocess.run([sys.executable, "-m", "alembic", "-c", "db/alembic.ini", "upgrade", "0020_questionnaire_beta"], env=env, check=True, capture_output=True)
             migration = subprocess.run([sys.executable, "-m", "alembic", "-c", "db/alembic.ini", "upgrade", "head"], env=env, capture_output=True, text=True)
             assert migration.returncode == 0, migration.stderr
             yield url
@@ -142,5 +120,169 @@ async def test_real_migrations_atomic_cap_concurrent_writers_and_idle_expiry(iso
             # An idle system still loses expired content via the request/daemon fence.
             await ensure_current_inventory(session, now + timedelta(days=8))
             assert (await session.execute(text("SELECT COUNT(*) FROM articles"))).scalar_one() == 0
+    finally:
+        await engine.dispose()
+
+@pytest.mark.asyncio
+async def test_deletion_keeps_vote_revisions_monotonic(isolated_database):
+    from sqlalchemy import select
+
+    from apps.api.app.db.enums import (
+        ArticleStatus,
+        JobStatus,
+        SourcePolicyStatus,
+        SourceType,
+        UserRole,
+        UserStatus,
+    )
+    from apps.api.app.db.models import Article, Job, Source, User, VoteAggregateSnapshot
+    from apps.api.app.db.ulid import new_ulid
+    from apps.api.app.db.utc import utc_now
+    from apps.api.app.repositories.platform import MariaDBPlatformRepository
+    from apps.worker.worker.queue import Job as WorkerJob
+    from apps.worker.worker.services import MariaDBResultApplier
+
+    engine = create_async_engine(isolated_database)
+    database = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with database() as session:
+            first, second, source_id, article_id = [new_ulid() for _ in range(4)]
+            session.add_all([User(id=uid, role=UserRole.MEMBER, status=UserStatus.ACTIVE) for uid in (first, second)])
+            session.add(Source(id=source_id, name="Review fixture", source_type=SourceType.RSS,
+                canonical_url="https://fixture.invalid/feed", policy_status=SourcePolicyStatus.APPROVED,
+                active=True))
+            await session.flush()
+            session.add(Article(id=article_id, source_id=source_id, title="Review fixture",
+                canonical_url="https://fixture.invalid/1", canonical_url_hash=hashlib.sha256(b"article").digest(),
+                status=ArticleStatus.ACTIVE))
+            await session.commit()
+            repository = MariaDBPlatformRepository(session, encryption_secret="x" * 40)
+            values = dict(x=0, y=0, z=0, sensationalism=0)
+            await repository.put_vote_row(user_id=first, article_id=article_id, values=values)
+            await repository.put_vote_row(user_id=second, article_id=article_id, values=values)
+            jobs = list((await session.scalars(select(Job))).all())
+            for job in jobs:
+                job.status = JobStatus.SUCCEEDED
+            session.add(VoteAggregateSnapshot(id=new_ulid(), article_id=article_id, version=2,
+                aggregate_json={"source_revision": 2, "qualified_count": 2, "qualified": values}, segment_json={}))
+            await session.commit()
+            applier = MariaDBResultApplier(database)
+            await applier._apply_delete(session, WorkerJob(id=new_ulid(), job_type="delete_user", payload={"user_id": second}),
+                {"user_id": second}, utc_now())
+            await session.commit()
+            from apps.worker.worker.handlers.aggregate_votes import handle
+            from apps.worker.worker.lookups import MariaDBWorkerLookups
+            lookups = MariaDBWorkerLookups(database, encryption_secret="x" * 40)
+            aggregate = await handle({"article_id": article_id, "version": 3,
+                                      "votes": await lookups.votes_lookup(article_id)})
+            await applier._apply_aggregate(session, WorkerJob(id=new_ulid(), job_type="aggregate_votes"), aggregate.value, utc_now())
+            await session.commit()
+            view = await repository.vote_aggregate(article_id)
+            assert view["status"] == "ready" and view["qualified_count"] == 1
+            result = await repository.put_vote_row(user_id=first, article_id=article_id, values=values)
+            queued = list((await session.scalars(select(Job))).all())
+            assert result["revision"] == 4
+            pending = {j.dedupe_key for j in queued if j.status == JobStatus.PENDING}
+            assert {f"{article_id}:3", f"{article_id}:4"} <= pending
+            assert (await repository.vote_aggregate(article_id))["status"] == "pending"
+            assert await repository.delete_vote_row(user_id=first, article_id=article_id)
+            await session.commit()
+            assert (await session.get(Article, article_id)).vote_revision == 5
+            await applier._apply_delete(session, WorkerJob(id=new_ulid(), job_type="delete_user", payload={"user_id": first}),
+                {"user_id": first}, utc_now())
+            await session.commit()
+            job = await session.scalar(select(Job).where(Job.dedupe_key == f"{article_id}:6"))
+            assert job.status == JobStatus.PENDING
+            aggregate = await handle({**job.payload_json, "votes": []})
+            await applier._apply_aggregate(session, WorkerJob(id=job.id, job_type="aggregate_votes", payload=job.payload_json), aggregate.value, utc_now())
+            await session.commit()
+            view = await repository.vote_aggregate(article_id)
+            assert view["status"] == "ready" and view["qualified_count"] == 0
+
+
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_maintenance_preserves_failed_job_inputs(isolated_database):
+    from sqlalchemy import select
+
+    from apps.api.app.db.enums import JobStatus
+    from apps.api.app.db.models import Job
+    from apps.api.app.db.ulid import new_ulid
+    from apps.worker.worker.handlers.delete_user import handle
+    from db.storage_maintenance import compact
+
+    engine = create_async_engine(isolated_database)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with factory() as session:
+            payload = {"user_id": new_ulid(), "confirmed": True, "run_date": "2026-09-11"}
+            ids = {}
+            for status in (JobStatus.FAILED, JobStatus.DEAD, JobStatus.CANCELLED, JobStatus.SUCCEEDED):
+                ids[status] = new_ulid()
+                session.add(Job(id=ids[status], job_type="delete_user", dedupe_key=ids[status],
+                                status=status, payload_json=payload))
+            await session.commit()
+            await compact(session)
+            await session.commit()
+            for status, job_id in ids.items():
+                stored = await session.scalar(select(Job.payload_json).where(Job.id == job_id))
+                if status == JobStatus.SUCCEEDED:
+                    assert stored == {"user_id": payload["user_id"]}
+                else:
+                    assert stored == payload
+                    assert (await handle(stored)).value["user_id"] == payload["user_id"]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_engagement_migration_backfills_existing_history(isolated_database):
+    # Separate database keeps the historical upgrade independent of inventory
+    # and concurrency fixtures. Both databases share the isolated Unix socket.
+    engine = create_async_engine(isolated_database)
+    async with engine.begin() as connection:
+        await connection.execute(text("CREATE DATABASE engagement_upgrade"))
+    await engine.dispose()
+    url = isolated_database.replace("/inventory_test?", "/engagement_upgrade?")
+    env = {**os.environ, "DATABASE_URL": url}
+
+    def migrate(revision):
+        result = subprocess.run([sys.executable, "-m", "alembic", "-c", "db/alembic.ini", "upgrade", revision],
+                                env=env, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+
+    migrate("0023_article_images")
+    engine = create_async_engine(url)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text("INSERT INTO users (id) VALUES ('reader')"))
+            await connection.execute(text("""INSERT INTO sources
+                (id,name,source_type,canonical_url,policy_status,robots_status,terms_status,active)
+                VALUES ('source','Test','RSS','https://test.invalid','APPROVED','APPROVED','APPROVED',1)"""))
+            await connection.execute(text("""INSERT INTO articles
+                (id,source_id,canonical_url,canonical_url_hash,title,status)
+                VALUES ('article','source','https://test.invalid/a',UNHEX(SHA2('a',256)),'기사','active')"""))
+            await connection.execute(text("""INSERT INTO votes
+                (id,user_id,article_id,revision,x,y,z,sensationalism,quality_status)
+                VALUES ('vote','reader','article',4,0,0,0,0,'QUALIFIED')"""))
+            await connection.execute(text("""INSERT INTO vote_aggregate_snapshots
+                (id,article_id,version,aggregate_json,segment_json)
+                VALUES ('snapshot','article',9,'{}','{}')"""))
+            await connection.execute(text("""INSERT INTO jobs
+                (id,job_type,dedupe_key,status,payload_json)
+                VALUES ('job','aggregate_votes','article:12','SUCCEEDED','{"article_id":"article"}')"""))
+            for identifier, article in (("read1", "article"), ("read2", "article"), ("detached", None)):
+                await connection.execute(text("""INSERT INTO read_sessions
+                    (id,user_id,article_id,token_hash,expires_at,status,policy_version)
+                    VALUES (:id,'reader',:article,:hash,UTC_TIMESTAMP(),'ELIGIBLE','read-v1')"""),
+                    {"id": identifier, "article": article, "hash": hashlib.sha256(identifier.encode()).digest()})
+        migrate("head")
+        async with engine.connect() as connection:
+            assert (await connection.execute(text("SELECT vote_revision FROM articles"))).scalar_one() == 12
+            keys = dict((await connection.execute(text("SELECT id, article_key FROM read_sessions"))).all())
+            assert keys == {"read1": "article", "read2": "article", "detached": "detached"}
     finally:
         await engine.dispose()

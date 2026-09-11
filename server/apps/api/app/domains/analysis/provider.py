@@ -962,11 +962,11 @@ class HttpLLMProvider(LLMProvider):
         articles: Iterable[Mapping[str, Any]],
         prompt_version: str,
     ) -> dict[str, Any]:
-        """Compare two to four source-masked articles using strict structured output."""
+        """Compare up to eight source-masked event articles in one bounded request."""
 
         article_rows = [dict(article) for article in articles]
-        if not 2 <= len(article_rows) <= 4:
-            raise ProviderSchemaError("issue comparison requires two to four articles")
+        if not 2 <= len(article_rows) <= 8:
+            raise ProviderSchemaError("issue comparison requires two to eight articles")
         article_ids = [str(article.get("article_id") or "") for article in article_rows]
         if any(not article_id for article_id in article_ids) or len(set(article_ids)) != len(
             article_ids
@@ -1417,7 +1417,7 @@ def _issue_comparison_schema() -> dict[str, object]:
             },
             "article_frames": {
                 "type": "array",
-                "maxItems": 4,
+                "maxItems": 8,
                 "items": {
                     "type": "object",
                     "additionalProperties": False,

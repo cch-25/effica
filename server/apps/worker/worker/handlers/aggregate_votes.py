@@ -72,6 +72,10 @@ async def handle(
     except (TypeError, ValueError) as exc:
         raise NonRetryableHandlerError(str(exc), code="INVALID_VOTE_PAYLOAD") from exc
     result["article_id"] = payload.get("article_id")
+    # Public repositories consume the qualified projection. The domain count
+    # already excludes flagged/rejected votes and accepts legacy VALID rows.
+    result["qualified"] = result["aggregate"]
+    result["qualified_count"] = result["count"]
     # Producers historically called this field ``version`` while the vote
     # repository calls it ``vote_revision``.  Preserve both names at the
     # worker boundary so the durable applier can reject stale revisions and

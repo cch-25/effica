@@ -33,7 +33,7 @@ DDL = [
     "CREATE TABLE model_assessments (id TEXT PRIMARY KEY, article_version_id TEXT REFERENCES article_versions(id) ON DELETE RESTRICT, status TEXT DEFAULT 'SUCCEEDED')",
     "CREATE TABLE score_versions (id TEXT PRIMARY KEY, article_version_id TEXT REFERENCES article_versions(id) ON DELETE RESTRICT)",
     "CREATE TABLE votes (article_id TEXT REFERENCES articles(id) ON DELETE RESTRICT)",
-    "CREATE TABLE read_sessions (article_id TEXT REFERENCES articles(id) ON DELETE RESTRICT)",
+    "CREATE TABLE read_sessions (article_id TEXT REFERENCES articles(id) ON DELETE RESTRICT, article_key TEXT)",
     "CREATE TABLE feed_impressions (article_id TEXT REFERENCES articles(id) ON DELETE RESTRICT, user_id TEXT)",
     "CREATE TABLE share_cards (snapshot_json TEXT, blob_id TEXT REFERENCES stored_blobs(id))",
     "CREATE TABLE credit_ledger (event_key TEXT)",
@@ -65,7 +65,7 @@ async def test_retention_detaches_user_history_and_prevents_reingestion():
                 "created": NOW if aid == "fresh" else NOW - timedelta(days=9),
             })
         for query in (
-            "INSERT INTO votes VALUES ('vote')", "INSERT INTO read_sessions VALUES ('read')",
+            "INSERT INTO votes VALUES ('vote')", "INSERT INTO read_sessions (article_id) VALUES ('read')",
             "INSERT INTO feed_impressions VALUES ('impression','user')",
             "INSERT INTO feed_impressions VALUES ('old',NULL)",
             "INSERT INTO credit_ledger VALUES ('article:credit:vote')",
@@ -96,6 +96,7 @@ async def test_retention_detaches_user_history_and_prevents_reingestion():
         assert (await session.execute(text("SELECT article_id FROM votes"))).scalar() is None
         assert (await session.execute(text("SELECT COUNT(*) FROM votes"))).scalar() == 1
         assert (await session.execute(text("SELECT COUNT(*) FROM read_sessions"))).scalar() == 1
+        assert (await session.execute(text("SELECT article_key FROM read_sessions"))).scalar() == "read"
         assert (await session.execute(text("SELECT COUNT(*) FROM credit_ledger"))).scalar() == 1
         assert (await plan(session, NOW))["delete_count"] == 0
         assert set((await session.execute(text("SELECT id FROM stored_blobs"))).scalars()) == {"shared", "export"}

@@ -84,7 +84,9 @@ async def compact(session) -> dict[str, int]:
     await execute("crawl_history", "DELETE FROM crawl_runs WHERE status NOT IN ('PENDING','RUNNING') AND finished_at < :cutoff", cutoff=history_cutoff)
     await execute("admin_receipts", "DELETE FROM admin_request_receipts WHERE created_at < :cutoff", cutoff=cutoff)
     await execute("expired_sessions", "DELETE FROM sessions WHERE expires_at < :now", now=datetime.now(UTC).replace(tzinfo=None))
-    for job in await rows(session, "SELECT id, payload_json FROM jobs WHERE status NOT IN ('PENDING','LEASED')"):
+    # Failed and cancelled jobs can be retried by administrators. Their original
+    # inputs (including deletion confirmation and discovery date) must survive.
+    for job in await rows(session, "SELECT id, payload_json FROM jobs WHERE status = 'SUCCEEDED'"):
         payload = json.loads(job["payload_json"]) if isinstance(job["payload_json"], str) else job["payload_json"]
         lean = compact_job_payload(payload)
         if lean != payload:

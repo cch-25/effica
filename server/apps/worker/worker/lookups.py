@@ -191,7 +191,7 @@ class MariaDBWorkerLookups:
             if isinstance(identifier, Sequence) and not isinstance(identifier, (str, bytes))
             else [str(identifier)]
         )
-        if not 2 <= len(version_ids) <= 4 or len(set(version_ids)) != len(version_ids):
+        if not 2 <= len(version_ids) <= 8 or len(set(version_ids)) != len(version_ids):
             return []
         rows = await self._all(
             """

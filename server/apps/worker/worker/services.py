@@ -2116,7 +2116,7 @@ class MariaDBResultApplier:
             if not issue_id or issue_version < 1:
                 continue
             article_rows = await self._comparison_articles(session, issue_id)
-            if not 3 <= len(article_rows) <= 4:
+            if not 3 <= len(article_rows) <= 8:
                 continue
             await self._ensure_event_article_analyses(session, article_rows, now)
             article_ids = [str(_row(row, "article_id")) for row in article_rows]
@@ -2339,7 +2339,10 @@ class MariaDBResultApplier:
                 raise ResultApplicationError(
                     "stale vote aggregate revision",
                 )
-        aggregate = result.get("aggregate", result)
+        # The handler's aggregate field is only the raw axis mean. Persist the
+        # full projection so qualified counts and source_revision reach readers.
+        aggregate = {key: value for key, value in result.items() if key != "segments"}
+        aggregate["source_revision"] = version
         segments = result.get("segments", {})
         await self._execute(
             session,
@@ -2601,6 +2604,22 @@ class MariaDBResultApplier:
                 {"user_id": user_id},
             )
         if "votes" in purge:
+            # Allocate from the same durable article counter as normal voting.
+            # Sorted parent locks serialize deletions with other vote mutations.
+            affected = _rows(await self._execute(session, """
+                SELECT a.id, a.vote_revision FROM articles a
+                WHERE EXISTS (SELECT 1 FROM votes v WHERE v.article_id=a.id AND v.user_id=:user_id)
+                ORDER BY a.id FOR UPDATE
+            """, {"user_id": user_id}))
+            for article in affected:
+                article_id = str(_row(article, "id"))
+                revision = int(_row(article, "vote_revision", 0)) + 1
+                await self._execute(session,
+                    "UPDATE articles SET vote_revision=:revision WHERE id=:id",
+                    {"id": article_id, "revision": revision})
+                await self._enqueue_job(session, "aggregate_votes",
+                    {"article_id": article_id, "version": revision},
+                    dedupe_key=f"{article_id}:{revision}", now=now)
             await self._execute(session, "DELETE FROM votes WHERE user_id = :user_id", {"user_id": user_id})
         if "read_history" in purge:
             await self._execute(session, "DELETE FROM read_sessions WHERE user_id = :user_id", {"user_id": user_id})

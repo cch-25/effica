@@ -158,7 +158,7 @@ class IssueDiscoveryService:
         """Use the same conservative estimates as paid analysis, without a call.
 
         Estimate comparison over all supplied inputs, which also bounds any
-        three-article cohort that persistence will select later.
+        bounded event cohort that persistence will select later.
         """
         with HttpLLMProvider(ProviderConfig(
             alias="analysis", actual_model_id=self.model,

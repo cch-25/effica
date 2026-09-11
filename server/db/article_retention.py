@@ -167,8 +167,8 @@ async def delete_batch(session, ids: set[str], now: datetime, *, online: bool = 
         await in_query(session, "DELETE FROM issue_comparison_snapshots WHERE id IN :ids", snapshot_ids)
     # Activity and awarded credits survive expiry; they no longer keep the
     # article, its bodies, or its analysis alive through restrictive FKs.
-    for table in ("votes", "read_sessions"):
-        await in_query(session, f"UPDATE {table} SET article_id = NULL WHERE article_id IN :ids", ids)
+    await in_query(session, "UPDATE read_sessions SET article_key = COALESCE(article_key, article_id), article_id = NULL WHERE article_id IN :ids", ids)
+    await in_query(session, "UPDATE votes SET article_id = NULL WHERE article_id IN :ids", ids)
     await in_query(session, "DELETE FROM feed_impressions WHERE article_id IN :ids", ids)
     for table in ("vote_aggregate_snapshots", "fact_check_references", "issue_memberships"):
         await in_query(session, f"DELETE FROM {table} WHERE article_id IN :ids", ids)

@@ -13,7 +13,7 @@ function consentCopy(consent: ConsentView): { label: string; description: string
     label: "[필수] 서비스 이용 및 개인정보 처리",
     description: "서비스 제공, 계정 운영, 활동 기록 처리에 필요한 기본 동의입니다.",
   };
-  if (consent.purpose === "POLITICAL_PROFILE") return {
+  if (consent.purpose === "SENSITIVE_POLITICAL" || consent.purpose === "POLITICAL_PROFILE") return {
     label: "[필수 별도] 정치 민감정보 처리",
     description: "설문 응답과 개인화에 사용합니다. 철회하면 개인화가 중지되며 비개인화 피드는 계속 이용할 수 있습니다.",
   };

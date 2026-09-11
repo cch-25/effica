@@ -86,6 +86,7 @@ apps/worker/worker/handlers/discover_issues.py
 apps/worker/worker/issue_discovery.py
 db/alembic/versions/0022_issue_discovery_budget.py
 db/alembic/versions/0023_article_images.py
+db/alembic/versions/0024_engagement_identity.py
 apps/worker/worker/comparison_cohort.py
 apps/worker/worker/essential_analysis.py
 apps/worker/worker/handlers/__init__.py

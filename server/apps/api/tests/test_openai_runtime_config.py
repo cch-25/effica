@@ -70,6 +70,8 @@ def test_production_requires_canonical_google_oauth_configuration() -> None:
         "app_backend": "mariadb",
         "database_url": "mysql+asyncmy://effica:secret@127.0.0.1:3306/effica",
         "session_secret": "production-session-secret-that-is-long-enough",
+        "admin_username": "operator",
+        "admin_password": "test-only-explicit-admin-password",
         "public_base_url": "https://effica.vercel.app",
         "web_base_url": "https://effica.vercel.app",
         "oauth_redirect_allowlist": "https://effica.vercel.app/api/v1/auth/google/callback",
@@ -96,3 +98,11 @@ def test_production_requires_canonical_google_oauth_configuration() -> None:
             google_client_id="client.apps.googleusercontent.com",
             google_client_secret="client-secret",
         ).assert_safe_runtime()
+
+
+@pytest.mark.parametrize("username,password", [("dev", "1234"), ("", "x" * 24), ("operator", "1234"), ("dev", "x" * 24)])
+def test_production_rejects_development_admin_credentials(username, password):
+    settings = Settings(_env_file=None, app_env="production", app_backend="mariadb",
+                        admin_username=username, admin_password=password)
+    with pytest.raises(RuntimeError, match="ADMIN_USERNAME and ADMIN_PASSWORD"):
+        settings.assert_safe_runtime()

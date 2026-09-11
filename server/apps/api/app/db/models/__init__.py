@@ -369,6 +369,8 @@ class Article(Base):
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     author: Mapped[str | None] = mapped_column(String(255), nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    # Allocated under the article lock; never decreases when a voter is erased.
+    vote_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
     published_at: Mapped[datetime | None] = _timestamp(nullable=True, default=None)
     current_version_id: Mapped[str | None] = mapped_column(
         ULIDType(),
@@ -710,6 +712,8 @@ class ReadSession(Base):
     id: Mapped[str] = _id()
     user_id: Mapped[str] = _fk("users.id", ondelete="CASCADE")
     article_id: Mapped[str | None] = _fk("articles.id", ondelete="SET NULL", nullable=True)
+    # Non-FK identity retains distinct article counts after content expires.
+    article_key: Mapped[str | None] = mapped_column(ULIDType(), nullable=True)
     token_hash: Mapped[bytes] = mapped_column(_HASH, nullable=False)
     expires_at: Mapped[datetime] = _timestamp()
     status: Mapped[ReadSessionStatus] = _enum(

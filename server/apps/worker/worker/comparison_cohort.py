@@ -44,6 +44,8 @@ def select_comparison_cohort(
             continue
         selected.append({**row, "content": body})
         sources.add(source)
-        if len(selected) == 3:
+        # One bounded snapshot covers every publisher in a curated event. The
+        # public view selects any two to four frames without another paid call.
+        if len(selected) == 8:
             break
     return selected if len(selected) >= 3 else []

@@ -92,11 +92,11 @@ async def handle(
     if requested_article_ids is None:
         requested_article_ids = list(frames)
     article_id_list = _string_list(requested_article_ids, "article_ids")
-    if not 2 <= len(article_id_list) <= 4 or len(set(article_id_list)) != len(
+    if not 2 <= len(article_id_list) <= 8 or len(set(article_id_list)) != len(
         article_id_list
     ):
         raise NonRetryableHandlerError(
-            "article_ids must contain two to four unique items",
+            "article_ids must contain two to eight unique items",
             code="INVALID_COMPARISON_OUTPUT",
         )
     article_ids = set(article_id_list)

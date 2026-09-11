@@ -17,7 +17,7 @@ from apps.api.app.core.logging import configure_logging
 from apps.api.app.state import new_id
 
 logger = configure_logging(logger_name="effica.api")
-EXPECTED_DB_REVISION = "0023_article_images"
+EXPECTED_DB_REVISION = "0024_engagement_identity"
 
 
 @asynccontextmanager

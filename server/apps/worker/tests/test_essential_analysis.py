@@ -31,7 +31,7 @@ def test_comparison_keeps_distinct_real_sources_despite_extra_members_and_index_
     assert select_comparison_cohort(list(reversed(rows))) == cohort
     assert select_comparison_cohort(rows[:3]) == []
     diverse = rows + [article("e", "news-c"), article("f", "news-d")]
-    assert [row["article_id"] for row in select_comparison_cohort(diverse)] == ["a", "c", "e"]
+    assert [row["article_id"] for row in select_comparison_cohort(diverse)] == ["a", "c", "e", "f"]
     assert select_comparison_cohort(list(reversed(diverse))) == select_comparison_cohort(diverse)
     forged = [article("a", "one"), article("b", "two"), article("c", "three")]
     for row in forged:

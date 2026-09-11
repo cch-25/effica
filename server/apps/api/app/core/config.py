@@ -130,6 +130,16 @@ class Settings(BaseSettings):
         if self.app_env == "production" and self.app_backend != "mariadb":
             raise RuntimeError("production requires APP_BACKEND=mariadb")
         if self.app_env == "production":
+            if (
+                not self.admin_username.strip()
+                or self.admin_username.strip().lower() == "dev"
+                or len(self.admin_password.strip()) < 16
+                or self.admin_password.strip().lower() in {"1234", "password", "admin"}
+            ):
+                raise RuntimeError(
+                    "production requires explicit ADMIN_USERNAME and ADMIN_PASSWORD "
+                    "with at least 16 characters; development credentials are forbidden"
+                )
             if not self.google_client_id or not self.google_client_secret:
                 raise RuntimeError("production requires Google OAuth client credentials")
             if not self.web_base_url.startswith("https://"):
