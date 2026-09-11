@@ -1,7 +1,7 @@
 :root {
   color-scheme: light;
 
-  --peer-color-canvas: #ffffff;
+  --peer-color-canvas: #f8fbff;
   --peer-color-surface-hover: #f4f4f4;
   --peer-color-surface-active: #e8e8e8;
   --peer-color-ink: #17212f;
