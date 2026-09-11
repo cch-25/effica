@@ -102,7 +102,6 @@ function VisualizationFieldContent({ points, initialPointId, personalPointId }: 
     const measurable = articles.filter((point) => point.sensationalism !== null);
     const biasValues = articles.map((point) => point.x);
     return {
-      averageBias: articles.length ? articles.reduce((sum, point) => sum + point.x, 0) / articles.length : null,
       averageConfidence: articles.length ? articles.reduce((sum, point) => sum + point.confidence, 0) / articles.length : 0,
       averageSensationalism: measurable.length ? measurable.reduce((sum, point) => sum + (point.sensationalism ?? 0), 0) / measurable.length : null,
       biasMin: biasValues.length ? Math.min(...biasValues) : 0,
@@ -130,7 +129,7 @@ function VisualizationFieldContent({ points, initialPointId, personalPointId }: 
             <span>{personal ? "나의 기준" : current.type === "source" ? "출처 평균" : "선택한 기사"}</span>
             <h3 className="space-inspector__title">{current.label}</h3>
           </header>
-          <SelectedBiasChart point={current} average={distribution.averageBias} />
+          <SelectedBiasChart point={current} />
           <SelectedScoreChart point={current} />
           {currentDistance !== null ? <p className="space-inspector__personal">{distanceLabel(currentDistance)} <strong>차이 {Math.round(currentDistance)}점</strong></p> : null}
           {current.type === "article" ? <SelectedArticleLinks key={current.id} articleId={current.id} /> : null}

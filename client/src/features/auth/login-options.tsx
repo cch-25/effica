@@ -1,6 +1,5 @@
 "use client";
 
-import { ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -28,9 +27,9 @@ export function LoginOptions({ returnTo }: { returnTo: string }) {
   };
 
   if (query.isError) return <StatePanel state="error" onRetry={() => void query.refetch()} />;
-  if (query.isPending) return <StatePanel state="loading" />;
+  if (query.isPending) return <div className="oauth-list" aria-busy="true"><Button variant="secondary" className="oauth-button" disabled>Google 로그인 준비 중</Button></div>;
   if (!query.data.includes("google")) {
     return <StatePanel state="error" onRetry={() => void query.refetch()} />;
   }
-  return <div className="oauth-list"><Button variant="secondary" className="oauth-button" onClick={() => void begin()}><ShieldCheck size={16} /> Google로 계속하기</Button></div>;
+  return <div className="oauth-list"><Button variant="secondary" className="oauth-button" onClick={() => void begin()}>Google로 계속하기</Button></div>;
 }

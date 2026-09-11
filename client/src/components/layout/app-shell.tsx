@@ -53,7 +53,7 @@ export function AppShell({ children, user, editionDate = "" }: { children: React
   const admin = pathname.startsWith("/admin");
   const minimal = pathname === "/login" || pathname === "/admin" || pathname.startsWith("/onboarding");
 
-  if (minimal) return <div className="newspaper-account"><a className="skip-link" href="#main-content">본문으로 건너뛰기</a><NewspaperMasthead date={editionDate} section={admin ? "관리자" : "독자"} compact /><main id="main-content" className="minimal-shell" tabIndex={-1}>{children}</main></div>;
+  if (minimal) return <div className={`newspaper-account${pathname === "/login" ? " newspaper-account--login" : ""}`}><a className="skip-link" href="#main-content">본문으로 건너뛰기</a><NewspaperMasthead date={editionDate} section={admin ? "관리자" : "독자"} compact /><main id="main-content" className="minimal-shell" tabIndex={-1}>{children}</main></div>;
 
   return (
     <div className={admin ? "shell shell--admin" : "shell"}>

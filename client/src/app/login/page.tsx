@@ -13,13 +13,15 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       ? "Google 로그인을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요."
       : null;
   return (
-    <section className="card form-card">
-      <Link className="form-brand" href="/">EFFICA</Link>
-      <p className="eyebrow">독자 로그인</p><h1>뉴스를 읽고 비교하는 나의 기록</h1>
-      <p className="form-card__intro">로그인 후 별도 동의와 설문을 완료하면 관점을 넓히는 맞춤 피드를 볼 수 있습니다.</p>
+    <section className="login-page" aria-labelledby="login-title">
+      <header className="login-page__heading">
+        <h1 id="login-title">로그인</h1>
+        <p>기사에 내 평가를 남기고,<br />읽은 기록을 확인하세요.</p>
+      </header>
       {oauthError ? <p role="alert" className="form-error">{oauthError}</p> : null}
       <LoginOptions returnTo={returnTo} />
-      <p style={{ margin: "1.5rem 0 0", color: "var(--muted)", fontSize: ".78rem" }}>Google 계정으로만 로그인할 수 있습니다. 로그인하면 이용약관과 개인정보 처리방침 확인 단계로 이동합니다.</p>
+      <p className="login-page__notice">처음 이용하시면 약관 동의와 설문을 진행합니다.</p>
+      <Link className="login-page__back" href="/">로그인 없이 둘러보기</Link>
     </section>
   );
 }

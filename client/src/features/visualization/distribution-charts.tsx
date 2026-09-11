@@ -3,20 +3,19 @@ import { DefinitionTooltip } from "@/components/ui/definition-tooltip";
 import { analysisTerms } from "@/lib/content/analysis-terms";
 import { clamp, histogram, signed } from "./field-model";
 
-export function SelectedBiasChart({ point, average }: { point: VisualizationPoint; average: number | null }) {
+export function SelectedBiasChart({ point }: { point: VisualizationPoint }) {
   const position = (value: number) => `${(clamp(value, -100, 100) + 100) / 2}%`;
   return <div className="space-inspector__chart">
     <div className="space-inspector__chart-heading"><DefinitionTooltip {...analysisTerms.bias} /><strong>{signed(point.x)}</strong></div>
-    <div className="bias-scale" role="img" aria-label={`선택한 자료의 편향성 ${signed(point.x)}${average !== null ? `, 기사 평균 ${signed(average)}` : ""}`}>
+    <div className="bias-scale" role="img" aria-label={`선택한 자료의 편향성 ${signed(point.x)}`}>
       <div className="bias-scale__plot" aria-hidden="true">
         <div className="bias-scale__track"><span className="bias-scale__neutral" /></div>
         {[-100, -50, 0, 50, 100].map((tick) => <span className="bias-scale__tick" key={tick} style={{ left: position(tick) }}><span>{signed(tick)}</span></span>)}
-        {average !== null ? <span className="bias-scale__average" style={{ left: position(average) }} /> : null}
         <span className="bias-scale__selected" style={{ left: position(point.x) }} />
       </div>
       <div className="bias-scale__labels" aria-hidden="true"><span>좌편향</span><span>중립</span><span>우편향</span></div>
     </div>
-    <div className="bias-scale__legend"><span><i className="bias-scale__key-selected" aria-hidden="true" />선택한 자료 {signed(point.x)}</span>{average !== null ? <span><i className="bias-scale__key-average" aria-hidden="true" />기사 평균 {signed(average)}</span> : null}</div>
+    <div className="bias-scale__legend"><span><i className="bias-scale__key-selected" aria-hidden="true" />선택한 자료 {signed(point.x)}</span></div>
   </div>;
 }
 
