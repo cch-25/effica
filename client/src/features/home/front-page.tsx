@@ -71,7 +71,7 @@ export function FrontPage({ fallbackIssues, fallbackArticles }: { fallbackIssues
           <div className="front-page__byline"><span>{lead.topic}</span><span>기사 {lead.articleIds.length}개 / 출처 {lead.sourceCount}곳</span><span>{lead.analysisStatus === "READY" ? "비교 가능" : "분석 준비 중"}</span></div>
           <Link className="front-page__read" href={`/issues/${lead.id}`}>같은 이슈의 보도 비교하기 →</Link>
           </div>{photo && <PublisherPhoto key={photo.id} article={photo} />}</div>
-          <div className="front-page__dispatches">{dispatches.slice(0, 3).map((article) => <article key={article.id}><p className="edition-label">{article.source}</p><h2><Link href={`/articles/${article.id}`}>{article.title}</Link></h2>{article.dek && <p>{article.dek}</p>}<Link className="text-link" href={`/articles/${article.id}`}>기사 분석 →</Link></article>)}</div>
+          <div className="front-page__dispatches">{dispatches.slice(0, 3).map((article) => <article key={article.id}><p className="edition-label">{article.source}</p><h2><Link href={`/articles/${article.id}`}>{article.title}</Link></h2><p>{article.dek}</p><Link className="text-link" href={`/articles/${article.id}`}>기사 분석 →</Link></article>)}</div>
         </> : <><h1>지금 살펴볼 주요 이슈</h1><StatePanel state="empty" /></>}
       </section>
     </div>

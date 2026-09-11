@@ -181,7 +181,7 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
   if (query.isError && !isMockMode()) return <StatePanel state="error" onRetry={() => void query.refetch()} />;
 
   return (
-    <>
+    <div className="issues-page">
       <PageHeader
         eyebrow="이슈 찾기"
         title="오늘의 이슈"
@@ -291,6 +291,6 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
           </Button>
         </div>
       </Drawer>
-    </>
+    </div>
   );
 }
