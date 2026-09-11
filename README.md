@@ -25,7 +25,7 @@ Explore the context through AI analysis and reader perspectives.
 
 </div>
 
-![EFFICA home: the starting point for comparing coverage and exploring the perspective map](docs/readme/effica-home.png)
+![EFFICA home: newspaper masthead, lead issue, and coverage from three news sources](docs/readme/effica-home.png)
 
 <p align="center"><sub>A starting point for discovering different perspectives on the same issue.</sub></p>
 
@@ -47,7 +47,7 @@ The name comes from **Political Efficacy**: the sense that we can understand pol
 
 Choose **two to four articles from different sources** covering one issue. Start with the facts they share, then explore each article's framing and AI analysis in the same view.
 
-![EFFICA coverage comparison: common facts and two news outlets' perspectives and AI analyses shown side by side](docs/readme/effica-comparison.png)
+![EFFICA coverage comparison: article summaries, political bias, sensationalism, and analysis confidence from three news sources shown side by side](docs/readme/effica-comparison.png)
 
 <p align="center"><sub>Start with shared facts. See where the coverage diverges.</sub></p>
 
@@ -61,7 +61,7 @@ Choose **two to four articles from different sources** covering one issue. Start
 
 The **Perspective Map** places article analyses in a shared 3D space. Explore clusters of similar coverage and articles that stand apart, then select a point to inspect its analysis.
 
-![EFFICA perspective map: a 3D article distribution alongside the selected article's analysis and distribution charts](docs/readme/effica-perspective.png)
+![EFFICA perspective map: the interactive 3D article distribution alongside the selected article's political bias, sensationalism, and analysis confidence](docs/readme/effica-perspective.png)
 
 <p align="center"><sub>From the overall distribution to an individual article, connected through a single selection.</sub></p>
 
