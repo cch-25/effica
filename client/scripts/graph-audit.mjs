@@ -48,7 +48,32 @@ try {
       await graph.screenshot({ path: path.join(output, `${device}-${name}-front.png`) });
       await graph.getByRole('button', { name: '위에서', exact: true }).click();
       assert.equal(await graph.getAttribute('data-view'), 'top');
+      await graph.getByRole('button', { name: '옆에서', exact: true }).click();
+      assert.equal(await graph.getAttribute('data-view'), 'side');
+      await graph.screenshot({ path: path.join(output, `${device}-${name}-side.png`) });
       await graph.getByRole('button', { name: '처음 시점으로' }).click();
+      if (name !== 'ideology-empty') {
+        const projections = graph.getByRole('button', { name: '좌표 투영', exact: true });
+        await projections.click();
+        assert.equal(await graph.getAttribute('data-projections'), 'false');
+        await graph.screenshot({ path: path.join(output, `${device}-${name}-no-projections.png`) });
+        await projections.click();
+        assert.equal(await graph.getAttribute('data-projections'), 'true');
+      }
+      if (device === 'desktop') {
+        await graph.getByRole('button', { name: '전체화면으로 보기' }).click();
+        await page.waitForFunction(() => Boolean(document.fullscreenElement));
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+        await graph.screenshot({ path: path.join(output, `${device}-${name}-fullscreen.png`) });
+        if (name === 'articles') {
+          const title = await graph.locator('.graph-3d__presentation-heading strong').textContent();
+          await graph.getByRole('button', { name: '다음 좌표' }).click();
+          assert.notEqual(await graph.locator('.graph-3d__presentation-heading strong').textContent(), title);
+          await graph.getByRole('button', { name: '이전 좌표' }).click();
+        }
+        await graph.getByRole('button', { name: '전체화면 닫기' }).click();
+        await page.waitForFunction(() => !document.fullscreenElement);
+      }
       await canvas.focus();
       await canvas.press('ArrowRight');
       assert.notEqual(await canvas.getAttribute('data-camera'), initial);
@@ -140,6 +165,28 @@ try {
   await motionPage.waitForFunction(() => document.querySelector('.graph-3d__canvas')?.getAttribute('data-camera') === '0.000,0.000,6.000,1.00');
   await motionPage.getByRole('button', { name: '처음 시점으로' }).click();
   await motionPage.waitForFunction(() => document.querySelector('.graph-3d__canvas')?.getAttribute('data-camera') === '2.600,1.900,5.400,1.00');
+  await motionPage.addInitScript(() => {
+    const original = window.fetch;
+    window.fetch = async (...args) => {
+      const response = await original(...args);
+      const input = args[0];
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : input.toString();
+      if (!url.includes('/visualization/points') || !response.ok) return response;
+      const body = await response.clone().json();
+      const article = body.items.find(item => item.entity_type === 'article');
+      body.items = Array.from({ length: 180 }, (_, i) => ({ ...article, entity_id: i === 0 ? article.entity_id : `density-${i}`, label: `밀집도 검증 자료 ${i + 1}`, x: ((i * 37) % 201) - 100, sensationalism: (i * 23) % 101, confidence: ((i * 13) % 51 + 50) / 100 }));
+      return new Response(JSON.stringify(body), { status: response.status, headers: response.headers });
+    };
+  });
+  await motionPage.goto(base + '/visualization', { waitUntil: 'networkidle' });
+  const denseGraph = motionPage.locator('.graph-3d');
+  await motionPage.locator('.graph-3d[data-status="ready"]').waitFor();
+  assert.match(await motionPage.locator('.article-space__topline').textContent(), /180개 자료/);
+  await denseGraph.screenshot({ path: path.join(output, 'desktop-dense-180.png') });
+  await denseGraph.getByRole('button', { name: '정면', exact: true }).click();
+  await motionPage.waitForFunction(() => document.querySelector('.graph-3d__canvas')?.getAttribute('data-camera') === '0.000,0.000,6.000,1.00');
+  await denseGraph.screenshot({ path: path.join(output, 'desktop-dense-180-front.png') });
+  results.push({ graph: 'dense-180-points', status: 'passed' });
   await motionContext.close();
   results.push({ graph: 'camera-transition', status: 'passed', reducedMotion: false });
 } finally {

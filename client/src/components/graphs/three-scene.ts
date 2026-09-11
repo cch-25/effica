@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { graphPosition, graphValue, type GraphAxes, type GraphPoint, type GraphView } from "./graph-model";
+import { createGraphStage } from "./graph-stage";
 
 export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: (ids: string[]) => void, onOrbit: () => void) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "low-power" });
@@ -8,14 +9,15 @@ export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: 
   renderer.setClearColor(0xffffff, 0);
   host.appendChild(renderer.domElement);
   const scene = new THREE.Scene();
+  const stage = createGraphStage(renderer, scene);
   const camera = new THREE.OrthographicCamera(-3, 3, 2, -2, .1, 100);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enablePan = false;
   controls.enableZoom = false;
   controls.minPolarAngle = .001;
   controls.maxPolarAngle = Math.PI / 2;
-  controls.minAzimuthAngle = -.95;
-  controls.maxAzimuthAngle = .95;
+  controls.minAzimuthAngle = -Math.PI / 2;
+  controls.maxAzimuthAngle = Math.PI / 2;
   controls.rotateSpeed = .55;
   controls.enabled = false;
   renderer.domElement.style.touchAction = "pan-y";
@@ -50,18 +52,17 @@ export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: 
     grid.push([x, -.825, -.825], [x, -.825, .825], [-1.2, -.825, z], [1.2, -.825, z]);
     grid.push([x, -.825, -.825], [x, .825, -.825], [-1.2, y, -.825], [1.2, y, -.825]);
   }
-  scene.add(lines(grid, 0x222222, .12));
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.65), new THREE.MeshBasicMaterial({ color: 0xf6f6f5, side: THREE.DoubleSide }));
-  floor.rotation.x = -Math.PI / 2;
-  floor.position.y = -.827;
-  geometries.push(floor.geometry); materials.push(floor.material);
-  scene.add(floor);
+  scene.add(lines(grid, 0x687080, .19));
+  const sideGrid = lines(Array.from({ length: 5 }, (_, i) => [
+    [-1.2, -.825 + i * .4125, -.825], [-1.2, -.825 + i * .4125, .825],
+    [-1.2, -.825, -.825 + i * .4125], [-1.2, .825, -.825 + i * .4125],
+  ]).flat(), 0x687080, .19);
+  scene.add(sideGrid);
   // Three outer rulers stay separate from the selected point's projection guides.
   axes.forEach((axis, index) => {
     const a = [-1.2, -.825, .825];
     const b = [...a];
     b[index] = index === 2 ? -.825 : dimensions[index];
-    scene.add(lines([a, b], 0x333333, .7));
     [0, .5, 1].forEach((fraction) => {
       if (fraction === 0 && index === 2) return;
       const position = new THREE.Vector3(...a);
@@ -79,19 +80,44 @@ export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: 
     overlay.appendChild(label);
     axisLabels.push({ element: label, position, axis: index, offset: index === 0 ? [0, 35] : [0, -27] });
   });
-  const sphere = new THREE.SphereGeometry(1, 20, 14);
-  const ink = new THREE.MeshStandardMaterial({ color: 0x474747, roughness: .6 });
-  const selectedMaterial = new THREE.MeshStandardMaterial({ color: 0x151515, roughness: .45 });
-  const haloGeometry = new THREE.RingGeometry(.065, .079, 40);
-  const haloMaterial = new THREE.MeshBasicMaterial({ color: 0x222222, side: THREE.DoubleSide, depthTest: false });
+  const sphere = new THREE.SphereGeometry(1, 32, 24);
+  const ink = new THREE.MeshPhysicalMaterial({ color: 0x555b65, roughness: .18, metalness: .8, clearcoat: 1 });
+  const selectedMaterial = new THREE.MeshPhysicalMaterial({ color: 0x244db8, roughness: .17, metalness: .55, clearcoat: 1, clearcoatRoughness: .1 });
+  const haloGeometry = new THREE.TorusGeometry(1, .035, 8, 64);
+  const haloMaterial = new THREE.MeshBasicMaterial({ color: 0x315bc1, transparent: true, opacity: .75, depthTest: false });
   geometries.push(sphere, haloGeometry); materials.push(ink, selectedMaterial, haloMaterial);
-  scene.add(new THREE.AmbientLight(0xffffff, 2));
-  const light = new THREE.DirectionalLight(0xffffff, 3);
-  light.position.set(-3, 5, 6); scene.add(light);
   const halo = new THREE.Mesh(haloGeometry, haloMaterial);
   halo.renderOrder = 3; halo.visible = false; scene.add(halo);
-  const guide = lines(Array.from({ length: 6 }, () => [0, 0, 0]), 0x333333, .6, true);
+  const guide = lines(Array.from({ length: 6 }, () => [0, 0, 0]), 0x315bc1, .65, true);
   guide.visible = false; scene.add(guide);
+  const projections = new THREE.Group(); scene.add(projections);
+  const sliceMaterial = new THREE.MeshBasicMaterial({ color: 0x315bc1, transparent: true, opacity: .055, side: THREE.DoubleSide, depthWrite: false });
+  const sliceLineMaterial = new THREE.LineBasicMaterial({ color: 0x315bc1, transparent: true, opacity: .22 });
+  materials.push(sliceMaterial, sliceLineMaterial);
+  const slices = [[1.65, 1.65], [2.4, 1.65], [2.4, 1.65]].map(([w, h], index) => {
+    const geometry = new THREE.PlaneGeometry(w, h);
+    const edgeGeometry = new THREE.EdgesGeometry(geometry);
+    geometries.push(geometry, edgeGeometry);
+    const plane = new THREE.Mesh(geometry, sliceMaterial);
+    plane.add(new THREE.LineSegments(edgeGeometry, sliceLineMaterial));
+    if (index === 0) plane.rotation.y = Math.PI / 2;
+    if (index === 1) plane.rotation.x = -Math.PI / 2;
+    projections.add(plane); return plane;
+  });
+  const projectionGeometry = new THREE.RingGeometry(.033, .05, 32);
+  const projectionMaterial = new THREE.MeshBasicMaterial({ color: 0x315bc1, side: THREE.DoubleSide, depthTest: false });
+  geometries.push(projectionGeometry); materials.push(projectionMaterial);
+  const projectionDots = Array.from({ length: 3 }, (_, index) => {
+    const dot = new THREE.Mesh(projectionGeometry, projectionMaterial);
+    if (index === 0) dot.rotation.y = Math.PI / 2;
+    if (index === 1) dot.rotation.x = -Math.PI / 2;
+    dot.renderOrder = 2; projections.add(dot); return dot;
+  });
+  let showProjections = true;
+  let selectionFrame = 0;
+  let selectionGlow = 1;
+  let activePosition: THREE.Vector3 | undefined;
+  const profile = axes.every(axis => axis.min === -100);
   let points: { data: GraphPoint; mesh: THREE.Mesh; label: HTMLSpanElement | null }[] = [];
   let selectedId = "";
   let hovered: GraphPoint | undefined;
@@ -111,18 +137,31 @@ export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: 
     if (disposed) return;
     halo.quaternion.copy(camera.quaternion);
     const pixel = (camera.top - camera.bottom) / height / camera.zoom;
-    halo.scale.setScalar(pixel * 11 / .079);
-    points.forEach(({ data, mesh }) => mesh.scale.setScalar(pixel * (data.ids.includes(selectedId) ? 6 : data === hovered ? 6 : 4.5)));
+    const selectedRadius = profile ? 13 : 8.5;
+    const pointRadius = Math.max(3.5, 6 - Math.log2(Math.max(1, points.length / 24)) * .45);
+    halo.scale.setScalar(pixel * (selectedRadius + 5 + (1 - selectionGlow) * 8));
+    haloMaterial.opacity = .25 + selectionGlow * .5;
+    points.forEach(({ data, mesh }) => mesh.scale.setScalar(pixel * (data.ids.includes(selectedId) ? selectedRadius : data === hovered ? 8 : pointRadius)));
+    stage.setPlanar(view !== "space");
+    sideGrid.visible = view === "side";
+    projections.visible = Boolean(activePosition) && showProjections;
+    slices.forEach((slice, i) => { slice.visible = view === "space" || (view === "front" && i === 2) || (view === "top" && i === 1) || (view === "side" && i === 0); });
+    sliceMaterial.opacity = (view === "space" ? .055 : .025) * selectionGlow;
     renderer.render(scene, camera);
     const occupied: { left: number; right: number; top: number; bottom: number }[] = [];
     // Compute collision boxes in graph coordinates. Off-screen layout and page
     // scrolling must not affect whether a label is displayed.
     for (const label of [...axisLabels].sort((a, b) => Number(b.element.classList.contains("graph-3d__axis-name")) - Number(a.element.classList.contains("graph-3d__axis-name")))) {
-      label.element.hidden = (view === "front" && label.axis === 2) || (view === "top" && label.axis === 1);
-      place(label.element, label.position, label.offset);
+      label.element.hidden = (view === "front" && label.axis === 2) || (view === "top" && label.axis === 1) || (view === "side" && label.axis === 0);
+      const position = label.position.clone();
+      if (view === "space" && label.axis === 0) { position.y = -1.02; position.z = .98; }
+      // In side view, the depth ruler becomes the horizontal axis.
+      const offset = view === "side" && label.axis === 2 ? [0, label.element.classList.contains("graph-3d__axis-name") ? 35 : 15]
+        : view === "space" && label.axis === 0 ? [0, label.element.classList.contains("graph-3d__axis-name") ? 32 : 13] : label.offset;
+      place(label.element, position, offset);
       if (!label.element.hidden && label.element.style.visibility !== "hidden") {
-        const p = project(label.position);
-        p.x += label.offset[0]; p.y += label.offset[1];
+        const p = project(position);
+        p.x += offset[0]; p.y += offset[1];
         const labelWidth = label.element.offsetWidth || (label.element.textContent?.length ?? 1) * 7;
         const rect = { left: p.x - labelWidth / 2, right: p.x + labelWidth / 2, top: p.y - 7, bottom: p.y + 7 };
         if (occupied.some((r) => r.left - 4 < rect.right && r.right + 4 > rect.left && r.top - 2 < rect.bottom && r.bottom + 2 > rect.top)) label.element.style.visibility = "hidden";
@@ -135,7 +174,7 @@ export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: 
   function resize() {
     width = Math.max(1, host.clientWidth); height = Math.max(1, host.clientHeight);
     const aspect = width / height;
-    const span = Math.max(3.35, 4.25 / aspect);
+    const span = Math.max(3.5, 4.35 / aspect);
     camera.left = -span * aspect / 2; camera.right = span * aspect / 2;
     camera.top = span / 2; camera.bottom = -span / 2;
     camera.updateProjectionMatrix(); renderer.setSize(width, height); render();
@@ -143,12 +182,12 @@ export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: 
   function setView(next: GraphView, animate = true) {
     cancelAnimationFrame(frame);
     view = next; tooltip.hidden = true;
-    const destination = new THREE.Vector3(...(next === "front" ? [0, 0, 6] : next === "top" ? [0, 6, .006] : [2.6, 1.9, 5.4]));
+    const destination = new THREE.Vector3(...(next === "front" ? [0, 0, 6] : next === "top" ? [0, 6, .006] : next === "side" ? [6, 0, 0] : [2.6, 1.9, 5.4]));
     const start = camera.position.clone(), startZoom = camera.zoom;
     const started = performance.now();
     function step(now: number) {
-      const t = !animate || reducedMotion.matches ? 1 : Math.min(1, (now - started) / 260);
-      const ease = 1 - (1 - t) ** 3;
+      const t = !animate || reducedMotion.matches ? 1 : Math.min(1, (now - started) / 620);
+      const ease = t * t * (3 - 2 * t);
       camera.position.lerpVectors(start, destination, ease);
       camera.zoom = startZoom + (1 - startZoom) * ease;
       camera.lookAt(0, 0, 0); camera.updateProjectionMatrix(); render();
@@ -209,21 +248,25 @@ export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: 
   setView("space", false); resize();
   return {
     setView,
+    setProjections(visible: boolean) { showProjections = visible; render(); },
     setInteractive(enabled: boolean) { controls.enabled = enabled; renderer.domElement.style.touchAction = enabled ? "none" : "pan-y"; },
     zoom(amount: number) { cancelAnimationFrame(frame); camera.zoom = THREE.MathUtils.clamp(camera.zoom + amount, .8, 1.65); camera.updateProjectionMatrix(); render(); },
     rotate(horizontal: number, vertical: number) {
       cancelAnimationFrame(frame); view = "space"; onOrbit();
       const spherical = new THREE.Spherical().setFromVector3(camera.position);
-      spherical.theta = THREE.MathUtils.clamp(spherical.theta + horizontal, -.95, .95);
+      spherical.theta = THREE.MathUtils.clamp(spherical.theta + horizontal, -Math.PI / 2, Math.PI / 2);
       spherical.phi = THREE.MathUtils.clamp(spherical.phi + vertical, .15, Math.PI / 2);
       camera.position.setFromSpherical(spherical); controls.update(); render();
     },
     update(data: GraphPoint[], selected: string) {
+      const changed = selected !== selectedId;
       selectedId = selected; tooltip.hidden = true;
       points.forEach(({ mesh, label }) => { scene.remove(mesh); label?.remove(); });
       points = data.map((datum) => {
         const mesh = new THREE.Mesh(sphere, datum.ids.includes(selected) ? selectedMaterial : ink);
         mesh.position.set(...graphPosition(datum.values, axes));
+        // Uncalibrated cast shadows can look like extra observations. Only the
+        // measuring stage casts shadows; data uses explicit projection markers.
         scene.add(mesh);
         let label: HTMLSpanElement | null = null;
         if (datum.ids.length > 1) {
@@ -232,22 +275,37 @@ export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: 
         return { data: datum, mesh, label };
       });
       const active = points.find((point) => point.data.ids.includes(selected));
+      activePosition = active?.mesh.position;
       halo.visible = guide.visible = Boolean(active);
       if (active) {
         const p = active.mesh.position;
         halo.position.copy(p);
+        slices[0].position.x = p.x; slices[1].position.y = p.y; slices[2].position.z = p.z;
+        projectionDots[0].position.set(-1.2, p.y, p.z);
+        projectionDots[1].position.set(p.x, -.82, p.z);
+        projectionDots[2].position.set(p.x, p.y, -.823);
         const values = [p.x, p.y, p.z, p.x, -.825, p.z, p.x, -.825, p.z, p.x, -.825, .825, p.x, -.825, p.z, -1.2, -.825, p.z, p.x, p.y, p.z, -1.2, p.y, p.z, -1.2, p.y, p.z, -1.2, p.y, .825];
         guide.geometry.setAttribute("position", new THREE.Float32BufferAttribute(values, 3));
         guide.geometry.computeBoundingSphere(); guide.computeLineDistances();
       }
+      if (changed) {
+        cancelAnimationFrame(selectionFrame);
+        const started = performance.now();
+        const reveal = (now: number) => {
+          selectionGlow = reducedMotion.matches ? 1 : Math.min(1, (now - started) / 460);
+          render();
+          if (selectionGlow < 1 && !disposed) selectionFrame = requestAnimationFrame(reveal);
+        };
+        reveal(started);
+      }
       render();
     },
     dispose() {
-      disposed = true; cancelAnimationFrame(frame); observer.disconnect(); controls.dispose();
+      disposed = true; cancelAnimationFrame(frame); cancelAnimationFrame(selectionFrame); observer.disconnect(); controls.dispose();
       host.removeEventListener("pointerdown", pointerDown, true); host.removeEventListener("pointermove", pointerMove);
       host.removeEventListener("pointerup", pointerUp); host.removeEventListener("pointerleave", pointerLeave); host.removeEventListener("pointercancel", pointerCancel);
       geometries.forEach((geometry) => geometry.dispose()); materials.forEach((material) => material.dispose());
-      renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove(); overlay.remove(); tooltip.remove();
+      stage.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove(); overlay.remove(); tooltip.remove();
     },
   };
 }

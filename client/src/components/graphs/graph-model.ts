@@ -2,7 +2,7 @@ export type GraphAxis = { label: string; min: number; max: number; suffix?: stri
 // World order: horizontal, vertical, depth. Domain coordinates stay in the data.
 export type GraphAxes = readonly [GraphAxis, GraphAxis, GraphAxis];
 export type GraphPoint = { id: string; ids: string[]; label: string; values: [number, number, number] };
-export type GraphView = "space" | "front" | "top";
+export type GraphView = "space" | "front" | "top" | "side";
 
 export function graphPosition(values: readonly number[], axes: GraphAxes): [number, number, number] {
   return axes.map((axis, index) => {
