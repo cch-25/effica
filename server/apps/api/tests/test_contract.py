@@ -64,3 +64,30 @@ def test_openapi_has_unique_operation_ids_and_stable_errors() -> None:
     ids = [operation["operationId"] for operation in operations]
     assert len(ids) == len(set(ids))
     assert all("400" in operation["responses"] and "422" in operation["responses"] for operation in operations)
+
+
+def test_demo_credentials_keep_member_permissions_and_populated_activity():
+    from apps.api.app.demo_account import DEMO_USER_ID
+
+    client = TestClient(app)
+    for username, password in [("dev", "1234"), ("user", "wrong")]:
+        response = client.post("/api/v1/auth/login", json={"username": username, "password": password})
+        assert response.status_code == 401
+        assert not response.cookies.get("session")
+    response = client.post("/api/v1/auth/login", json={"username": "user", "password": "1234"})
+    assert response.status_code == 204
+    assert "HttpOnly" in response.headers.get("set-cookie")
+    me = client.get("/api/v1/me").json()
+    assert me["id"] == DEMO_USER_ID and me["role"] == "MEMBER"
+    assert me["onboarding_complete"] and me["consent_complete"]
+    assert client.get("/api/v1/admin/audit").status_code == 403
+    progress = client.get("/api/v1/me/progress").json()
+    assert progress["credit_total"] >= 576
+    assert progress["read_article_count"] > 0
+    assert progress["ideology"]["x"] == 65
+    assert len(client.get("/api/v1/me/efficacy").json()["responses"]) == 8
+    assert client.post("/api/v1/auth/logout").status_code == 403
+    assert client.post("/api/v1/auth/logout", headers={"X-CSRF-Token": client.cookies["csrf"]}).status_code == 204
+    assert client.get("/api/v1/me").status_code == 401
+    client.post("/api/v1/auth/login", json={"username": "user", "password": "1234"})
+    assert client.get("/api/v1/me/progress").json() == progress

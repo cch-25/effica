@@ -81,6 +81,7 @@ from apps.api.app.api.v1.schemas import (
 )
 from apps.api.app.core.config import Settings, get_settings
 from apps.api.app.core.errors import COMMON_ERROR_RESPONSES, ApiError
+from apps.api.app.demo_account import ensure_demo_account, ensure_memory_demo_account
 from apps.api.app.domains.auth.providers import (
     MockOAuthProvider,
     OAuthError,
@@ -532,6 +533,40 @@ async def admin_credentials_login(
         "max_age": 43_200,
         "path": "/",
     }
+    response.set_cookie("session", token, httponly=True, **cookie_options)
+    response.set_cookie("csrf", csrf, httponly=False, **cookie_options)
+
+
+@router.post("/auth/login", status_code=204, operation_id="member_credentials_login")
+async def member_credentials_login(
+    body: AdminLoginRequest,
+    response: Response,
+    settings: Settings = Depends(get_settings),
+    platform: PlatformState = Depends(get_state),
+    repository: MariaDBPlatformRepository | None = Depends(get_repository),
+) -> None:
+    username_matches = secrets.compare_digest(body.username.encode(), b"user")
+    password_matches = secrets.compare_digest(body.password.encode(), b"1234")
+    if not username_matches or not password_matches:
+        raise ApiError(401, "MEMBER_CREDENTIALS_INVALID", "The member credentials are invalid.")
+    try:
+        if repository is not None:
+            user_id = await ensure_demo_account(repository)
+            token, csrf = await repository.rotate_session(user_id)
+        else:
+            user_id = ensure_memory_demo_account(platform)
+            token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+            platform.sessions[stable_hash(token)] = {
+                "user_id": user_id, "csrf_hash": stable_hash(csrf),
+                "expires_at": utcnow() + timedelta(hours=12), "revoked_at": None,
+                "provider": "demo_credentials",
+            }
+    except PermissionError as exc:
+        raise ApiError(403, "DEMO_ACCOUNT_UNAVAILABLE", "The demo account is unavailable.") from exc
+    except ValueError as exc:
+        raise ApiError(503, "DEMO_CONTENT_UNAVAILABLE", "Demo activity requires available articles.") from exc
+    cookie_options = {"secure": settings.app_env == "production", "samesite": "lax",
+                      "max_age": 43_200, "path": "/"}
     response.set_cookie("session", token, httponly=True, **cookie_options)
     response.set_cookie("csrf", csrf, httponly=False, **cookie_options)
 

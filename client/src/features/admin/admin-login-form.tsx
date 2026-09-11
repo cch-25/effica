@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -8,7 +9,13 @@ import { TextField } from "@/components/ui/form-controls";
 import { isMockMode } from "@/lib/api/mode";
 
 export function AdminLoginForm({ returnTo }: { returnTo: string }) {
+  return <CredentialsLoginForm returnTo={returnTo} admin />;
+}
+
+export function CredentialsLoginForm({ returnTo, admin = false }: { returnTo: string; admin?: boolean }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const title = admin ? "관리자 로그인" : "아이디 로그인";
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +48,7 @@ export function AdminLoginForm({ returnTo }: { returnTo: string }) {
         const { startMockWorker } = await import("@/mocks/browser");
         await startMockWorker();
       }
-      const response = await fetch("/api/v1/auth/admin/login", {
+      const response = await fetch(admin ? "/api/v1/auth/admin/login" : "/api/v1/auth/login", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -53,7 +60,8 @@ export function AdminLoginForm({ returnTo }: { returnTo: string }) {
           : "로그인 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.");
         return;
       }
-      if (isMockMode()) document.cookie = "mock-role=admin; Path=/; SameSite=Lax";
+      if (isMockMode()) document.cookie = `mock-role=${admin ? "admin" : "member"}; Path=/; SameSite=Lax`;
+      queryClient.clear();
       router.replace(returnTo);
       router.refresh();
     } catch {
@@ -66,9 +74,9 @@ export function AdminLoginForm({ returnTo }: { returnTo: string }) {
   return (
     <section className="form-card admin-login" aria-labelledby="admin-login-title">
       <Link className="form-brand" href="/">EFFICA</Link>
-      <p className="eyebrow">관리자 접속</p>
-      <h1 id="admin-login-title">관리자 로그인</h1>
-      <p className="form-card__intro">운영 도구에 접근하려면 관리자 계정을 입력하세요.</p>
+      <p className="eyebrow">{admin ? "관리자 접속" : "데모 계정"}</p>
+      <h1 id="admin-login-title">{title}</h1>
+      <p className="form-card__intro">{admin ? "운영 도구에 접근하려면 관리자 계정을 입력하세요." : "활동 기록이 쌓인 데모 계정으로 서비스를 둘러보세요."}</p>
       <form onSubmit={(event) => void submit(event)}>
         <TextField
           label="아이디"
@@ -96,7 +104,7 @@ export function AdminLoginForm({ returnTo }: { returnTo: string }) {
           {!ready ? "준비 중" : submitting ? "확인 중" : "접속하기"}
         </Button>
       </form>
-      <p className="admin-login__user-link">일반 사용자라면 <Link href="/login">Google 로그인</Link>을 이용해 주세요.</p>
+      <p className="admin-login__user-link"><Link href={`/login?returnTo=${encodeURIComponent(returnTo)}`}>다른 방법으로 로그인</Link></p>
     </section>
   );
 }

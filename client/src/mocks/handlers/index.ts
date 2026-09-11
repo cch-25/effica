@@ -74,6 +74,13 @@ export const handlers = [
   http.get(`${prefix}/analysis-status`, () => HttpResponse.json({ status: "READY", reason: "CURRENT_EVENT_AVAILABLE", checked_at: new Date().toISOString(), next_eligible_at: null, refresh_interval_seconds: 86400 })),
   http.get(`${prefix}/articles/:articleId/analysis-status`, ({ params }) => HttpResponse.json({ status: "NOT_SCHEDULED", reason: "NOT_SELECTED_FOR_DAILY_ANALYSIS", article_id: params.articleId, checked_at: new Date().toISOString(), next_eligible_at: null })),
   http.get(`${prefix}/auth/providers`, () => HttpResponse.json(["google"])),
+  http.post(`${prefix}/auth/login`, async ({ request }) => {
+    const body = await request.json() as { username?: string; password?: string };
+    if (body.username !== "user" || body.password !== "1234") {
+      return HttpResponse.json(errorEnvelope("MEMBER_CREDENTIALS_INVALID", "계정 정보가 올바르지 않습니다."), { status: 401 });
+    }
+    return new HttpResponse(null, { status: 204 });
+  }),
   http.post(`${prefix}/auth/admin/login`, async ({ request }) => {
     const body = await request.json() as { username?: string; password?: string };
     if (body.username !== "dev" || body.password !== "1234") {

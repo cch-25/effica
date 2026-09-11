@@ -413,3 +413,67 @@ async def test_deletion_marks_user_revokes_sessions_and_share_cards(
         "confirmed": True,
         "legal_hold_checked": True,
     }
+
+
+async def test_demo_account_is_persistent_populated_and_does_not_reseed(session):
+    from apps.api.app.db.enums import ArticleStatus, SourcePolicyStatus, SourceType, UserStatus
+    from apps.api.app.db.models import (
+        Article,
+        CreditLedger,
+        EfficacyResponse,
+        ReadSession,
+        Source,
+        Vote,
+    )
+    from apps.api.app.db.ulid import new_ulid
+    from apps.api.app.demo_account import DEMO_USER_ID, ensure_demo_account
+
+    repo = repository(session)
+    await bootstrap(repo)
+    original = await create_user(repo)
+    source_id = new_ulid()
+    session.add(Source(id=source_id, name="Demo fixture source", source_type=SourceType.RSS,
+                       canonical_url="https://example.com", policy_status=SourcePolicyStatus.APPROVED,
+                       active=True))
+    await session.flush()
+    for index in range(48):
+        url = f"https://example.com/{index}"
+        session.add(Article(id=new_ulid(), source_id=source_id, title=f"Article {index}",
+                            canonical_url=url, canonical_url_hash=hashlib.sha256(url.encode()).digest(),
+                            status=ArticleStatus.ACTIVE, published_at=utc_now()))
+    await session.commit()
+    assert await ensure_demo_account(repo) == DEMO_USER_ID
+    token, _ = await repo.rotate_session(DEMO_USER_ID)
+    assert (await repo.find_session(token))["role"] == "MEMBER"
+    me = await repo.get_user(DEMO_USER_ID)
+    assert me["consent_complete"] and me["onboarding_complete"]
+    progress = await repo.progress_view(DEMO_USER_ID)
+    assert progress["read_article_count"] == 48
+    assert progress["credit_total"] == 1056
+    assert progress["ideology"]["x"] == 65
+    assert progress["ideology"]["completed"]
+    assert len((await repo.efficacy_view(DEMO_USER_ID))["responses"]) == 8
+    # A seeded vote must remain editable without a duplicate revision or reward.
+    seeded_vote = await session.scalar(select(Vote).where(Vote.user_id == DEMO_USER_ID))
+    result = await repo.put_vote_row(user_id=DEMO_USER_ID, article_id=seeded_vote.article_id,
+                                    values={"x": 40, "y": 0, "z": 0, "sensationalism": 15})
+    assert result["save_status"] == "updated" and result["credit_delta"] == 0
+    before = [await session.scalar(select(func.count()).select_from(model))
+              for model in (User, QuestionnaireResponse, UserProfile, ReadSession, Vote,
+                            CreditLedger, EfficacyResponse)]
+    await ensure_demo_account(repo)
+    await repo.rotate_session(DEMO_USER_ID)
+    after = [await session.scalar(select(func.count()).select_from(model))
+             for model in (User, QuestionnaireResponse, UserProfile, ReadSession, Vote,
+                           CreditLedger, EfficacyResponse)]
+    assert before == after
+    assert (await repo.get_user(original["id"]))["display_name"] == "Repository Tester"
+    consent = next(c for c in await repo.list_consents(DEMO_USER_ID) if c["sensitive"])
+    await repo.set_consent(DEMO_USER_ID, consent["id"], False)
+    await ensure_demo_account(repo)
+    assert not (await repo.get_user(DEMO_USER_ID))["onboarding_complete"]
+    user = await session.get(User, DEMO_USER_ID)
+    user.status = UserStatus.PENDING_DELETION
+    await session.commit()
+    with pytest.raises(PermissionError):
+        await ensure_demo_account(repo)

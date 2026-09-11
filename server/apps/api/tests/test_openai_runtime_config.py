@@ -106,3 +106,12 @@ def test_production_rejects_development_admin_credentials(username, password):
                         admin_username=username, admin_password=password)
     with pytest.raises(RuntimeError, match="ADMIN_USERNAME and ADMIN_PASSWORD"):
         settings.assert_safe_runtime()
+
+
+def test_production_demo_admin_requires_explicit_opt_in():
+    settings = Settings(_env_file=None, app_env="production", app_backend="mariadb",
+                        admin_username="dev", admin_password="1234",
+                        admin_allow_demo_credentials=True)
+    # Passing the admin gate still requires the independent OAuth configuration.
+    with pytest.raises(RuntimeError, match="Google OAuth"):
+        settings.assert_safe_runtime()

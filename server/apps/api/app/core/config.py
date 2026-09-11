@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     google_client_secret: str | None = None
     admin_username: str = "dev"
     admin_password: str = "1234"
+    # Explicit owner opt-in for the demonstration deployment.
+    admin_allow_demo_credentials: bool = False
     cohort_minimum: int = Field(default=5, ge=3)
 
     @field_validator("app_env")
@@ -130,7 +132,9 @@ class Settings(BaseSettings):
         if self.app_env == "production" and self.app_backend != "mariadb":
             raise RuntimeError("production requires APP_BACKEND=mariadb")
         if self.app_env == "production":
-            if (
+            demo_admin = (self.admin_allow_demo_credentials
+                          and self.admin_username == "dev" and self.admin_password == "1234")
+            if not demo_admin and (
                 not self.admin_username.strip()
                 or self.admin_username.strip().lower() == "dev"
                 or len(self.admin_password.strip()) < 16
