@@ -94,7 +94,7 @@ h1, h2, h3, h4 { letter-spacing: -.025em; }
 
 /* Long-form reading, comparison evidence and selection. */
 .front-page__dek, .front-page__secondary > p:not(.edition-label),
-.front-page__analysis > div > p:not(.edition-label), .article-main__dek { color: #354254; font-size: 1rem; line-height: 1.8; }
+.article-main__dek { color: #354254; font-size: 1rem; line-height: 1.8; }
 .news-card p, .issue-card > p, .article-main .claim-list, .article-analysis-record > p { font-size: .9375rem; line-height: 1.8; color: #354254; text-align: left; }
 .comparison-column__frame p, .comparison-column__analysis p, .comparison-column__reader p { color: #354254; }
 .comparison-column__source strong, .comparison-score__head strong, .metric strong { color: var(--accent); }

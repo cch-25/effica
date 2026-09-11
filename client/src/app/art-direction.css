@@ -418,7 +418,6 @@ button, input, select, textarea { letter-spacing: -.02em; }
 .edition-articles article > p:not(.edition-label) { font-size: .82rem; line-height: 1.65; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; margin-bottom: .4rem; }
 .front-page__analysis { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 400px); align-items: start; gap: 2rem; border-top: 2px solid var(--ink); margin-top: 1.2rem; padding-top: .7rem; }
 .front-page__analysis h2 { font-size: 1.25rem; margin-bottom: .6rem; }
-.front-page__analysis > div > p:not(.edition-label) { font-size: .84rem; line-height: 1.7; }
 .front-page__analysis .front-chart__key { display: none; }
 .analysis-story-index { padding-left: 1.15rem; margin: .5rem 0; font-size: .77rem; line-height: 1.6; }
 .analysis-story-index li { margin-bottom: .3rem; }
@@ -471,7 +470,16 @@ button, input, select, textarea { letter-spacing: -.02em; }
 .newspaper-briefs .issue-card { grid-row: span 4; grid-template-rows: subgrid; }
 .newspaper-briefs .issue-card h2 { font-size: 1.25rem; }
 .newspaper-briefs .issue-card__foot { padding-top: .35rem; }
-.front-page__analysis { grid-template-columns: minmax(0, 1fr) minmax(0, 460px); gap: 1.75rem; margin-top: 1.75rem; padding-top: 1rem; }
+.front-page__analysis { grid-template-columns: minmax(0, 1fr) minmax(0, 460px); gap: 1rem 1.75rem; margin-top: 1.75rem; padding-top: 1rem; }
+.front-page__analysis-heading, .front-page__analysis-more { grid-column: 1 / -1; }
+.front-page__analysis-heading h2 { margin-bottom: 0; }
+.front-page__analysis .analysis-story-index { margin: 0; padding-left: 1.5rem; }
+.front-page__analysis .analysis-story-index li { padding: .5rem 0 .5rem .25rem; margin: 0; }
+.analysis-story-index li::marker { font-variant-numeric: tabular-nums; }
+.front-page__analysis .front-chart { max-width: none; width: 100%; }
+.front-page__analysis .front-chart svg { border: 0; padding: 0; }
+.front-page__analysis .front-chart figcaption { margin-top: .5rem; }
+.front-page__analysis .front-page__analysis-more { margin-top: 0; }
 .analysis-story-index { font-size: .9375rem; line-height: 1.75; }
 .analysis-story-index li { padding-block: .25rem; }
 .front-page__analysis .front-chart svg text { font-size: 17px; }

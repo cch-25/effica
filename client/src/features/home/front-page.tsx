@@ -32,7 +32,7 @@ function NewspaperChart({ articles }: { articles: Article[] }) {
   return <figure className="front-chart">
     <svg viewBox="0 0 600 264" role="img" aria-labelledby="front-chart-title front-chart-description">
       <title id="front-chart-title">공개 이슈 기사의 편향성과 과장성</title>
-      <desc id="front-chart-description">공개 분석이 있는 기사 {plotted.length}건. 가로축은 편향성 −100부터 +100, 세로축은 과장성 0부터 100입니다. 숫자는 아래 기사 목록과 같습니다.</desc>
+      <desc id="front-chart-description">공개 분석이 있는 기사 {plotted.length}건. 가로축은 편향성 −100부터 +100, 세로축은 과장성 0부터 100입니다. 숫자는 함께 표시된 기사 목록과 같습니다.</desc>
       <defs><pattern id="newspaper-hatching" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(35)"><line x1="0" y1="0" x2="0" y2="6" stroke="#d5d5d5" strokeWidth="1" /></pattern></defs>
       <rect x="273" y="28" width="54" height="178" fill="url(#newspaper-hatching)" />
       {[0, 25, 50, 75, 100].map((value) => <g key={value}><line x1="38" y1={206 - value * 1.78} x2="562" y2={206 - value * 1.78} stroke="#c6c6c6" strokeDasharray={value === 0 ? undefined : "2 3"} /><text x="28" y={210 - value * 1.78} textAnchor="end">{value}</text></g>)}
@@ -77,6 +77,14 @@ export function FrontPage({ fallbackIssues, fallbackArticles }: { fallbackIssues
     </div>
     {otherIssues.length > 0 && <section className="home-section home-section--issues" aria-label="함께 살펴볼 이슈"><div className="section-head"><h2>함께 살펴볼 이슈</h2><span>다른 사건의 쟁점</span></div><div className="newspaper-briefs">{otherIssues.map((issue) => <IssueCard key={issue.id} issue={issue} />)}</div></section>}
     {articles.length > 3 && <section className="home-section" aria-label="전체 이슈 기사"><div className="section-head"><h2>언론사별 보도</h2><span>공개 이슈 {events.length}개 / 기사 {articles.length}개</span></div><div className="edition-articles">{articles.filter((article) => !dispatches.slice(0, 3).some((leadArticle) => leadArticle.id === article.id)).map((article) => <article key={article.id}><p className="edition-label">{article.source}</p><h2><Link href={`/articles/${article.id}`}>{article.title}</Link></h2><p>{article.dek}</p><Link className="text-link" href={`/articles/${article.id}`}>기사 분석 →</Link></article>)}</div></section>}
-    {plotted.length >= 3 && <section className="front-page__analysis" aria-labelledby="front-data-title"><div><p className="edition-label">자료로 읽는 뉴스</p><h2 id="front-data-title">보도 관점 비교</h2><ol className="analysis-story-index">{plotted.slice(0, 6).map((article) => <li key={article.id}><Link href={`/articles/${article.id}`}><strong>{article.source}</strong> {article.title}</Link></li>)}</ol><Link className="front-page__read" href="/visualization">기사 관점 지도에서 자세히 →</Link></div><NewspaperChart articles={articles} /></section>}
+    {plotted.length >= 3 && <section className="front-page__analysis" aria-labelledby="front-data-title">
+      <header className="front-page__analysis-heading">
+        <p className="edition-label">자료로 읽는 뉴스</p>
+        <h2 id="front-data-title">보도 관점 비교</h2>
+      </header>
+      <ol className="analysis-story-index">{plotted.slice(0, 6).map((article) => <li key={article.id}><Link href={`/articles/${article.id}`}><strong>{article.source}</strong> {article.title}</Link></li>)}</ol>
+      <NewspaperChart articles={articles} />
+      <Link className="front-page__read front-page__analysis-more" href="/visualization">기사 관점 지도에서 자세히 →</Link>
+    </section>}
   </>;
 }
