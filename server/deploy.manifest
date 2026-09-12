@@ -21,6 +21,7 @@ apps/api/app/db/session.py
 apps/api/app/db/types.py
 apps/api/app/db/ulid.py
 apps/api/app/db/utc.py
+apps/api/app/demo_account.py
 apps/api/app/domains/__init__.py
 apps/api/app/domains/admin/__init__.py
 apps/api/app/domains/admin/autopilot.py
@@ -48,6 +49,7 @@ apps/api/app/domains/feed/__init__.py
 apps/api/app/domains/feed/ranking.py
 apps/api/app/domains/issues/__init__.py
 apps/api/app/domains/issues/clustering.py
+apps/api/app/domains/issues/coverage.py
 apps/api/app/domains/issues/topics.py
 apps/api/app/domains/scoring/__init__.py
 apps/api/app/domains/scoring/behavior.py
@@ -57,6 +59,7 @@ apps/api/app/domains/scoring/votes.py
 apps/api/app/domains/sharing/__init__.py
 apps/api/app/domains/sharing/consumption.py
 apps/api/app/domains/sharing/helpers.py
+apps/api/app/domains/sharing/ideology.py
 apps/api/app/domains/users/__init__.py
 apps/api/app/domains/users/models.py
 apps/api/app/domains/users/political_questionnaire.py
