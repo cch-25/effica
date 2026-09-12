@@ -89,7 +89,7 @@ export function AppShell({ children, user, editionDate = "" }: { children: React
             </div>
             <Link href={user ? "/settings/privacy" : "/login"} className="site-nav__account" aria-current={user && pathMatches(pathname, "/settings/privacy") ? "page" : undefined}><UserRound size={17} aria-hidden="true" /><span>{user ? "개인정보 관리" : "로그인"}</span></Link>
           </nav>
-          <HeadlineBand />
+          {pathname !== "/" && <HeadlineBand />}
         </>
       )}
       <main id="main-content" className="main-content" tabIndex={-1}>

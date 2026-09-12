@@ -21,7 +21,7 @@ test("Google login facade, separate consent, questionnaire, demographics, home",
   await page.getByRole("button", { name: "건너뛰고 홈으로" }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole("heading", { name: "도심 주택 공급 대책", level: 1 })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText(/데모 데이터 기준 8월 16일/)).toBeVisible();
+  await expect(page.locator(".home-issue-meta")).toContainText("최근 보도");
   const primaryNav = page.getByRole("navigation", { name: /^주요 메뉴$|^모바일 주요 메뉴$/ });
   await expect(primaryNav.getByRole("link", { name: "이슈 비교" })).toBeVisible();
 });
