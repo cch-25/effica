@@ -486,3 +486,37 @@ def test_crawl_identifier_only_is_live_when_fetcher_exists_and_lookup_omits_mode
         assert fetched == ["https://example.test/feed"]
 
     asyncio.run(scenario())
+
+
+def test_scheduled_crawl_fetches_instead_of_being_replaced_by_issue_discovery() -> None:
+    async def scenario() -> None:
+        crawl = build_default_registry().require_async("crawl")
+        fetched: list[str] = []
+
+        async def source_fetcher(source):
+            fetched.append(str(source["url"]))
+            return {
+                "status_code": 200,
+                "headers": {"content-type": "application/json"},
+                "body": (
+                    b'{"articles": [{"url": "https://example.test/general",'
+                    b' "title": "General news", "body": "article body"}]}'
+                ),
+            }
+
+        result = await crawl(
+            {
+                "source_id": "source-1",
+                "url": "https://example.test/feed",
+                "source_type": "API",
+                "mode": "live",
+                "schedule_bucket": 123,
+            },
+            HandlerContext(services={"source_fetcher": source_fetcher}),
+        )
+
+        assert fetched == ["https://example.test/feed"]
+        assert result.value["stats"]["article_count"] == 1
+        assert result.value.get("skip_reason") is None
+
+    asyncio.run(scenario())

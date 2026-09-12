@@ -387,6 +387,7 @@ def test_scheduled_rss_hydrates_approved_article_domain_with_bounded_partial_suc
             HandlerContext(services={"source_fetcher": source_fetcher}),
         )
         assert len(result.value["articles"]) == 1
+        assert result.value["articles"][0]["title"] == "Good"
         assert "Complete approved publisher" in result.value["articles"][0]["content"]
         assert result.value["stats"]["hydration_attempted"] == 2
         assert result.value["stats"]["hydration_succeeded"] == 1

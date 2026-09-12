@@ -152,6 +152,7 @@ db/seeds/seed.py
 db/seeds/source_feeds.py
 db/seeds/tier_policy.json
 db/storage_maintenance.py
+deploy/check_artifact.py
 deploy/effica-maintenance.service
 deploy/effica-article-expiry.service
 deploy/effica-maintenance.timer

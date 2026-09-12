@@ -8,6 +8,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .services import (
+    MariaDBCrawlScheduler,
     _database_timestamp,
     _json,
     _maybe_await,
@@ -18,6 +19,41 @@ from .services import (
     _utc,
     utc_now,
 )
+
+
+class MariaDBCollectionScheduler:
+    """Run issue discovery and bounded general-news collection independently.
+
+    Issue discovery keeps its KST daily identity and publisher-diversity rules.
+    The general scheduler separately refreshes every explicitly scheduled,
+    approved source, so storing and analyzing an article no longer depends on
+    that article being selected for an editorial issue.
+    """
+
+    interval_seconds = 60.0
+
+    def __init__(
+        self,
+        session_factory: Callable[[], Any],
+        *,
+        general_interval_seconds: float = 86400.0,
+        general_batch_size: int = 50,
+        general_max_attempts: int = 1,
+        clock: Callable[[], datetime] = utc_now,
+    ) -> None:
+        self.daily_issues = MariaDBDailyIssueScheduler(session_factory, clock=clock)
+        self.general_articles = MariaDBCrawlScheduler(
+            session_factory,
+            interval_seconds=general_interval_seconds,
+            batch_size=general_batch_size,
+            max_attempts=general_max_attempts,
+            clock=clock,
+        )
+
+    async def tick(self, worker_id: str) -> int:
+        issue_jobs = await self.daily_issues.tick(worker_id)
+        article_jobs = await self.general_articles.tick(worker_id)
+        return issue_jobs + article_jobs
 
 
 class MariaDBDailyIssueScheduler:
@@ -47,8 +83,13 @@ class MariaDBDailyIssueScheduler:
                       (id, job_type, dedupe_key, status, priority, available_at,
                        lease_owner, lease_expires_at, attempts, max_attempts,
                        payload_json, last_error_json, created_at, updated_at)
-                    VALUES (:id, 'discover_issues', :key, 'PENDING', 20, :now,
-                            NULL, NULL, 0, 1, :payload, NULL, :now, :now)
+                    SELECT :id, 'discover_issues', :key, 'PENDING', 20, :now,
+                           NULL, NULL, 0, 1, :payload, NULL, :now, :now
+                    FROM DUAL
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM jobs
+                        WHERE job_type = 'discover_issues' AND dedupe_key = :key
+                    )
                     ON DUPLICATE KEY UPDATE id = id
                 """), {
                     "id": _stable_id(f"job:discover_issues:{key}"),

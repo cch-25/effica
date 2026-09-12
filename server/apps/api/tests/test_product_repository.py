@@ -250,6 +250,61 @@ async def test_public_issues_and_comparisons_enforce_rolling_seven_day_window(
 
 
 @pytest.mark.asyncio
+async def test_public_article_directory_includes_approved_news_without_issue_membership() -> None:
+    now = utc_now()
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        source_id, article_id, version_id = (new_ulid() for _ in range(3))
+        url = "https://standalone.example.test/news"
+        source = Source(
+            id=source_id,
+            name="Standalone News",
+            source_type=SourceType.RSS,
+            canonical_url="https://standalone.example.test/rss",
+            policy_status=SourcePolicyStatus.APPROVED,
+            robots_status=SourcePolicyStatus.APPROVED,
+            terms_status=SourcePolicyStatus.APPROVED,
+            active=True,
+        )
+        article = Article(
+            id=article_id,
+            source_id=source_id,
+            canonical_url=url,
+            canonical_url_hash=hashlib.sha256(url.encode()).digest(),
+            title="이슈에 속하지 않은 최신 기사",
+            published_at=now,
+            status=ArticleStatus.ACTIVE,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add_all([source, article])
+        await session.flush()
+        session.add(ArticleVersion(
+            id=version_id,
+            article_id=article_id,
+            content_hash=hashlib.sha256(b"standalone body").digest(),
+            normalized_text_ref="fixture://standalone",
+            fetched_at=now,
+        ))
+        await session.flush()
+        article.current_version_id = version_id
+        await session.commit()
+
+        repository = MariaDBPlatformRepository(session, encryption_secret="x" * 40)
+        rows = await repository.article_rows()
+        assert [row["id"] for row in rows] == [article_id]
+        assert rows[0]["issue_id"] is None
+        assert rows[0]["analysis_status"] == "PROCESSING"
+        assert rows[0]["coordinate"] is None
+        assert await repository.article_view(article_id) is not None
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["openai", "codex"])
 async def test_public_feed_enforces_seven_day_article_cutoff_without_stale_fallback(
     monkeypatch: pytest.MonkeyPatch, provider: str,

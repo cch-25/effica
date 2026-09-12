@@ -231,16 +231,83 @@ class ProductRepositoryMixin:
         }
 
     async def _article_context(self, article_id: str) -> tuple[Article, Source, str | None] | None:
+        now = utc_now()
+        freshness_cutoff = now - _PUBLIC_CONTENT_MAX_AGE
         public_members = await self._public_issue_memberships()
         issue_id = next((key for key, ids in public_members.items() if article_id in ids), None)
-        if issue_id is None:
-            return None
         row = (await self.session.execute(
             select(Article, Source)
             .join(Source, Article.source_id == Source.id)
-            .where(Article.id == article_id)
+            .where(
+                Article.id == article_id,
+                Article.current_version_id.is_not(None),
+                Article.status == ArticleStatus.ACTIVE,
+                Article.published_at.is_not(None),
+                Article.published_at >= freshness_cutoff,
+                Article.published_at <= now,
+                Source.active.is_(True),
+                Source.policy_status == SourcePolicyStatus.APPROVED,
+            )
         )).first()
         return None if row is None else (row[0], row[1], issue_id)
+
+    async def article_rows(self) -> list[dict[str, Any]]:
+        """Return every current approved article, including non-issue news."""
+
+        now = utc_now()
+        freshness_cutoff = now - _PUBLIC_CONTENT_MAX_AGE
+        rows = list((await self.session.execute(
+            select(Article, Source)
+            .join(Source, Article.source_id == Source.id)
+            .where(
+                Article.current_version_id.is_not(None),
+                Article.status == ArticleStatus.ACTIVE,
+                Article.published_at.is_not(None),
+                Article.published_at >= freshness_cutoff,
+                Article.published_at <= now,
+                Source.active.is_(True),
+                Source.policy_status == SourcePolicyStatus.APPROVED,
+            )
+            .order_by(Article.published_at.desc(), Article.id.desc())
+        )).all())
+        public_members = await self._public_issue_memberships()
+        issue_by_article = {
+            article_id: issue_id
+            for issue_id in sorted(public_members)
+            for article_id in public_members[issue_id]
+        }
+        analysis = await self._analysis_context()
+        output: list[dict[str, Any]] = []
+        for article, source in rows:
+            trusted = analysis.get(article.current_version_id or "", {})
+            score = trusted.get("score")
+            analysis_status = trusted.get("status", "PROCESSING")
+            trusted_assessments = trusted.get("trusted_assessments", [])
+            summary = (
+                _linked_assessment_summary(trusted_assessments[0][0], score)
+                if trusted_assessments
+                else ""
+            )
+            item = self._article_view(
+                article,
+                source,
+                issue_by_article.get(article.id),
+                analysis_status=analysis_status,
+                analysis_provider=score_analysis_provider(score),
+                summary=summary,
+            )
+            if analysis_status == "READY" and score is not None:
+                item["coordinate"] = {
+                    "x": score.x,
+                    "y": score.y,
+                    "z": score.z,
+                    "sensationalism": score.sensationalism,
+                    "confidence": float(score.confidence),
+                }
+            else:
+                item["coordinate"] = None
+            output.append(item)
+        return output
 
     async def _analysis_context(self) -> dict[str, dict[str, Any]]:
         assessment_rows = list(

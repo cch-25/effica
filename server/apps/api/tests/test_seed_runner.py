@@ -90,6 +90,7 @@ def test_seed_assessment_keeps_summary_with_public_evidence() -> None:
 def test_scheduled_news_feeds_are_broad_hydrated_and_source_diverse() -> None:
     newsis = scheduled_rss_config("https://www.newsis.com")
     etoday = scheduled_rss_config("https://www.etoday.co.kr/")
+    customs = scheduled_rss_config("https://www.customs.go.kr/")
 
     assert newsis is not None and newsis["feed_url"].endswith("/sokbo.xml")
     assert etoday is not None and etoday["feed_url"].endswith("/etoday_news_all.xml")
@@ -99,6 +100,9 @@ def test_scheduled_news_feeds_are_broad_hydrated_and_source_diverse() -> None:
     assert newsis["allowed_domains"] == ["newsis.com"]
     assert newsis["max_hydration_fetches"] == newsis["max_items"]
     assert newsis["allow_empty_result"] is False
+    assert customs is not None
+    assert customs["require_hydrated_body"] is False
+    assert customs["hydrate_min_body_chars"] == 300
     assert len(bootstrap_scheduled_rss_sources()) >= 5
 
 

@@ -470,7 +470,7 @@ class MariaDBCrawlScheduler:
         now = _utc(self.clock())
         database_now = _database_timestamp(now)
         bucket = int(now.timestamp() // self.interval_seconds)
-        dedupe_prefix = "scheduled:"
+        dedupe_prefix = "general:"
 
         # Keep the named lock on a dedicated checked-out connection.  The
         # mutation transaction uses another session and is fully committed
@@ -551,7 +551,7 @@ class MariaDBCrawlScheduler:
                                 session.execute(
                                     _sql(
                                         """
-                                        INSERT INTO jobs
+                                        INSERT IGNORE INTO jobs
                                           (id, job_type, dedupe_key, status, priority,
                                            available_at, lease_owner, lease_expires_at,
                                            attempts, max_attempts, payload_json,
@@ -560,7 +560,6 @@ class MariaDBCrawlScheduler:
                                           (:id, 'crawl', :dedupe_key, 'PENDING', 0,
                                            :available_at, NULL, NULL, 0, :max_attempts,
                                            :payload_json, NULL, :created_at, :updated_at)
-                                        ON DUPLICATE KEY UPDATE id = id
                                         """.strip()
                                     ),
                                     {
@@ -574,10 +573,9 @@ class MariaDBCrawlScheduler:
                                     },
                                 )
                             )
-                            # MariaDB reports 1 for an insert and 0 for the
-                            # deliberate duplicate no-op.  Affected-row modes
-                            # may differ, so the unique key remains authoritative
-                            # and crawl-run creation is idempotent as well.
+                            # INSERT IGNORE reports one only for a new durable
+                            # key, so telemetry does not count every scheduler
+                            # poll as newly created work.
                             if _rowcount(inserted) == 1:
                                 created += 1
                             await _maybe_await(

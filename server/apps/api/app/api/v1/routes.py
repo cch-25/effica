@@ -168,6 +168,22 @@ def _public_memory_article_ids(platform: PlatformState) -> set[str]:
     }
 
 
+def _public_memory_general_article_ids(platform: PlatformState) -> set[str]:
+    """Current approved articles may be public without issue membership."""
+
+    now = utcnow()
+    return {
+        article_id
+        for article_id, article in platform.articles.items()
+        if str(article.get("status", "")).upper() == "ACTIVE"
+        and article.get("current_version_id")
+        and is_current_article(article.get("published_at"), now)
+        and (source := platform.sources.get(str(article.get("source_id")))) is not None
+        and bool(source.get("active"))
+        and str(source.get("policy_status", "")).upper() == "APPROVED"
+    }
+
+
 async def _admin_repo[T](awaitable: Awaitable[T]) -> T:
     try:
         return await awaitable
@@ -1334,6 +1350,37 @@ async def get_issue_comparison(
     return result
 
 
+@router.get(
+    "/articles",
+    response_model=ArticlePage,
+    operation_id="list_articles",
+)
+async def list_articles(
+    cursor: str | None = None,
+    limit: int = Query(default=20, ge=1, le=250),
+    platform: PlatformState = Depends(get_state),
+    repository: MariaDBPlatformRepository | None = Depends(get_repository),
+) -> dict[str, Any]:
+    if repository is not None:
+        return _page(await repository.article_rows(), cursor, limit)
+    public_ids = _public_memory_general_article_ids(platform)
+    rows: list[dict[str, Any]] = []
+    for article in sorted(
+        (item for item in platform.articles.values() if item["id"] in public_ids),
+        key=lambda item: (item.get("published_at") or utcnow(), item["id"]),
+        reverse=True,
+    ):
+        score = (platform.scores.get(article["id"]) or [None])[-1]
+        rows.append({
+            **article,
+            "coordinate": None if score is None else {
+                key: score[key]
+                for key in ("x", "y", "z", "sensationalism", "confidence")
+            },
+        })
+    return _page(rows, cursor, limit)
+
+
 @router.get("/articles/{article_id}", response_model=ArticleView, operation_id="get_article")
 async def get_article(
     article_id: str,
@@ -1346,7 +1393,7 @@ async def get_article(
             raise _not_found("article")
         return article
     article = platform.articles.get(article_id)
-    if not article or article_id not in _public_memory_article_ids(platform):
+    if not article or article_id not in _public_memory_general_article_ids(platform):
         raise _not_found("article")
     return article
 
@@ -1366,7 +1413,7 @@ async def article_assessments(
         if assessments is None:
             raise _not_found("article")
         return assessments
-    if article_id not in _public_memory_article_ids(platform):
+    if article_id not in _public_memory_general_article_ids(platform):
         raise _not_found("article")
     public_assessments = [
         {
@@ -1405,7 +1452,7 @@ async def article_score(
         if score is None:
             raise _not_found("score")
         return score
-    if article_id not in _public_memory_article_ids(platform) or article_id not in platform.scores:
+    if article_id not in _public_memory_general_article_ids(platform) or article_id not in platform.scores:
         raise _not_found("score")
     return platform.scores[article_id][-1]
 
@@ -1426,7 +1473,7 @@ async def article_score_history(
         if rows is None:
             raise _not_found("article")
         return _page(rows, cursor)
-    if article_id not in _public_memory_article_ids(platform):
+    if article_id not in _public_memory_general_article_ids(platform):
         raise _not_found("article")
     return _page(list(reversed(platform.scores.get(article_id, []))), cursor)
 
@@ -1449,7 +1496,7 @@ async def compare_articles(
             rows.append({"article": article, "score": score})
         return {"rows": rows, "normalized_columns": ["x", "y", "z", "sensationalism", "confidence"]}
     for article_id in article_ids:
-        if article_id not in _public_memory_article_ids(platform):
+        if article_id not in _public_memory_general_article_ids(platform):
             raise _not_found("article")
         rows.append(
             {"article": platform.articles[article_id], "score": platform.scores[article_id][-1]}

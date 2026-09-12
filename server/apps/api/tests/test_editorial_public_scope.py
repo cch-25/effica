@@ -1,4 +1,4 @@
-"""Public reads must never fall back to uncurated or single-publisher news."""
+"""Issue reads fail closed while approved standalone articles remain public."""
 from __future__ import annotations
 
 import hashlib
@@ -88,8 +88,11 @@ def test_memory_public_surfaces_fail_closed_together(violation: str) -> None:
         response = client.get("/api/v1" + path)
         assert response.status_code == 200, response.text
         assert response.json()["items"] == []
-    for path in (f"/issues/{issue['id']}", f"/issues/{issue['id']}/articles", f"/articles/{article_id}", f"/articles/{article_id}/score", f"/articles/{article_id}/assessments", f"/articles/{article_id}/score-history"):
+    for path in (f"/issues/{issue['id']}", f"/issues/{issue['id']}/articles"):
         assert client.get("/api/v1" + path).status_code == 404
+    assert client.get("/api/v1/articles").json()["items"]
+    for path in (f"/articles/{article_id}", f"/articles/{article_id}/score", f"/articles/{article_id}/assessments", f"/articles/{article_id}/score-history"):
+        assert client.get("/api/v1" + path).status_code == 200
     response = client.get(f"/api/v1/issues/{issue['id']}/comparison", params=[("article_ids", item["id"]) for item in articles[:2]])
     assert response.status_code == 404
     assert client.get("/api/v1/visualization/timeline", params={"entity_type": "article", "entity_id": article_id}).json()["snapshots"] == []
@@ -157,9 +160,9 @@ async def test_repository_rechecks_real_membership_coverage(violation: str) -> N
         assert await repo.list_issue_rows() == []
         assert await repo.issue_view(issue.id) is None
         assert await repo.issue_article_rows(issue.id) is None
-        assert await repo.article_view(articles[0].id) is None
-        assert await repo.assessment_view(articles[0].id) is None
-        assert await repo.score_history(articles[0].id) is None
+        assert await repo.article_view(articles[0].id) is not None
+        assert (await repo.assessment_view(articles[0].id) or {})["assessments"] == []
+        assert await repo.score_history(articles[0].id) == []
         assert await repo.current_score(articles[0].id) is None
         assert await repo.issue_comparison_view(issue_id=issue.id, article_ids=[article.id for article in articles[:2]]) is None
         assert await repo.feed_items(user_id=None, personalized_requested=False) == ([], False)

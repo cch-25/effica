@@ -28,24 +28,13 @@ export async function loadDirectoryIssues(signal: AbortSignal): Promise<Issue[]>
   });
 }
 
-export async function loadDirectoryArticles(issueIds: string[], signal: AbortSignal) {
-  const articles: Article[] = [];
-  const failedIssueIds: string[] = [];
-  // Bound requests even when the directory contains many issue collections.
-  for (let offset = 0; offset < issueIds.length; offset += 4) {
-    const batch = issueIds.slice(offset, offset + 4);
-    const results = await Promise.allSettled(batch.map((id) => collectPages(async (cursor) => {
-      const params = new URLSearchParams();
-      if (cursor) params.set("cursor", cursor);
-      return mapArticlePage(await apiRequest<ArticlePageDto>(`/issues/${encodeURIComponent(id)}/articles?${params}`, { signal }));
-    })));
-    signal.throwIfAborted();
-    results.forEach((result, index) => {
-      if (result.status === "fulfilled") articles.push(...result.value);
-      else failedIssueIds.push(batch[index]);
-    });
-  }
-  return { articles, failedIssueIds };
+export async function loadDirectoryArticles(signal: AbortSignal) {
+  const articles: Article[] = await collectPages(async (cursor) => {
+    const params = new URLSearchParams({ limit: "250" });
+    if (cursor) params.set("cursor", cursor);
+    return mapArticlePage(await apiRequest<ArticlePageDto>(`/articles?${params}`, { signal }));
+  });
+  return { articles, failedIssueIds: [] as string[] };
 }
 
 export function directoryEntries(articles: Article[], issues: Issue[]) {

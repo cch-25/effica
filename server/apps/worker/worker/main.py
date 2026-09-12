@@ -861,9 +861,14 @@ def build_mariadb_runtime(
             minimum_analysis_content_chars=settings.llm_min_article_chars,
         )
     if crawl_scheduler is None and settings.worker_crawl_scheduler_enabled:
-        from .daily_scheduler import MariaDBDailyIssueScheduler
+        from .daily_scheduler import MariaDBCollectionScheduler
 
-        crawl_scheduler = MariaDBDailyIssueScheduler(session_factory)
+        crawl_scheduler = MariaDBCollectionScheduler(
+            session_factory,
+            general_interval_seconds=settings.worker_crawl_interval_seconds,
+            general_batch_size=settings.worker_crawl_batch_size,
+            general_max_attempts=settings.worker_crawl_max_attempts,
+        )
     if runtime_control is None:
         runtime_control = MariaDBRuntimeControl(session_factory)
     if services is None:

@@ -418,6 +418,7 @@ class _FixtureHTMLParser(HTMLParser):
                 tag in {"article", "main"}
                 or itemprop in {"articlebody", "headline", "text"}
                 or bool(self._CONTENT_WORDS.search(marker))
+                or container_score >= 8
             )
         )
         if not skip and (tag == "article" or container_score >= 12):
@@ -854,6 +855,22 @@ def _html_container_score(tag: str, marker: str, itemprop: str) -> int:
         return 12
     if any(token in marker_lower for token in ("body_txt", "article-body", "article_body", "story-body", "story_body")):
         return 12
+    if any(
+        token in marker_lower
+        for token in (
+            "board-view",
+            "board_view",
+            "view_contents",
+            "view-contents",
+            "boardsubcontent",
+            "board-sub-content",
+            "board_sub_content",
+        )
+    ):
+        # Korean government press-release boards commonly use these wrappers
+        # without article/NewsArticle metadata. They are specific detail-page
+        # containers, unlike a generic site-wide ``contents`` wrapper.
+        return 12
     if tag == "article" or itemprop == "headline":
         return 10
     if any(token in marker_lower for token in ("article", "story", "entry", "post", "detail")):
@@ -971,6 +988,12 @@ def parse_datetime(value: Any) -> datetime | None:
     text = str(value).strip()
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
+    if re.fullmatch(r"\d{14}", text):
+        try:
+            parsed = datetime.strptime(text, "%Y%m%d%H%M%S")
+        except ValueError:
+            return None
+        return parsed.replace(tzinfo=UTC)
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:

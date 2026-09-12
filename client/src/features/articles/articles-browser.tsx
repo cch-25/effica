@@ -47,11 +47,9 @@ export function ArticlesBrowser({ filters }: { filters: ArticleFilters }) {
   const [visibleCount, setVisibleCount] = useState(20);
   const index = useQuery({ queryKey: ["article-directory", "issues"], queryFn: ({ signal }) => loadDirectoryIssues(signal), staleTime: 60_000 });
   const issues = index.data ?? [];
-  const issueIds = [...new Set(issues.map((issue) => issue.id))].sort();
   const collection = useQuery({
-    queryKey: ["article-directory", "articles", issueIds],
-    queryFn: ({ signal }) => loadDirectoryArticles(issueIds, signal),
-    enabled: index.isSuccess,
+    queryKey: ["article-directory", "articles"],
+    queryFn: ({ signal }) => loadDirectoryArticles(signal),
     staleTime: 60_000,
   });
   const entries = directoryEntries(collection.data?.articles ?? [], issues);
@@ -59,9 +57,9 @@ export function ArticlesBrowser({ filters }: { filters: ArticleFilters }) {
   const search = filters.q.trim().normalize("NFKC").toLocaleLowerCase();
   const matches = entries.filter(({ article }) => (!filters.source || article.source === filters.source)
     && (!search || `${article.title} ${article.source} ${article.dek}`.normalize("NFKC").toLocaleLowerCase().includes(search)));
-  const failedCount = collection.data?.failedIssueIds.length ?? 0;
+  const failedCount = (collection.data?.failedIssueIds.length ?? 0) + (index.isError ? 1 : 0);
   const pending = index.isPending || collection.isPending;
-  const error = index.isError || collection.isError;
+  const error = collection.isError;
   const retry = () => { void index.refetch(); void collection.refetch(); };
   const submitSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

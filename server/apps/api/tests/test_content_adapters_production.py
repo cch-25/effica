@@ -66,6 +66,15 @@ def test_rss_adapter_bounds_ingestion_with_source_max_items() -> None:
     assert [article.title for article in articles] == ["N0", "N1", "N2"]
 
 
+def test_rss_adapter_reads_compact_government_feed_timestamp() -> None:
+    payload = """<rss><channel><item><title>보도자료</title>
+    <link>https://example.test/press/1</link><pubDate>20260910153101</pubDate>
+    </item></channel></rss>"""
+    article = RSSAdapter("source").parse(payload)[0]
+    assert article.published_at is not None
+    assert article.published_at.isoformat() == "2026-09-10T15:31:01+00:00"
+
+
 def test_rss_adapter_reads_bounded_google_news_sitemaps() -> None:
     payload = """<?xml version="1.0" encoding="UTF-8"?>
     <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
@@ -121,6 +130,54 @@ def test_crawler_prefers_body_txt_direct_text_over_page_controls() -> None:
     assert "Written" not in article.body
     assert "Recommended" not in article.body
     assert "Photo" not in article.body
+
+
+def test_crawler_recognizes_government_board_detail_containers() -> None:
+    for wrapper in ("board-view-wrap", "view_contents", "boardSubContent"):
+        html = f"""
+        <html><head><meta property="og:title" content="중소벤처기업부"/></head><body>
+          <div class="{wrapper}">
+            <p>정부 보도자료의 첫 번째 본문 문단입니다.</p>
+            <p>정책 근거와 시행 일정을 설명하는 두 번째 문단입니다.</p>
+          </div>
+        </body></html>
+        """
+        article = CrawlerAdapter(
+            "source",
+            CrawlerPolicyGuard("APPROVED", "APPROVED"),
+            {"discover_links": False},
+        ).parse({"url": "https://example.test/press/1", "html": html})[0]
+        assert "첫 번째 본문" in article.body
+        assert "두 번째 문단" in article.body
+
+
+def test_crawler_recognizes_government_press_release_board_containers() -> None:
+    fixtures = (
+        """
+        <html><head><meta property="og:title" content="금융위원회"></head><body>
+          <div class="board-view-wrap"><div class="body"><div class="cont">
+            <p>금융 정책 보도자료의 첫 번째 본문 문장입니다.</p>
+            <p>국민 안내를 위한 두 번째 근거 문장입니다.</p>
+          </div></div></div>
+        </body></html>
+        """,
+        """
+        <html><head><meta property="og:title" content="중소벤처기업부"></head><body>
+          <div class="view_contents"><div class="boardSubContent">
+            <p>중소기업 지원 보도자료의 첫 번째 본문 문장입니다.</p>
+            <p>사업 일정과 대상을 설명하는 두 번째 문장입니다.</p>
+          </div></div>
+        </body></html>
+        """,
+    )
+    for html in fixtures:
+        article = CrawlerAdapter(
+            "source",
+            CrawlerPolicyGuard("APPROVED", "APPROVED"),
+            {"discover_links": False},
+        ).parse({"url": "https://example.test/press/1", "html": html})[0]
+        assert "첫 번째 본문 문장" in article.body
+        assert "두 번째" in article.body
 
 
 def test_crawler_reads_json_ld_and_discovers_index_links() -> None:

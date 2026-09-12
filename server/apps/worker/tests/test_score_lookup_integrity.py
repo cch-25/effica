@@ -39,6 +39,37 @@ class LookupFixture(MariaDBWorkerLookups):
 
 
 @pytest.mark.asyncio
+async def test_article_analysis_visibility_does_not_require_issue_membership() -> None:
+    class VisibilityLookup(MariaDBWorkerLookups):
+        def __init__(self) -> None:
+            super().__init__(lambda: None, encryption_secret="unit-test-secret")
+            self.statement = ""
+
+        async def _one(
+            self, statement: str, params: Mapping[str, Any]
+        ) -> dict[str, Any] | None:
+            self.statement = statement
+            assert params == {"identifier": "version-1"}
+            return {
+                "article_version_id": "version-1",
+                "article_id": "article-1",
+                "current_version_id": "version-1",
+                "title": "일반 기사",
+                "publicly_available": 1,
+                "normalized_payload": b"article body",
+            }
+
+    lookup = VisibilityLookup()
+    row = await lookup.article_version_lookup("version-1")
+
+    assert row is not None and row["publicly_available"] == 1
+    assert row["text"] == "article body"
+    assert "issue_memberships" not in lookup.statement
+    assert "a.status = 'active'" in lookup.statement
+    assert "s.policy_status = 'approved'" in lookup.statement
+
+
+@pytest.mark.asyncio
 async def test_score_components_refuse_empty_openai_provenance() -> None:
     lookup = LookupFixture(assessments=[])
 

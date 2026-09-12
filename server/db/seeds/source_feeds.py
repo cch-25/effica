@@ -17,6 +17,7 @@ class ScheduledRSSSource:
     approve_on_bootstrap: bool = False
     publisher: bool = False
     feed_format: Literal["rss", "news_sitemap"] = "rss"
+    require_hydrated_body: bool = True
     review_note: str | None = None
 
 
@@ -191,6 +192,10 @@ SCHEDULED_RSS_SOURCES = (
         "https://www.customs.go.kr/kcs/selectBoardRssList.do?mi=7424",
         bootstrap=True,
         approve_on_bootstrap=True,
+        # The official feed contains substantive press-release bodies, while
+        # its item links require browser session state and return a 200 error
+        # page to the stateless worker. Keep the bounded first-party RSS body.
+        require_hydrated_body=False,
     ),
 )
 
@@ -232,8 +237,8 @@ def scheduled_rss_config(
         "feed_url": source.feed_url,
         "feed_format": source.feed_format,
         "hydrate_article_links": True,
-        "require_hydrated_body": True,
-        "hydrate_min_body_chars": 100_000,
+        "require_hydrated_body": source.require_hydrated_body,
+        "hydrate_min_body_chars": 100_000 if source.require_hydrated_body else 300,
         "max_hydration_fetches": SCHEDULED_RSS_MAX_ITEMS,
         "allowed_domains": [article_domain],
         "metadata_only": False,

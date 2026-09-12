@@ -8,7 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from apps.worker.worker.daily_scheduler import MariaDBDailyIssueScheduler
+from apps.worker.worker.daily_scheduler import (
+    MariaDBCollectionScheduler,
+    MariaDBDailyIssueScheduler,
+)
 from apps.worker.worker.main import WorkerRuntime
 from apps.worker.worker.queue import Job
 from apps.worker.worker.services import MariaDBResultApplier
@@ -40,7 +43,7 @@ def test_daily_scheduler_deduplicates_concurrent_workers_and_restarts_at_kst_bou
             self.jobs = {}
 
         async def execute(self, statement, params):
-            assert "ON DUPLICATE KEY UPDATE" in str(statement)
+            assert "WHERE NOT EXISTS" in str(statement)
             assert "0, 1, :payload" in str(statement)  # No paid automatic retry.
             await asyncio.sleep(0)
             inserted = params["key"] not in self.jobs
@@ -64,6 +67,31 @@ def test_daily_scheduler_deduplicates_concurrent_workers_and_restarts_at_kst_bou
         assert len({row["id"] for row in db.jobs.values()}) == 2
         for key, row in db.jobs.items():
             assert json.loads(row["payload"])["run_date"] == key.removeprefix("daily-issues:")
+
+    asyncio.run(scenario())
+
+
+def test_collection_scheduler_runs_issue_and_general_article_paths_independently():
+    class Scheduler:
+        def __init__(self, created: int) -> None:
+            self.created = created
+            self.calls: list[str] = []
+
+        async def tick(self, worker_id: str) -> int:
+            self.calls.append(worker_id)
+            return self.created
+
+    async def scenario():
+        scheduler = MariaDBCollectionScheduler(lambda: None)
+        daily = Scheduler(1)
+        general = Scheduler(16)
+        scheduler.daily_issues = daily
+        scheduler.general_articles = general
+
+        assert await scheduler.tick("collection-worker") == 17
+        assert daily.calls == ["collection-worker"]
+        assert general.calls == ["collection-worker"]
+        assert scheduler.interval_seconds == 60
 
     asyncio.run(scenario())
 

@@ -44,6 +44,6 @@ describe("articles browser", () => {
     expect(screen.queryByRole("navigation", { name: "기사 카테고리" })).not.toBeInTheDocument();
     expect(screen.getByText("모든 기사를 최신순으로 읽고, 언론사 원문과 분석을 확인하세요.")).toBeVisible();
     expect(screen.getByText("전체 기사 3개")).toBeVisible();
-    await waitFor(() => expect(mocks.loadArticles).toHaveBeenCalledWith(["economy", "politics", "society"], expect.any(AbortSignal)));
+    await waitFor(() => expect(mocks.loadArticles).toHaveBeenCalledWith(expect.any(AbortSignal)));
   });
 });

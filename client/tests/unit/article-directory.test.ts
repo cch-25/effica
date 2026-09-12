@@ -30,19 +30,16 @@ describe("public article directory", () => {
     expect(rows[1].issues.map((issue) => issue.topic)).toEqual(["정치", "경제"]);
   });
 
-  it("loads later issue and article pages and reports partial fetch failures", async () => {
+  it("loads later issue and global article pages", async () => {
     const request = vi.mocked(apiRequest);
     request.mockReset();
     request.mockResolvedValueOnce({ items: [], next_cursor: "next-issues" }).mockResolvedValueOnce({ items: [], next_cursor: null });
     await loadDirectoryIssues(new AbortController().signal);
     expect(request.mock.calls[1][0]).toContain("cursor=next-issues");
 
-    request.mockImplementation(async (url) => {
-      if (url.includes("/unavailable/")) throw new Error("temporarily unavailable");
-      if (url.includes("cursor=")) return { items: [], next_cursor: null };
-      return { items: [], next_cursor: "next-articles" };
-    });
-    await expect(loadDirectoryArticles(["available", "unavailable"], new AbortController().signal)).resolves.toEqual({ articles: [], failedIssueIds: ["unavailable"] });
+    request.mockResolvedValueOnce({ items: [], next_cursor: "next-articles" }).mockResolvedValueOnce({ items: [], next_cursor: null });
+    await expect(loadDirectoryArticles(new AbortController().signal)).resolves.toEqual({ articles: [], failedIssueIds: [] });
     expect(request.mock.calls.some(([url]) => url.includes("cursor=next-articles"))).toBe(true);
+    expect(request.mock.calls.some(([url]) => url.startsWith("/articles?"))).toBe(true);
   });
 });

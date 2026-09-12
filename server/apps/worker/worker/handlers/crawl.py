@@ -72,9 +72,6 @@ def canonical_url(value: str) -> str:
 
 async def handle(payload: Mapping[str, Any], context: HandlerContext | None = None) -> HandlerResult:
     require_mapping(payload)
-    if "schedule_bucket" in payload:
-        return HandlerResult(value={"status": "SKIPPED", "articles": [],
-                                    "skip_reason": "REPLACED_BY_DAILY_ISSUE_DISCOVERY"})
     source = dict(payload)
     # Admin-created crawl jobs include a URL, but adapter fields, pagination,
     # rate limits and retention live only on source_adapters.  Looking up the
@@ -936,7 +933,10 @@ async def _hydrate_rss_articles(
                     return index, None, "RSS_HYDRATED_ARTICLE_EMPTY", False
                 hydrated = ArticleCandidate(
                     url=rich.url,
-                    title=rich.title or candidate.title,
+                    # The feed headline is the authoritative article title.
+                    # Government detail pages often expose only a generic site
+                    # title even when their body wrapper is valid.
+                    title=candidate.title or rich.title,
                     body=rich.body,
                     author=rich.author or candidate.author,
                     published_at=candidate.published_at or rich.published_at,

@@ -230,7 +230,7 @@ def test_crawl_scheduler_is_leader_safe_bounded_and_interval_deduplicated() -> N
             self.state["statements"].append((query, values))
             if "FROM sources s" in query:
                 return _Result(self.state["sources"][:2])
-            if "INSERT INTO jobs" in query:
+            if "INSERT" in query and "INTO jobs" in query:
                 key = values["dedupe_key"]
                 if key in self.state["jobs"]:
                     return _Result(rowcount=0)
@@ -290,10 +290,11 @@ def test_crawl_scheduler_is_leader_safe_bounded_and_interval_deduplicated() -> N
         inserted = [
             params
             for query, params in state["statements"]
-            if "INSERT INTO jobs" in query
+            if "INSERT" in query and "INTO jobs" in query
         ]
         insert_statements = [
-            query for query, _params in state["statements"] if "INSERT INTO jobs" in query
+            query for query, _params in state["statements"]
+            if "INSERT" in query and "INTO jobs" in query
         ]
         assert all("'PENDING', 0" in query for query in insert_statements)
         assert all(params["max_attempts"] == 5 for params in inserted)
