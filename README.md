@@ -2,7 +2,7 @@
 
 # EFFICA
 
-### Read between perspectives.
+### Same issue. Different coverage.
 
 **One issue. Many perspectives. Your judgment.**
 
@@ -109,6 +109,6 @@ Readers can contribute assessments as well as explore the analysis. Read the ori
 
 **Read more perspectives. See more of the story.**
 
-[Read between perspectives with EFFICA ↗](https://www.effica.forum)
+[Compare news coverage with EFFICA ↗](https://www.effica.forum)
 
 </div>

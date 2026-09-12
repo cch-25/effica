@@ -22,12 +22,15 @@ const newspaperFont = localFont({
 });
 
 export const metadata: Metadata = {
-  title: { default: "EFFICA | 관점 사이를 읽다", template: "%s | EFFICA" },
+  title: { default: "EFFICA | 같은 이슈, 다른 보도", template: "%s | EFFICA" },
   description: "같은 이슈를 여러 관점에서 읽고, 근거를 비교하는 뉴스 플랫폼",
   icons: {
-    icon: "/effica.svg",
-    shortcut: "/effica.svg",
-    apple: "/effica.svg",
+    icon: [
+      { url: "/favicon.ico?v=2", sizes: "16x16 32x32 48x48 64x64", type: "image/x-icon" },
+      { url: "/effica.svg?v=2", sizes: "any", type: "image/svg+xml" },
+    ],
+    shortcut: "/favicon.ico?v=2",
+    apple: { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
   },
 };
 
