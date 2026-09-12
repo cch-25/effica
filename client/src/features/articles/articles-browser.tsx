@@ -7,11 +7,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { StatePanel } from "@/components/ui/state-panel";
-import { issueTopics } from "@/features/issues/issue-selection";
 import { homePublishedAt } from "@/features/home/home-edition";
 import { directoryEntries, loadDirectoryArticles, loadDirectoryIssues } from "./article-directory-data";
 
-export type ArticleFilters = { topic: string; q: string; source: string };
+export type ArticleFilters = { q: string; source: string };
 
 function directoryHref(filters: ArticleFilters) {
   const params = new URLSearchParams();
@@ -47,7 +46,7 @@ export function ArticlesBrowser({ filters }: { filters: ArticleFilters }) {
   const router = useRouter();
   const [visibleCount, setVisibleCount] = useState(20);
   const index = useQuery({ queryKey: ["article-directory", "issues"], queryFn: ({ signal }) => loadDirectoryIssues(signal), staleTime: 60_000 });
-  const issues = (index.data ?? []).filter((issue) => !filters.topic || issue.topic === filters.topic);
+  const issues = index.data ?? [];
   const issueIds = [...new Set(issues.map((issue) => issue.id))].sort();
   const collection = useQuery({
     queryKey: ["article-directory", "articles", issueIds],
@@ -55,7 +54,6 @@ export function ArticlesBrowser({ filters }: { filters: ArticleFilters }) {
     enabled: index.isSuccess,
     staleTime: 60_000,
   });
-  const topics = [...new Set<string>([...issueTopics, ...(index.data ?? []).map((issue) => issue.topic)])];
   const entries = directoryEntries(collection.data?.articles ?? [], issues);
   const sources = [...new Set(entries.map(({ article }) => article.source))].sort((a, b) => a.localeCompare(b, "ko"));
   const search = filters.q.trim().normalize("NFKC").toLocaleLowerCase();
@@ -72,10 +70,7 @@ export function ArticlesBrowser({ filters }: { filters: ArticleFilters }) {
   };
 
   return <div className="articles-page">
-    <header className="page-header"><div className="page-header__body"><h1>기사 모음</h1><p className="page-header__description">카테고리별 기사를 최신순으로 읽고, 언론사 원문과 분석을 확인하세요.</p></div></header>
-    <nav className="article-categories" aria-label="기사 카테고리">
-      {["", ...topics].map((topic) => <Link key={topic} href={directoryHref({ ...filters, topic, source: "" })} scroll={false} aria-current={filters.topic === topic ? "page" : undefined}>{topic || "전체"}</Link>)}
-    </nav>
+    <header className="page-header"><div className="page-header__body"><h1>기사 모음</h1><p className="page-header__description">모든 기사를 최신순으로 읽고, 언론사 원문과 분석을 확인하세요.</p></div></header>
     <div className="article-directory-tools">
       <form role="search" aria-label="기사 검색" onSubmit={submitSearch}>
         <label htmlFor="article-search" className="sr-only">기사 제목 또는 검색어</label>
@@ -89,14 +84,14 @@ export function ArticlesBrowser({ filters }: { filters: ArticleFilters }) {
       </select></label>
     </div>
     <div className="article-directory-status" role="status">
-      <span>{pending ? "기사를 불러오는 중입니다." : error ? "기사 목록을 불러오지 못했습니다." : `${filters.topic || "전체"} 기사 ${matches.length}개${failedCount ? " (일부 목록)" : ""}`}</span>
+      <span>{pending ? "기사를 불러오는 중입니다." : error ? "기사 목록을 불러오지 못했습니다." : `전체 기사 ${matches.length}개${failedCount ? " (일부 목록)" : ""}`}</span>
       <span>최신 발행순</span>
-      {(filters.q || filters.source || filters.topic) && <Link href="/articles" scroll={false}>조건 초기화</Link>}
+      {(filters.q || filters.source) && <Link href="/articles" scroll={false}>조건 초기화</Link>}
     </div>
     {error ? <StatePanel state="error" onRetry={retry} /> : pending ? <StatePanel state="loading" /> : <>
       {failedCount > 0 && <div className="article-directory-warning" role="status"><p>일부 기사를 불러오지 못했습니다. 현재 불러온 기사만 표시합니다.</p><Button variant="ghost" onClick={() => void collection.refetch()} disabled={collection.isFetching}>{collection.isFetching ? "불러오는 중" : "다시 불러오기"}</Button></div>}
       {matches.length > 0 ? <ul className="article-directory-list">{matches.slice(0, visibleCount).map((entry) => <ArticleRow key={entry.article.id} entry={entry} />)}</ul>
-        : !failedCount && <div className="article-directory-empty"><h2>{filters.q || filters.source ? "조건에 맞는 기사가 없습니다." : "아직 공개된 기사가 없습니다."}</h2><p>{filters.q || filters.source ? "검색어나 언론사를 바꿔 다시 찾아보세요." : "다른 카테고리의 기사를 먼저 살펴보세요."}</p><Link href="/articles">전체 기사 보기 →</Link></div>}
+        : !failedCount && <div className="article-directory-empty"><h2>{filters.q || filters.source ? "조건에 맞는 기사가 없습니다." : "아직 공개된 기사가 없습니다."}</h2><p>{filters.q || filters.source ? "검색어나 언론사를 바꿔 다시 찾아보세요." : "새 기사가 공개되면 최신순으로 이곳에 표시됩니다."}</p><Link href="/articles">전체 기사 보기 →</Link></div>}
       {matches.length > visibleCount && <Button className="article-directory-more" variant="ghost" onClick={() => setVisibleCount((count) => count + 20)}>기사 더 보기 ({visibleCount}/{matches.length})</Button>}
     </>}
   </div>;

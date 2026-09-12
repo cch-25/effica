@@ -2,9 +2,6 @@
 .articles-page :is(h1,h2,p,a,button) { word-break: keep-all; overflow-wrap: anywhere; }
 .articles-page a { text-underline-offset: .22em; text-decoration-skip-ink: none; text-decoration-thickness: 1px; }
 .articles-page :is(a,button,input,select):focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
-.article-categories { display: flex; flex-wrap: wrap; gap: .25rem 1.5rem; border-bottom: 1px solid var(--line); padding-block: .5rem; }
-.article-categories a { display: inline-flex; align-items: center; min-height: 44px; font-size: .9375rem; }
-.article-categories a[aria-current="page"] { font-weight: 700; color: var(--accent); text-decoration: underline; text-decoration-thickness: 2px; }
 .article-directory-tools { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; padding-block: 1.25rem; }
 .article-directory-tools form { display: flex; flex: 1 1 18rem; max-width: 34rem; gap: .5rem; }
 .article-directory-tools input { width: 100%; min-width: 0; border: 1px solid var(--line); padding: .65rem .75rem; background: #fff; color: var(--ink); font: inherit; font-size: .875rem; border-radius: 0; }
