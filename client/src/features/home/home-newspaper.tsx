@@ -131,7 +131,7 @@ export function HomeNewspaper({ fallbackIssues, fallbackArticles }: { fallbackIs
               {groups.length <= 2 && <p>{initialGroupIssue(group).summary}</p>}
               <small>{group.issues.length > 1 ? `관련 쟁점 ${group.issues.length}개` : `언론사 ${initialGroupIssue(group).sourceCount}곳의 보도`}</small>
             </li>)}</ol></nav>
-            {relatedIssues.length > 0 && <section className="home-related" aria-labelledby="home-related-title"><h2 id="home-related-title">함께 읽을 쟁점</h2><ul>{relatedIssues.map((issue) => <li key={issue.id}><Link href={`/issues/${issue.id}`}>{issue.title}</Link></li>)}</ul></section>}
+            {relatedIssues.length > 0 && <section className="home-related" aria-labelledby="home-related-title"><h2 id="home-related-title">함께 읽을 쟁점</h2><ul>{relatedIssues.map((issue) => <li key={issue.id}><Link href={`/issues/${issue.id}`}>{issue.title}</Link><p>{issue.summary}</p></li>)}</ul></section>}
             <Link className="home-rail-more" href="/issues">전체 이슈 보기 <span aria-hidden="true">→</span></Link>
           </aside>}
         </div>
