@@ -1,4 +1,5 @@
 <svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
-  <rect width="64" height="64" rx="12" fill="#17212f"/>
-  <path d="M16 12h32v8H24v8h20v8H24v8h24v8H16z" fill="#fff"/>
+  <circle cx="32" cy="32" r="32" fill="#fff"/>
+  <!-- Times New Roman Regular lowercase e, outlined for consistent rendering. -->
+  <path d="M218 571Q217 367 317 251Q417 135 552 135Q642 135 708.5 184.5Q775 234 820 354L851 334Q830 197 729.0 84.5Q628 -28 476 -28Q311 -28 193.5 100.5Q76 229 76 446Q76 681 196.5 812.5Q317 944 499 944Q653 944 752.0 842.5Q851 741 851 571ZM218 629H642Q637 717 621 753Q596 809 546.5 841.0Q497 873 443 873Q360 873 294.5 808.5Q229 744 218 629Z" transform="translate(14.833333 48.962963) scale(0.03703704 -0.03703704)" fill="#000"/>
 </svg>
