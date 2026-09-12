@@ -38,7 +38,8 @@ describe("관점 분석 화면", () => {
     expect(screen.getByRole("region", { name: "김사이의 뉴스 소비 성향" })).toBeVisible();
     expect(screen.getByText("현재 내 활동 기준 미리보기")).toBeVisible();
     expect(screen.getByText("68/100")).toBeVisible();
-    expect(screen.getByRole("img", { name: "검사 결과: 경제 -24, 사회문화 37, 국제 12" })).toBeVisible();
+    expect(screen.getByRole("img", { name: /자유주의 좌파 성향\. 검사 결과: 경제 -24, 사회문화 37, 국제 12/ })).toBeVisible();
+    expect(screen.getByText("자유주의 좌파 성향", { selector: ".ideology-graph__result strong" })).toBeVisible();
     expect(screen.queryByText("과장성")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "정치 이념 검사 다시 하기" })).toHaveAttribute("target", "_blank");
   });

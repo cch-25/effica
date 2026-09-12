@@ -76,6 +76,7 @@ export function QuestionnaireForm({ returnTo }: { returnTo: string }) {
         <strong>{questions.length ? `${page + 1} / ${pageCount} 단계` : "문항을 불러오고 있습니다."}</strong>
         {questions.length > 0 && <span>총 {questions.length}문항 중 {Object.keys(answers).length}문항 응답</span>}
       </div>
+      {currentQuestions[0]?.axis && <p className="questionnaire-scale-help">{({ x: "경제정책: 좌파 ↔ 우파", y: "권력과 시민의 자유: 권위주의 ↔ 자유주의", z: "국가 간 관계: 주권주의 ↔ 국제주의" } as Record<string, string>)[currentQuestions[0].axis]}</p>}
       <p className="questionnaire-scale-help">1 전혀 동의하지 않음 / 2 동의하지 않음 / 3 보통 / 4 동의함 / 5 매우 동의함</p>
       <div className="questionnaire-items">{currentQuestions.map((question, index) => <fieldset className="field questionnaire-item" key={question.id}>
         <legend>{page * 10 + index + 1}. {question.label}</legend>

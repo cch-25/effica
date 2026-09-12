@@ -9,6 +9,8 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
+from apps.api.app.domains.sharing.ideology import interpret_ideology
+
 FONT_DIR = Path(__file__).resolve().parents[1] / "assets"
 
 
@@ -60,26 +62,28 @@ def render_consumption_card(public: Mapping[str, Any]) -> bytes:
         draw.text((70, 458), "3차원 이념 위치", font=body, fill=ink)
 
         def project(x: float, y: float, z: float) -> tuple[float, float]:
-            return (390 + x * 1.5 + y * .9, 690 + x * .35 - y * .6 - z * 1.15)
+            # Positive y means civil liberty: below authority, as on the web map.
+            return (380 + x * 1.45 + z * .55, 690 + y * 1.1 - z * .35)
 
-        for a in (-65, 65):
-            for b in (-65, 65):
-                for edge in ((project(-65, a, b), project(65, a, b)), (project(a, -65, b), project(a, 65, b)), (project(a, b, -65), project(a, b, 65))):
+        for a in (-100, 100):
+            for b in (-100, 100):
+                for edge in ((project(-100, a, b), project(100, a, b)), (project(a, -100, b), project(a, 100, b)), (project(a, b, -100), project(a, b, 100))):
                     draw.line(edge, fill=line, width=1)
-        for edge, color in (([project(-115, 0, 0), project(115, 0, 0)], "#303030"), ([project(0, -115, 0), project(0, 115, 0)], "#5A5A5A"), ([project(0, 0, -105), project(0, 0, 115)], "#404040")):
+        for edge, color in (([project(-100, 0, 0), project(100, 0, 0)], "#303030"), ([project(0, -100, 0), project(0, 100, 0)], "#5A5A5A"), ([project(0, 0, -100), project(0, 0, 100)], "#404040")):
             draw.line(edge, fill=color, width=3)
-        for xy, text, color in (((175, 638), "경제적 좌", "#303030"), ((602, 731), "경제적 우", "#303030"), ((230, 781), "권위주의", "#5A5A5A"), ((557, 595), "자유주의", "#5A5A5A"), ((390, 520), "국제주의 / 세계주의", "#404040"), ((390, 842), "민족주의 / 주권주의", "#404040")):
+        for xy, text, color in (((190, 690), "좌파", "#303030"), ((572, 690), "우파", "#303030"), ((380, 535), "권위주의", "#5A5A5A"), ((380, 856), "자유주의", "#5A5A5A"), ((485, 628), "국제주의", "#404040"), ((270, 757), "주권주의", "#404040")):
             draw.text(xy, text, font=small, fill=color, anchor="mm")
         completed = ideology.get("completed") is True
         coords = [max(-100, min(100, int(ideology.get(axis, 0)))) if completed else 0 for axis in ("x", "y", "z")]
-        px, py = project(*coords)
-        draw.ellipse((px - 9, py - 9, px + 9, py + 9), fill=ink, outline="white", width=2)
         if completed:
-            draw.text((760, 555), "검사 응답 기준 / 베타", font=body, fill=ink)
-            for i, (label, value) in enumerate(zip(("경제 (X)", "사회문화 (Y)", "국제 (Z)"), coords, strict=True)):
-                draw.text((760, 620 + i * 62), f"{label}   {value:+d}", font=body, fill=ink)
-            draw.text((760, 820), "기사 평가는 좌표에", font=small, fill=muted)
-            draw.text((760, 854), "반영되지 않습니다.", font=small, fill=muted)
+            result = interpret_ideology(*coords)
+            px, py = project(*coords)
+            draw.ellipse((px - 9, py - 9, px + 9, py + 9), fill=ink, outline="white", width=2)
+            draw.text((720, 540), result["label"], font=_font(28, 600), fill=ink)
+            for i, (label, key, value) in enumerate(zip(("좌우", "권위 / 자유", "국제관"), ("economic", "authority", "international"), coords, strict=True)):
+                draw.text((720, 604 + i * 62), f"{label}: {result[key]} {value:+d}", font=small, fill=ink)
+            draw.text((720, 808), "좌우는 경제정책 응답 기준", font=small, fill=muted)
+            draw.text((720, 842), "기사 평가는 반영하지 않습니다.", font=small, fill=muted)
         else:
             draw.text((760, 595), "검사 미실시", font=body, fill=ink)
             draw.text((760, 653), "기본 좌표 (0,0,0)", font=body, fill=ink)

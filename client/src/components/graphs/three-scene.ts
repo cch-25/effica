@@ -1,9 +1,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { graphPosition, graphValue, type GraphAxes, type GraphPoint, type GraphView } from "./graph-model";
+import { graphPosition, graphValue, type GraphAxes, type GraphPoint, type GraphRegion, type GraphView } from "./graph-model";
 import { createGraphStage } from "./graph-stage";
 
-export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: (ids: string[]) => void, onOrbit: () => void) {
+export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: (ids: string[]) => void, onOrbit: () => void, regions: GraphRegion[] = []) {
   const theme = getComputedStyle(host);
   const accent = new THREE.Color(theme.getPropertyValue("--peer-color-accent").trim()).getHex();
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "low-power" });
@@ -60,20 +60,32 @@ export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: 
     [-1.2, -.825, -.825 + i * .4125], [-1.2, .825, -.825 + i * .4125],
   ]).flat(), 0x687080, .19);
   scene.add(sideGrid);
+  if (regions.length) scene.add(lines([
+    [-1.2, 0, 0], [1.2, 0, 0], [0, -.825, 0], [0, .825, 0], [0, 0, -.825], [0, 0, .825],
+  ], 0x687080, .45, true));
+  const regionLabels = regions.map(region => {
+    const element = document.createElement("span");
+    element.className = "graph-3d__region";
+    element.textContent = region.label;
+    overlay.appendChild(element);
+    return { element, position: new THREE.Vector3(...graphPosition(region.values, axes)) };
+  });
   // Three outer rulers stay separate from the selected point's projection guides.
   axes.forEach((axis, index) => {
     const a = [-1.2, -.825, .825];
     const b = [...a];
     b[index] = index === 2 ? -.825 : dimensions[index];
     [0, .5, 1].forEach((fraction) => {
-      if (fraction === 0 && index === 2) return;
+      if (fraction === 0 && index === 2 && !axis.showPoles) return;
       const position = new THREE.Vector3(...a);
       position.setComponent(index, index === 2 ? .825 - fraction * 1.65 : -dimensions[index] + fraction * dimensions[index] * 2);
       const label = document.createElement("span");
-      label.className = "graph-3d__tick";
-      label.textContent = graphValue(axis.min + fraction * (axis.max - axis.min), axis);
+      const value = axis.min + (axis.reversed ? 1 - fraction : fraction) * (axis.max - axis.min);
+      const pole = axis.showPoles && fraction !== .5;
+      label.className = pole ? "graph-3d__pole" : "graph-3d__tick";
+      label.textContent = pole ? value === axis.min ? axis.low : axis.high : graphValue(value, axis);
       overlay.appendChild(label);
-      axisLabels.push({ element: label, position, axis: index, offset: index === 0 ? [0, 15] : [-18, 0] });
+      axisLabels.push({ element: label, position, axis: index, offset: index === 0 ? [0, 15] : index === 2 && pole ? [20, 12] : [pole ? -34 : -18, 0] });
     });
     const position = new THREE.Vector3(...b);
     const label = document.createElement("span");
@@ -132,8 +144,13 @@ export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: 
   function place(element: HTMLElement, position: THREE.Vector3, offset = [0, 0]) {
     const p = project(position);
     p.x += offset[0]; p.y += offset[1];
+    if (element.classList.contains("graph-3d__pole") && p.x > -20 && p.x < width + 20) {
+      const inset = Math.max(20, element.offsetWidth / 2 + 4);
+      p.x = Math.max(inset, Math.min(width - inset, p.x));
+    }
     element.style.left = `${p.x}px`; element.style.top = `${p.y}px`;
     element.style.visibility = p.x < 20 || p.x > width - 20 || p.y < 14 || p.y > height - 14 ? "hidden" : "visible";
+    return p;
   }
   function render() {
     if (disposed) return;
@@ -153,22 +170,43 @@ export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: 
     const occupied: { left: number; right: number; top: number; bottom: number }[] = [];
     // Compute collision boxes in graph coordinates. Off-screen layout and page
     // scrolling must not affect whether a label is displayed.
-    for (const label of [...axisLabels].sort((a, b) => Number(b.element.classList.contains("graph-3d__axis-name")) - Number(a.element.classList.contains("graph-3d__axis-name")))) {
+    const labelPriority = (element: HTMLElement) => element.classList.contains("graph-3d__pole") ? 2 : element.classList.contains("graph-3d__axis-name") ? 1 : 0;
+    for (const label of [...axisLabels].sort((a, b) => labelPriority(b.element) - labelPriority(a.element))) {
       label.element.hidden = (view === "front" && label.axis === 2) || (view === "top" && label.axis === 1) || (view === "side" && label.axis === 0);
       const position = label.position.clone();
       if (view === "space" && label.axis === 0) { position.y = -1.02; position.z = .98; }
       // In side view, the depth ruler becomes the horizontal axis.
       const offset = view === "side" && label.axis === 2 ? [0, label.element.classList.contains("graph-3d__axis-name") ? 35 : 15]
         : view === "space" && label.axis === 0 ? [0, label.element.classList.contains("graph-3d__axis-name") ? 32 : 13] : label.offset;
-      place(label.element, position, offset);
+      let p = place(label.element, position, offset);
       if (!label.element.hidden && label.element.style.visibility !== "hidden") {
-        const p = project(position);
-        p.x += offset[0]; p.y += offset[1];
         const labelWidth = label.element.offsetWidth || (label.element.textContent?.length ?? 1) * 7;
-        const rect = { left: p.x - labelWidth / 2, right: p.x + labelWidth / 2, top: p.y - 7, bottom: p.y + 7 };
-        if (occupied.some((r) => r.left - 4 < rect.right && r.right + 4 > rect.left && r.top - 2 < rect.bottom && r.bottom + 2 > rect.top)) label.element.style.visibility = "hidden";
+        const bounds = () => ({ left: p.x - labelWidth / 2, right: p.x + labelWidth / 2, top: p.y - 7, bottom: p.y + 7 });
+        let rect = bounds();
+        const collides = () => occupied.some(r => r.left - 4 < rect.right && r.right + 4 > rect.left && r.top - 2 < rect.bottom && r.bottom + 2 > rect.top);
+        // Semantic endpoints must remain readable when the narrow layout
+        // brings the rulers together. Move locally before hiding a pole.
+        if (label.element.classList.contains("graph-3d__pole") && collides()) {
+          for (const shift of [18, -18, 36, -36]) {
+            p = place(label.element, position, [offset[0], offset[1] + shift]);
+            rect = bounds();
+            if (label.element.style.visibility !== "hidden" && !collides()) break;
+          }
+        }
+        if (collides()) label.element.style.visibility = "hidden";
         else occupied.push(rect);
       }
+    }
+    for (const label of regionLabels) {
+      label.element.hidden = view === "top" || view === "side";
+      place(label.element, label.position);
+      const p = project(label.position);
+      const labelWidth = label.element.offsetWidth;
+      const rect = { left: p.x - labelWidth / 2, right: p.x + labelWidth / 2, top: p.y - 9, bottom: p.y + 9 };
+      const selected = activePosition ? project(activePosition) : null;
+      if (occupied.some(r => r.left - 4 < rect.right && r.right + 4 > rect.left && r.top - 4 < rect.bottom && r.bottom + 4 > rect.top)
+        || (selected && selected.x > rect.left - 22 && selected.x < rect.right + 22 && selected.y > rect.top - 22 && selected.y < rect.bottom + 22)) label.element.style.visibility = "hidden";
+      else if (!label.element.hidden) occupied.push(rect);
     }
     points.forEach(({ mesh, label }) => { if (label) place(label, mesh.position); });
     host.dataset.camera = `${camera.position.toArray().map((v) => v.toFixed(3)).join(",")},${camera.zoom.toFixed(2)}`;

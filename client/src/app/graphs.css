@@ -13,6 +13,8 @@
 .graph-3d__labels > span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; line-height: 1.2; font-variant-numeric: tabular-nums; }
 .graph-3d__tick { color: #595959; font-size: 11px; }
 .graph-3d__axis-name { color: #262626; font-size: 12px; font-weight: 700; }
+.graph-3d__pole { color: #30394a; font-size: 11px; font-weight: 650; }
+.graph-3d__region { color: #667180; font-size: 11px; }
 .graph-3d__count { min-width: 18px; padding: 2px 4px; text-align: center; font-size: 10px; color: #fff; background: #242424; border-radius: 10px; }
 .graph-3d__tooltip { position: absolute; z-index: 3; width: max-content; max-width: min(260px, calc(100% - 16px)); padding: .65rem .8rem; background: #242424; color: #fff; font-size: .75rem; line-height: 1.6; pointer-events: none; word-break: keep-all; overflow-wrap: anywhere; }
 .graph-3d__tooltip strong, .graph-3d__tooltip span { display: block; }
@@ -40,6 +42,17 @@
 .ideology-graph .graph-3d__viewport { height: 23rem; }
 .ideology-graph .graph-3d__instructions { margin: 0; }
 .ideology-graph .ideology-coordinates { margin: .75rem 0; }
+.ideology-graph .graph-3d__axis-key dt strong, .ideology-graph .ideology-coordinates dt { white-space: nowrap; }
+.ideology-graph__intro { margin: 0 0 .75rem; font-size: .8125rem; line-height: 1.7; word-break: keep-all; }
+.ideology-graph__result { display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem 1rem; margin: 0 0 1rem; word-break: keep-all; }
+.ideology-graph__result strong { font-size: 1.0625rem; font-weight: 650; }
+.ideology-graph__result > span { color: var(--muted); font-size: .8125rem; }
+.ideology-graph .ideology-coordinates dd { font-size: .875rem; word-break: keep-all; }
+.ideology-coordinates dd span { color: var(--muted); font-size: .75rem; font-weight: 400; white-space: nowrap; }
+.ideology-coordinates p { margin: .4rem 0 0; color: var(--muted); font-size: .6875rem; line-height: 1.7; word-break: keep-all; }
+.ideology-graph__method { margin-block: .75rem; font-size: .75rem; line-height: 1.8; word-break: keep-all; }
+.ideology-graph__method summary { cursor: pointer; width: fit-content; }
+.ideology-graph__method p { color: var(--muted); margin: .6rem 0; }
 @media (max-width: 600px) {
   .graph-3d__viewport, .ideology-graph .graph-3d__viewport { height: 21rem; }
   .graph-3d__toolbar { gap: .25rem; }

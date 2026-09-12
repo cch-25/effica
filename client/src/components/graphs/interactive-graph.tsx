@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Layers3, Maximize2, Minimize2, Minus, Move, Plus, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { graphValue, type GraphAxes, type GraphPoint, type GraphView } from "./graph-model";
+import { graphValue, type GraphAxes, type GraphPoint, type GraphRegion, type GraphView } from "./graph-model";
 import type { createGraphScene } from "./three-scene";
 
 type Props = {
@@ -13,9 +13,10 @@ type Props = {
   title: string;
   onSelect?: (ids: string[]) => void;
   emptyMessage?: string;
+  regions?: GraphRegion[];
 };
 
-export function InteractiveGraph({ axes, points, selectedId, title, onSelect, emptyMessage }: Props) {
+export function InteractiveGraph({ axes, points, selectedId, title, onSelect, emptyMessage, regions }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLDivElement>(null);
   const runtime = useRef<ReturnType<typeof createGraphScene> | null>(null);
@@ -43,7 +44,7 @@ export function InteractiveGraph({ axes, points, selectedId, title, onSelect, em
     node.addEventListener("webglcontextlost", lost, true);
     void import("./three-scene").then(({ createGraphScene }) => {
       if (cancelled) return;
-      const scene = createGraphScene(node, axes, (ids) => latest.current.onSelect?.(ids), () => setView("space"));
+      const scene = createGraphScene(node, axes, (ids) => latest.current.onSelect?.(ids), () => setView("space"), regions);
       runtime.current = scene;
       scene.update(latest.current.points, latest.current.selectedId);
       const enabled = matchMedia("(pointer: fine)").matches;
@@ -53,7 +54,7 @@ export function InteractiveGraph({ axes, points, selectedId, title, onSelect, em
       cancelled = true; node.removeEventListener("webglcontextlost", lost, true);
       runtime.current?.dispose(); runtime.current = null;
     };
-  }, [axes]);
+  }, [axes, regions]);
 
   useEffect(() => {
     const onFullscreen = () => setFullscreen(document.fullscreenElement === root.current);
@@ -111,7 +112,7 @@ export function InteractiveGraph({ axes, points, selectedId, title, onSelect, em
     </div>
     <p className="graph-3d__instructions" id={instructionsId}>{interactive ? "드래그로 회전" : "회전 버튼을 켜면 터치로 조작"} / 방향키로 시점 이동{view === "front" ? ` / 깊이: ${axes[2].label}` : view === "top" ? ` / 높이: ${axes[1].label}` : view === "side" ? ` / 가로: ${axes[2].label}, 높이: ${axes[1].label}` : ""}</p>
     <dl className="graph-3d__axis-key">
-      {axes.map((axis, index) => <div key={axis.label}><dt>{index === 0 ? "가로" : index === 1 ? "높이" : "깊이"} <strong>{axis.label}</strong></dt><dd>{axis.low} <span aria-hidden="true">→</span> {axis.high}</dd></div>)}
+      {axes.map((axis, index) => <div key={axis.label}><dt>{index === 0 ? "가로" : index === 1 ? "높이" : "깊이"} <strong>{axis.label}</strong></dt><dd>{axis.reversed ? axis.high : axis.low} <span aria-hidden="true">{index === 1 ? "↑" : "→"}</span> {axis.reversed ? axis.low : axis.high}</dd></div>)}
     </dl>
   </div>;
 }
