@@ -18,14 +18,18 @@ afterEach(() => {
 });
 
 describe("관점 분석 화면", () => {
-  it("시각화는 편향성과 과장성을 2D로 보여준다", () => {
+  it("시각화에서 편향성과 과장성에 분석 신뢰도를 더한 3D 좌표를 안내한다", () => {
     mocks.useIssueArticlesQuery.mockReturnValue({ data: { items: articles }, isSuccess: true });
 
     render(<ArticlePerspectiveMap article={articles[0]} />);
 
     expect(screen.getByRole("heading", { name: "기사 관점 지도" })).toBeVisible();
-    expect(screen.getByRole("img", { name: /가로 편향성/ })).toBeVisible();
-    expect(screen.queryByRole("button", { name: /회전|확대|축소/ })).not.toBeInTheDocument();
+    expect(screen.getAllByText("편향성").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("과장성").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /편향성: 기사의 주장과 강조점/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /분석 신뢰도: 현재 근거로/ })).toBeVisible();
+    expect(screen.queryByText(/경제|사회문화|국가.*대외/)).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /깊이는 분석 신뢰도인 3D 그래프/ })).toBeVisible();
   });
 
   it("공유 카드가 기사 소비 다양성과 별도 검사 좌표를 분리한다", () => {
@@ -34,10 +38,10 @@ describe("관점 분석 화면", () => {
     expect(screen.getByRole("region", { name: "김사이의 뉴스 소비 성향" })).toBeVisible();
     expect(screen.getByText("현재 내 활동 기준 미리보기")).toBeVisible();
     expect(screen.getByText("68/100")).toBeVisible();
-    expect(screen.getAllByRole("img")).toHaveLength(2);
-    expect(screen.getByText("자유주의 좌파 성향")).toBeVisible();
+    expect(screen.getByRole("img", { name: /자유주의 좌파 성향\. 검사 결과: 경제 -24, 사회문화 37, 국제 12/ })).toBeVisible();
+    expect(screen.getByText("자유주의 좌파 성향", { selector: ".ideology-graph__result strong" })).toBeVisible();
     expect(screen.queryByText("과장성")).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "정치 이념 검사 다시 하기" })).toHaveAttribute("href", "/onboarding/questionnaire?returnTo=%2Fshare%2Fnew");
+    expect(screen.getByRole("link", { name: "정치 이념 검사 다시 하기" })).toHaveAttribute("target", "_blank");
   });
 
   it("기록 조회 실패를 검사 미실시나 0점으로 대체하지 않는다", () => {
@@ -49,8 +53,8 @@ describe("관점 분석 화면", () => {
 
   it("미실시 검사는 기본 원점과 미측정 설명을 함께 표시한다", () => {
     render(<PerspectivePreview displayName="" snapshot={{ diversity_score: 0, diversity_article_count: 0, ideology: { completed: false, x: 99, y: 99, z: 99 } }} />);
-    expect(screen.queryByRole("img")).not.toBeInTheDocument();
-    expect(screen.getByText(/아직 검사하지 않았습니다/)).toBeVisible();
+    expect(screen.getByRole("img", { name: /검사 미실시: 기본 좌표/ })).toBeVisible();
+    expect(screen.getByText(/아직 측정하지 않은 상태이며 중도를 뜻하지 않습니다/)).toBeVisible();
     expect(screen.getByRole("link", { name: "정치 이념 검사 하러 가기" })).toHaveAttribute("href", "/onboarding/questionnaire?returnTo=%2Fshare%2Fnew");
   });
 });

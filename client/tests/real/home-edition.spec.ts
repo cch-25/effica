@@ -14,10 +14,17 @@ test("homepage reading sections follow live backend groups and exact article mem
     expect(detail.article_ids).toEqual(issue.article_ids);
   }
   await page.goto("/");
-  await expect(page.locator(".ux-issue-list > li")).toHaveCount(items.length);
-  for (const issue of items) {
-    await expect(page.locator(`.ux-issue-list a[href="/issues/${issue.id}"]`)).toContainText(issue.title);
+  await expect(page.locator(".home-spread")).toHaveCount(new Set(items.map((item) => item.coverage_group_id)).size);
+  for (const spread of await page.locator(".home-spread").all()) {
+    const reading = spread.locator(".home-reading");
+    const id = await reading.getAttribute("data-issue-id");
+    const issue = items.find((item) => item.id === id)!;
+    expect(issue).toBeTruthy();
+    await expect(spread).toHaveAttribute("id", `home-issue-${issue.coverage_group_id}`);
+    await expect(reading.locator(".home-article")).toHaveCount(3);
+    for (const link of await reading.locator(".home-article__links a[href^='/articles/']").all()) {
+      const articleId = (await link.getAttribute("href"))!.split("/").pop();
+      expect(issue.article_ids).toContain(articleId);
+    }
   }
-  const total = new Set(items.flatMap((issue) => issue.article_ids)).size;
-  await expect(page.getByText(`${items.length}개 이슈 / ${total}개 기사`)).toBeVisible();
 });

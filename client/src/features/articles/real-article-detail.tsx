@@ -10,6 +10,8 @@ import { clampScore, formatBiasScore, formatConfidence, formatPublishedDate, for
 import { useArticleQuery } from "@/lib/api/queries";
 import { useArticleAnalysisQuery, useViewerQuery } from "@/lib/api/queries";
 import { ArticleDwellTracker } from "@/features/reading/article-dwell-tracker";
+import { DefinitionTooltip } from "@/components/ui/definition-tooltip";
+import { analysisTerms } from "@/lib/content/analysis-terms";
 import { ButtonLink } from "@/components/ui/button";
 import { AnalysisReadinessNotice } from "./analysis-readiness-notice";
 import { ArticlePerspectiveMap } from "./article-perspective-map";
@@ -40,32 +42,46 @@ export function RealArticleDetail({ articleId }: { articleId: string }) {
       <nav className="content-path" aria-label="현재 콘텐츠 경로"><Link href="/articles">기사 모음</Link>{article.issueId !== "unclustered" && <><span aria-hidden="true">/</span><Link href={`/issues/${article.issueId}`}>이슈 비교</Link></>}<span aria-hidden="true">/</span><span aria-current="page">기사 분석</span></nav>
       <div className="article-layout">
         <article className="card article-main">
-          <div className="news-card__meta"><Badge>{article.source}</Badge><span>{formatPublishedDate(article.publishedAt)}</span>{!ready ? <Badge tone="warning">{article.analysisStatus === "UNTRUSTED" ? "분석 미제공" : article.analysisStatus === "PARTIAL" ? "일부 분석 공개" : "분석 대기 상태 확인"}</Badge> : null}</div>
+          <div className="news-card__meta"><Badge>{article.source}</Badge><span>{formatPublishedDate(article.publishedAt)}</span>{!ready ? <Badge tone="warning">{article.analysisStatus === "UNTRUSTED" ? "분석 공개 제한" : article.analysisStatus === "PARTIAL" ? "일부 분석 공개" : "분석 대기 상태 확인"}</Badge> : null}</div>
           <h1>{article.title}</h1>
           {article.originalUrl && <a className="text-link" href={article.originalUrl} target="_blank" rel="noreferrer">언론사 원문 읽기 <ExternalLink size={15} aria-hidden="true" /><span className="sr-only"> (새 탭)</span></a>}
           {article.dek && <p className="article-main__dek">{article.dek}</p>}
-          {ready ? <p className="article-analysis-confidence"><span>분석 신뢰도</span><strong>{formatConfidence(article.confidence)}</strong></p> : <AnalysisStatusNotice status={article.analysisStatus} articleId={articleId} />}
-          <details className="article-analysis-details"><summary>분석에 사용한 근거 보기</summary>
-            {analysis.isPending ? <p>근거를 불러오는 중입니다.</p> : analysis.isError ? <StatePanel state="error" onRetry={() => void analysis.refetch()} /> : analysis.data.assessments.assessments.map((assessment, index) => {
-              const evidence = Array.isArray(assessment.evidence) ? assessment.evidence : [];
-              return <section key={String(assessment.id ?? index)}>{evidence.length ? <ul className="claim-list">{evidence.map((item, i) => <li key={i}><p>{String(item.quote ?? item.text ?? "")}</p>{(item.rationale || item.reason) && <p>{String(item.rationale ?? item.reason)}</p>}</li>)}</ul> : <p>추가로 공개된 인용 근거가 없습니다.</p>}<p>분석 시각 {formatPublishedDate(String(assessment.created_at ?? ""))}</p></section>;
-            })}
-          </details>
+          {ready ? <p className="article-analysis-confidence"><DefinitionTooltip {...analysisTerms.confidence} /><strong>{formatConfidence(article.confidence)}</strong></p> : <AnalysisStatusNotice status={article.analysisStatus} articleId={articleId} />}
+          <div className="section-head"><h2>AI 분석 기록</h2><span className="badge">제한 공개</span></div>
+          {analysis.isPending ? <StatePanel state="loading" /> : analysis.isError ? <StatePanel state="error" onRetry={() => void analysis.refetch()} /> : analysis.data.assessments.assessments.length === 0 ? <p className="notice">공개할 수 있는 AI 분석 기록이 없습니다. 원문과 다른 보도를 함께 확인해 주세요.</p> : <div className="article-analysis-list">{analysis.data.assessments.assessments.map((assessment, index) => {
+            const evidence = Array.isArray(assessment.evidence) ? assessment.evidence : [];
+            const evidenceQuotes = evidence.map((item) => String(item.quote ?? item.text ?? "근거 상세 비공개"));
+            return <section className="article-analysis-record" key={String(assessment.id ?? index)}><div className="article-analysis-record__head"><Badge tone={evidence.length ? "positive" : "warning"}>{evidence.length ? "공개 근거 있음" : "공개 근거 없음"}</Badge><span>AI 분석 기록 {index + 1}</span></div><h3>{String(assessment.summary ?? `분석 ${index + 1}`)}</h3>{evidenceQuotes.length ? <ul className="claim-list" aria-label="공개된 분석 근거">{evidenceQuotes.map((quote, evidenceIndex) => <li key={`${index}-${evidenceIndex}`}>{quote}</li>)}</ul> : <p className="article-analysis-record__limitation">점수는 생성됐지만 공개 가능한 근거 인용이 함께 제공되지 않았습니다. 이 결과를 단독 근거로 해석하지 마세요.</p>}<p className="article-analysis-record__meta"><span><DefinitionTooltip {...analysisTerms.confidence} /> {String(assessment.confidence ?? "미측정")}</span><time>{formatPublishedDate(String(assessment.created_at ?? ""))}</time></p></section>;
+          })}</div>}
+          {analysis.data && <details className="article-analysis-technical">
+            <summary>분석 기술 정보 보기</summary>
+            <dl><div><dt>분석 대상 기사 버전</dt><dd>{String(analysis.data.assessments.article_version_id ?? "확인 중")}</dd></div></dl>
+            {analysis.data.assessments.assessments.map((assessment, index) => <section key={String(assessment.id ?? index)}>
+              <h3>AI 분석 기록 {index + 1}</h3>
+              <dl>
+                <div><dt>사용한 AI 모델</dt><dd>{String(assessment.model_alias ?? "별칭 없음")} / {String(assessment.actual_model_id ?? "모델 ID 비공개")}</dd></div>
+                <div><dt>분석 기준 버전</dt><dd>{String(assessment.prompt_version ?? "확인 중")}</dd></div>
+              </dl>
+            </section>)}
+            <div className="section-head" id="analysis-history"><h2>분석 점수 수정 이력</h2></div>
+            <div className="table-wrap"><table className="data-table"><thead><tr><th>버전</th><th>편향성</th><th>과장성</th><th>생성 시각</th></tr></thead><tbody>{analysis.data.history.items.map((entry, index) => <tr key={String(entry.id ?? index)}><td data-label="버전">{String(entry.score_version_id ?? entry.id ?? index + 1)}</td><td data-label="편향성">{String(entry.x ?? "확인 불가")}</td><td data-label="과장성">{String(entry.sensationalism ?? "미측정")}</td><td data-label="생성 시각">{String(entry.created_at ?? "확인 불가")}</td></tr>)}</tbody></table></div>
+          </details>}
         </article>
         <aside className="card article-side" aria-label="기사 관점 분석">
+          <Link className="text-link" href="#perspective-map">기사 관점 지도 보기 ↓</Link>
           {ready ? <><div className="axis" aria-label={`편향성 ${formatBiasScore(article.x)}`}>
-            <div className="axis__head"><span>편향성</span><span>{formatBiasScore(article.x)}</span></div>
+            <div className="axis__head"><DefinitionTooltip {...analysisTerms.bias} /><span>{formatBiasScore(article.x)}</span></div>
             <div className="axis__labels"><span>− 좌편향</span><span>+ 우편향</span></div>
             <div className="axis__track" aria-hidden="true"><span className="axis__center" /><span className="axis__marker" style={{ left: `${(clampScore(article.x) + 100) / 2}%` }} /></div>
           </div>
           <div className="axis" aria-label={`과장성 ${formatSensationalismScore(article.sensationalism)}`}>
-            <div className="axis__head"><span>과장성</span><span>{formatSensationalismScore(article.sensationalism)}</span></div>
+            <div className="axis__head"><DefinitionTooltip {...analysisTerms.sensationalism} /><span>{formatSensationalismScore(article.sensationalism)}</span></div>
             <div className="axis__labels"><span>낮음</span><span>높음</span></div>
             {article.sensationalism === null ? <small>이 버전에는 과장성 측정값이 없습니다.</small> : <div className="axis__track" aria-hidden="true"><span className="axis__marker" style={{ left: `${clampScore(article.sensationalism, 0, 100)}%` }} /></div>}
-            <small>점수는 관점과 표현 강도를 나타내며 사실 여부나 기사 품질을 판정하지 않습니다.</small>
+            <small>허위 판정이 아닌 표현 강도 평가</small>
           </div></> : <p>공개 기준을 충족한 분석 결과가 준비되면 이곳에 점수가 표시됩니다.</p>}
-
-          {article.issueId !== "unclustered" ? <ButtonLink variant="secondary" href={`/issues/${article.issueId}`}><ArrowLeft size={15} aria-hidden="true" /> 같은 이슈의 보도 비교</ButtonLink> : null}
+          <a className="external-link" href={article.originalUrl} target="_blank" rel="noreferrer">출처 원문 새 창에서 보기 <ExternalLink size={15} /></a>
+          {article.issueId !== "unclustered" ? <ButtonLink variant="secondary" href={`/issues/${article.issueId}`}><ArrowLeft size={15} aria-hidden="true" /> 관련 이슈 비교로 돌아가기</ButtonLink> : null}
         </aside>
       </div>
       <ArticlePerspectiveMap article={article} />

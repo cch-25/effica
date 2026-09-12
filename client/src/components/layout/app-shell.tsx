@@ -3,10 +3,10 @@
 import { Avatar } from "@base-ui/react/avatar";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, BookOpenText, Boxes, CircleGauge, Compass, FileText, Home, Landmark, Newspaper, Power, SlidersHorizontal, Sparkles } from "lucide-react";
+import { BarChart3, BookOpenText, Boxes, CircleGauge, Compass, FileText, Home, Landmark, Newspaper, Power, SlidersHorizontal, Sparkles, UserRound } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
 import type { UserView } from "@/lib/api/contracts";
-import { AccountMenu } from "@/features/auth/account-menu";
+import { HeadlineBand } from "./headline-band";
 import { NewspaperMasthead } from "./newspaper-masthead";
 
 type NavItem = {
@@ -17,8 +17,9 @@ type NavItem = {
 };
 
 const userNav: NavItem[] = [
-  { href: "/", label: "이슈 비교", icon: Home, paths: ["/", "/issues"] },
+  { href: "/", label: "홈", icon: Home, paths: ["/"] },
   { href: "/articles", label: "기사 모음", icon: BookOpenText, paths: ["/articles"] },
+  { href: "/issues", label: "이슈 비교", icon: Newspaper, paths: ["/issues"] },
   { href: "/progress", label: "내 활동", icon: CircleGauge, paths: ["/progress", "/share", "/efficacy"] },
 ];
 
@@ -70,7 +71,7 @@ export function AppShell({ children, user, editionDate = "" }: { children: React
               return <Link key={href} href={href} className={active ? "nav-link is-active" : "nav-link"} aria-current={active ? "page" : undefined}><Icon size={16} aria-hidden="true" /><span className="nav-link__label">{label}</span><span className="nav-link__index" aria-hidden="true">{index}</span></Link>;
             })}
           </nav>
-          <div className="sidebar__foot"><AccountMenu user={user} />
+          <div className="sidebar__foot">
             <Link href="/" className="nav-link"><Compass size={18} /> 사용자 웹</Link>
             <Link href={user ? "/settings/privacy" : "/login"} className="profile-chip"><Avatar.Root className="profile-avatar"><Avatar.Fallback>{user?.display_name.slice(0, 1) ?? "?"}</Avatar.Fallback></Avatar.Root><span><strong>{user?.display_name ?? "로그인 필요"}</strong><small>{user?.role ?? "Guest"}</small></span></Link>
           </div>
@@ -79,7 +80,7 @@ export function AppShell({ children, user, editionDate = "" }: { children: React
         <>
           <NewspaperMasthead date={editionDate} section={pathname === "/" ? "종합" : pathname.startsWith("/articles") ? "기사" : pathname.startsWith("/issues") ? "보도 비교" : "독자"} />
           <nav className="site-nav" aria-label="주요 메뉴">
-            <Link href="/" className="site-nav__brand" aria-label="이슈 비교" aria-current={pathname === "/" || pathname.startsWith("/issues") ? "page" : undefined}>이슈 비교</Link>
+            <Link href="/" className="site-nav__brand" aria-label="종합 1면" aria-current={pathname === "/" ? "page" : undefined}>종합 1면</Link>
             <div className="site-nav__links">
               {userNav.slice(1).map((item) => {
                 const { href, label, icon: Icon, paths } = item;
@@ -87,8 +88,9 @@ export function AppShell({ children, user, editionDate = "" }: { children: React
                 return <Link key={href} href={userNavHref(item, user)} className={active ? "site-nav__link is-active" : "site-nav__link"} aria-current={active ? "page" : undefined}><Icon size={17} aria-hidden={true} /><span>{label}</span></Link>;
               })}
             </div>
-            <AccountMenu user={user} />
+            <Link href={user ? "/settings/privacy" : "/login"} className="site-nav__account" aria-current={user && pathMatches(pathname, "/settings/privacy") ? "page" : undefined}><UserRound size={17} aria-hidden="true" /><span>{user ? "개인정보 관리" : "로그인"}</span></Link>
           </nav>
+          {pathname !== "/" && <HeadlineBand />}
         </>
       )}
       <main id="main-content" className="main-content" tabIndex={-1}>

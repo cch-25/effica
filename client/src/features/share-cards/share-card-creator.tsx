@@ -11,7 +11,7 @@ import { PerspectivePreview } from "./perspective-preview";
 import { consumptionSnapshot } from "./consumption";
 import type { ShareCardCreate, ShareCardJobAccepted } from "@/lib/api/contracts";
 
-const templateOptions = [{ value: "orbit", label: "사각 테두리" }, { value: "editorial", label: "위아래 구분선" }];
+const templateOptions = [{ value: "orbit", label: "자료 지면" }, { value: "editorial", label: "독자 기록지" }];
 const schema = z.object({ template: z.enum(["orbit", "editorial"]), displayName: z.string().max(40), confirmed: z.literal(true) });
 
 export function ShareCardCreator() {
@@ -43,11 +43,11 @@ export function ShareCardCreator() {
     <section className="card card--padded share-creator__form">
       <SelectField id="template" label="카드 모양" value={template} options={templateOptions} onValueChange={(value) => setTemplate(value as typeof template)} />
       <TextField id="display-name" label="표시 이름 (선택)" maxLength={40} value={displayName} onChange={(event) => setDisplayName(event.target.value)} description="입력한 이름만 표시합니다. 이메일과 설문 답변 원문은 공개하지 않습니다." />
-      <CheckboxField checked={confirmed} onCheckedChange={setConfirmed} label="내 뉴스 소비 성향과 검사 결과가 공개된다는 점을 확인했습니다." description="다양성 점수와 검사 실시 여부, 검사한 경우 세 축의 이념 좌표가 포함됩니다. 공개 링크는 누구나 볼 수 있으며 카드는 언제든 폐기할 수 있습니다." />
+      <CheckboxField checked={confirmed} onCheckedChange={setConfirmed} label="내 뉴스 소비 성향과 검사 결과가 공개된다는 점을 확인했습니다." description="다양성 점수와 검사 실시 여부, 검사한 경우 3차원 이념 위치가 포함됩니다. 공개 링크는 누구나 볼 수 있으며 카드는 언제든 폐기할 수 있습니다." />
       {(error || progress.isError) && <p role="alert" style={{ color: "var(--danger)" }}>{error || "내 기록을 불러오지 못했습니다."}</p>}
       {progress.isError && <Button variant="secondary" onClick={() => void progress.refetch()}>내 기록 다시 불러오기</Button>}
       <Button style={{ marginTop: "1rem", width: "100%" }} onClick={create} disabled={busy || progress.isPending || !snapshot}>{busy ? "카드 만드는 중..." : progress.isPending ? "내 기록 확인 중..." : "공유 카드 만들기"}</Button>
     </section>
-    {progress.isPending ? <section className="share-preview" role="status">내 활동으로 미리보기를 준비하고 있습니다.</section> : <PerspectivePreview displayName={displayName} template={template} snapshot={snapshot} />}
+    <PerspectivePreview displayName={displayName} template={template} snapshot={snapshot} />
   </div>;
 }

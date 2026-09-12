@@ -4,7 +4,7 @@ const debugMember = { "X-Debug-Role": "MEMBER", "X-CSRF-Token": "local-csrf" };
 
 test("same-origin web reads and vote authorization flows use the memory backend", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "오늘의 이슈" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(".home-spread--lead h1")).toHaveText("Fixture policy report 1", { timeout: 15_000 });
 
   const issuesResponse = await page.request.get("/api/v1/issues");
   expect(issuesResponse.ok()).toBeTruthy();
@@ -16,7 +16,7 @@ test("same-origin web reads and vote authorization flows use the memory backend"
   const feed = await feedResponse.json() as { items: Array<{ article_id: string; title: string }> };
   const article = feed.items[0];
   await page.goto(`/articles/${article.article_id}`);
-  await expect(page.getByRole("heading", { name: article.title, level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: article.title })).toBeVisible();
 
   const vote = { x: -20, y: 10, z: 5, sensationalism: 25 };
   const unauthorized = await page.request.put(`/api/v1/articles/${article.article_id}/vote`, {

@@ -16,6 +16,6 @@ export function RealIssueDetail({ issueId, initialArticles }: { issueId: string;
 
   const issue = issueQuery.data;
   const articles = articlesQuery.data.items;
-  const comparisonKey = `${issue.id}:${articles.map((row) => `${row.id}:${row.analysisStatus}:${row.analysisProvider}:${row.scoreVersion}:${row.sensationalism}`).join(",")}`;
+  const comparisonKey = `${issue.id}:${initialArticles ?? ""}:${articles.map((row) => `${row.id}:${row.analysisStatus}:${row.analysisProvider}:${row.scoreVersion}:${row.sensationalism}`).join(",")}`;
   return <IssueComparison key={comparisonKey} issue={issue} articles={articles} initialArticles={initialArticles} />;
 }

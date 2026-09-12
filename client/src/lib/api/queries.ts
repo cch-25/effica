@@ -6,12 +6,14 @@ import { ApiError } from "./client";
 import {
   mapArticle,
   mapArticlePage,
+  mapFeedPage,
   mapIssueComparison,
   mapIssue,
   mapIssuePage,
   mapVisualizationPointPage,
   type ArticleDto,
   type ArticlePageDto,
+  type FeedPageDto,
   type IssueDetailDto,
   type IssuePageDto,
   type ScoreDto,
@@ -33,6 +35,20 @@ async function loadVisualizationSample(
   const params = new URLSearchParams({ type });
   const page = await apiRequest<VisualizationPointPageDto>(`/visualization/points?${params}`);
   return page.items;
+}
+
+export function useFeedQuery() {
+  const query = useInfiniteQuery({
+    queryKey: ["feed", "personalized"],
+    queryFn: async ({ pageParam }) => {
+      const params = new URLSearchParams({ mode: "personalized" });
+      if (pageParam) params.set("cursor", pageParam);
+      return mapFeedPage(await apiRequest<FeedPageDto>(`/feed?${params}`));
+    },
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
+  });
+  return { ...query, data: flattenPages(query.data?.pages) };
 }
 
 export function useIssuesQuery(limit = 20) {
@@ -161,13 +177,12 @@ export function useVisualizationPointsQuery() {
 export function useVoteMutation(articleId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: { x: number; y: number; z: number; sensationalism: number }) => apiRequest<Vote>(`/articles/${articleId}/vote`, { method: "PUT", body: JSON.stringify({ x: payload.x, y: payload.y, z: payload.z, sensationalism: payload.sensationalism }) }),
+    mutationFn: (payload: { x: number; y: number; z: number; sensationalism: number }) => apiRequest<Vote>(`/articles/${articleId}/vote`, { method: "PUT", body: JSON.stringify(payload) }),
     onSuccess: (vote) => {
       queryClient.setQueryData(["article", articleId, "my-vote"], vote);
       void queryClient.invalidateQueries({ queryKey: ["article", articleId, "vote-aggregate"] });
       void queryClient.invalidateQueries({ queryKey: ["issue"] });
       void queryClient.invalidateQueries({ queryKey: ["me", "progress"] });
-      void queryClient.invalidateQueries({ queryKey: ["me", "activity"] });
       void queryClient.invalidateQueries({ queryKey: ["visualization", "points"] });
     },
   });
@@ -208,7 +223,6 @@ export function useDeleteVoteMutation(articleId: string) {
       void queryClient.invalidateQueries({ queryKey: ["article", articleId, "vote-aggregate"] });
       void queryClient.invalidateQueries({ queryKey: ["issue"] });
       void queryClient.invalidateQueries({ queryKey: ["me", "progress"] });
-      void queryClient.invalidateQueries({ queryKey: ["me", "activity"] });
       void queryClient.invalidateQueries({ queryKey: ["visualization", "points"] });
     },
   });

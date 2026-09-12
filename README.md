@@ -23,7 +23,7 @@ Explore the context through AI analysis and reader perspectives.
 
 </div>
 
-![EFFICA home: one list of issues with a direct path to compare coverage](docs/readme/effica-home.png)
+![EFFICA home: newspaper masthead, lead issue, and coverage from three news sources](docs/readme/effica-home.png)
 
 <p align="center"><sub>A starting point for discovering different perspectives on the same issue.</sub></p>
 
@@ -45,7 +45,7 @@ The name comes from **Political Efficacy**: the sense that we can understand pol
 
 Choose **two to four articles from different sources** covering one issue. Start with the facts they share, then explore each article's framing and AI analysis in the same view.
 
-![EFFICA coverage comparison: shared facts, headline framing, emphasis, and context compared across sources](docs/readme/effica-comparison.png)
+![EFFICA coverage comparison: article summaries, political bias, sensationalism, and analysis confidence from three news sources shown side by side](docs/readme/effica-comparison.png)
 
 <p align="center"><sub>Start with shared facts. See where the coverage diverges.</sub></p>
 
@@ -55,11 +55,11 @@ Choose **two to four articles from different sources** covering one issue. Start
 
 <a id="perspective"></a>
 
-## 02 / See the distribution of perspectives
+## 02 / Explore perspectives in three dimensions
 
-The **Perspective Map** in each article places coverage of the same issue on a 2D chart: political bias horizontally and sensationalism vertically. Opacity indicates analysis confidence. Select a publisher to inspect its article; overlapping points remain individually selectable in the article list.
+The **Perspective Map** places article analyses in a shared 3D space. Explore clusters of similar coverage and articles that stand apart, then select a point to inspect its analysis.
 
-![EFFICA article perspective map: a 2D comparison of political bias and sensationalism](docs/readme/effica-perspective.png)
+![EFFICA perspective map: the interactive 3D article distribution alongside the selected article's political bias, sensationalism, and analysis confidence](docs/readme/effica-perspective.png)
 
 <p align="center"><sub>From the overall distribution to an individual article, connected through a single selection.</sub></p>
 
@@ -67,9 +67,9 @@ The **Perspective Map** in each article places coverage of the same issue on a 2
 | :--- | :--- |
 | **Horizontal / Political bias** | Where an article's claims and emphasis fall along a left-to-right political spectrum |
 | **Height / Sensationalism** | How provocative or emotionally charged the headline and wording are |
-| **Opacity / Analysis confidence** | The AI model's reported confidence in its assessment |
+| **Depth / Analysis confidence** | How stable the AI assessment is given the available evidence |
 
-Select a publisher, check the article's scores, and open its analysis and original reporting. The chart needs no rotation, camera settings, or separate visualization page.
+Switch between individual articles and source averages to explore the distribution. Compare a selected article with the overall article average, then use the charts below to examine each dimension. When a personal perspective profile is available, articles closer to that profile's political bias appear first in the list.
 
 <a id="participation"></a>
 
@@ -77,8 +77,8 @@ Select a publisher, check the article's scores, and open its analysis and origin
 
 Readers can contribute assessments as well as explore the analysis. Read the original reporting, record your judgment, and reflect on your reading and comparison activity.
 
-- **Return to your reading and evaluations.** My Activity lists read and rated articles with your saved evaluation beside the AI analysis. Political questionnaires are optional and available from My Activity.
-- **Explore your perspective profile when you choose.** Optional questionnaires use two flat charts for economic, social, and international viewpoints. Reading diversity is shown separately.
+- **Understand why an article was recommended.** Each recommendation explains its purpose, such as offering a nearby perspective or complementary coverage of the same issue.
+- **Compare your stated perspective with your reading activity.** Survey responses and perspectives inferred from activity are presented separately.
 - **Reflect on how your understanding changes.** Review the articles you have read and the sources you have encountered. Track your confidence in understanding political issues and optionally create a card to share your perspective profile.
 
 ---
@@ -87,9 +87,9 @@ Readers can contribute assessments as well as explore the analysis. Read the ori
 
 **Explain what the scores mean.** Political bias describes the direction of an article's perspective. Sensationalism describes the intensity of its language. Neither determines factual accuracy or article quality. Analysis confidence is distinct from source credibility or the probability that a claim is true.
 
-**Show the evidence available to readers.** Article pages expose available excerpts and analysis reasons with a link to the original. Administrators review comparison facts and article frames before publication. When a comparison is unavailable, readers can still open the available articles.
+**Show the evidence available to readers.** Readers can check whether supporting evidence is public and review the history of score revisions. EFFICA displays the status when analysis is still being prepared or does not meet its publication criteria.
 
-**Make participation visible.** Readers see their saved assessment beside AI analysis immediately and can edit it. Reader averages are published only when at least five qualifying assessments are available. The final interpretation belongs to the reader.
+**Create room for different perspectives.** Exploration can begin with articles close to a familiar viewpoint and continue toward other sources and complementary coverage. The final interpretation belongs to the reader.
 
 <a id="team"></a>
 
