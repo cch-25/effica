@@ -46,7 +46,6 @@ export function RealArticleDetail({ articleId }: { articleId: string }) {
           <h1>{article.title}</h1>
           {article.dek && <p className="article-main__dek">{article.dek}</p>}
           {ready ? <p className="article-analysis-confidence"><DefinitionTooltip {...analysisTerms.confidence} /><strong>{formatConfidence(article.confidence)}</strong></p> : <AnalysisStatusNotice status={article.analysisStatus} articleId={articleId} />}
-          {ready && article.confidence < 0.6 ? <div className="notice notice--warning">분석 신뢰도가 낮아 점수를 확정적 판단으로 해석하면 안 됩니다.</div> : null}
           <div className="section-head"><h2>AI 분석 기록</h2><span className="badge">제한 공개</span></div>
           {analysis.isPending ? <StatePanel state="loading" /> : analysis.isError ? <StatePanel state="error" onRetry={() => void analysis.refetch()} /> : analysis.data.assessments.assessments.length === 0 ? <p className="notice">공개할 수 있는 AI 분석 기록이 없습니다. 원문과 다른 보도를 함께 확인해 주세요.</p> : <div className="article-analysis-list">{analysis.data.assessments.assessments.map((assessment, index) => {
             const evidence = Array.isArray(assessment.evidence) ? assessment.evidence : [];
