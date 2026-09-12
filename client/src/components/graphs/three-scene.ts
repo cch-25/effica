@@ -97,6 +97,15 @@ export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: 
   const sphere = new THREE.SphereGeometry(1, 32, 24);
   const ink = new THREE.MeshPhysicalMaterial({ color: 0x555b65, roughness: .18, metalness: .8, clearcoat: 1 });
   const selectedMaterial = new THREE.MeshPhysicalMaterial({ color: accent, roughness: .17, metalness: .55, clearcoat: 1, clearcoatRoughness: .1 });
+  const coloredMaterials = new Map<string, THREE.MeshStandardMaterial>();
+  function pointMaterial(color: string) {
+    let material = coloredMaterials.get(color);
+    if (!material) {
+      material = new THREE.MeshStandardMaterial({ color, roughness: .55, metalness: .05 });
+      coloredMaterials.set(color, material); materials.push(material);
+    }
+    return material;
+  }
   const haloGeometry = new THREE.TorusGeometry(1, .035, 8, 64);
   const haloMaterial = new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: .75, depthTest: false });
   geometries.push(sphere, haloGeometry); materials.push(ink, selectedMaterial, haloMaterial);
@@ -156,11 +165,11 @@ export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: 
     if (disposed) return;
     halo.quaternion.copy(camera.quaternion);
     const pixel = (camera.top - camera.bottom) / height / camera.zoom;
-    const selectedRadius = profile ? 13 : 8.5;
+    const selectedRadius = profile ? 13 : points.some((point) => point.data.marker) ? 11 : 8.5;
     const pointRadius = Math.max(3.5, 6 - Math.log2(Math.max(1, points.length / 24)) * .45);
     halo.scale.setScalar(pixel * (selectedRadius + 5 + (1 - selectionGlow) * 8));
     haloMaterial.opacity = .25 + selectionGlow * .5;
-    points.forEach(({ data, mesh }) => mesh.scale.setScalar(pixel * (data.ids.includes(selectedId) ? selectedRadius : data === hovered ? 8 : pointRadius)));
+    points.forEach(({ data, mesh }) => mesh.scale.setScalar(pixel * (data.ids.includes(selectedId) ? selectedRadius : data.marker && points.length <= 24 ? 9 : data === hovered ? 8 : pointRadius)));
     stage.setPlanar(view !== "space");
     sideGrid.visible = view === "side";
     projections.visible = Boolean(activePosition) && showProjections;
@@ -303,13 +312,22 @@ export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: 
       selectedId = selected; tooltip.hidden = true;
       points.forEach(({ mesh, label }) => { scene.remove(mesh); label?.remove(); });
       points = data.map((datum) => {
-        const mesh = new THREE.Mesh(sphere, datum.ids.includes(selected) ? selectedMaterial : ink);
+        const mesh = new THREE.Mesh(sphere, datum.color ? pointMaterial(datum.color) : datum.ids.includes(selected) ? selectedMaterial : ink);
         mesh.position.set(...graphPosition(datum.values, axes));
         // Uncalibrated cast shadows can look like extra observations. Only the
         // measuring stage casts shadows; data uses explicit projection markers.
         scene.add(mesh);
         let label: HTMLSpanElement | null = null;
-        if (datum.ids.length > 1) {
+        if (datum.marker && (data.length <= 24 || datum.ids.includes(selected) || datum.ids.length > 1)) {
+          label = document.createElement("span");
+          label.className = "graph-3d__marker";
+          label.textContent = datum.marker;
+          label.style.setProperty("--article-marker-color", datum.color ?? "#526071");
+          label.dataset.pointIds = datum.ids.join(",");
+          label.dataset.selected = String(datum.ids.includes(selected));
+          if (datum.ids.length > 1) label.dataset.count = String(datum.ids.length);
+          overlay.appendChild(label);
+        } else if (datum.ids.length > 1) {
           label = document.createElement("span"); label.className = "graph-3d__count"; label.textContent = String(datum.ids.length); overlay.appendChild(label);
         }
         return { data: datum, mesh, label };
@@ -318,6 +336,12 @@ export function createGraphScene(host: HTMLDivElement, axes: GraphAxes, onPick: 
       activePosition = active?.mesh.position;
       halo.visible = guide.visible = Boolean(active);
       if (active) {
+        const guideColor = active.data.color ? 0x687080 : accent;
+        haloMaterial.color.setHex(active.data.color ? 0x253040 : accent);
+        (guide.material as THREE.LineDashedMaterial).color.setHex(guideColor);
+        projectionMaterial.color.setHex(guideColor);
+        sliceMaterial.color.setHex(guideColor);
+        sliceLineMaterial.color.setHex(guideColor);
         const p = active.mesh.position;
         halo.position.copy(p);
         slices[0].position.x = p.x; slices[1].position.y = p.y; slices[2].position.z = p.z;

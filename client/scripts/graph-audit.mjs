@@ -118,9 +118,9 @@ try {
     await page.goto(base + '/articles/article-01', { waitUntil: 'networkidle' });
     const graph = page.locator('.graph-3d');
     await page.locator('.graph-3d[data-status="ready"]').waitFor();
-    const cluster = graph.locator('.graph-3d__count');
+    const cluster = graph.locator('.graph-3d__marker[data-count="3"]');
     await cluster.waitFor();
-    assert.equal(await cluster.textContent(), '3');
+    assert.equal(await cluster.textContent(), '2/3/4');
     await graph.scrollIntoViewIfNeeded();
     const initialClusterBox = await cluster.boundingBox();
     if (device === 'desktop') await page.mouse.click(initialClusterBox.x + initialClusterBox.width / 2, initialClusterBox.y + initialClusterBox.height / 2);

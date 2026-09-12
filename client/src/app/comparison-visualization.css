@@ -549,9 +549,28 @@
 .article-perspective-map__context { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .5rem; min-height: 3rem; margin-bottom: 1rem; padding-block: .5rem; border-block: 1px solid var(--peer-color-line); }
 .article-perspective-map__context > span { color: var(--peer-color-ink-muted); font-size: .75rem; line-height: 1.7; word-break: keep-all; }
 .article-perspective-map__context .button { min-height: 2rem; font-size: .8125rem; }
-.article-perspective-map__articles { margin-top: 1rem; border-top: 1px solid var(--peer-color-line); }
-.article-perspective-map__articles > .button { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: stretch; justify-items: start; gap: .3rem; width: 100%; height: auto; padding: .9rem 1rem; border: 0; border-bottom: 1px solid var(--peer-color-line); border-radius: 0; text-align: left; white-space: normal; }
-.article-perspective-map__articles > .button[aria-pressed="true"] { background: var(--peer-color-accent-soft); }
+.article-perspective-map__sidebar { min-width: 0; display: grid; gap: 1.25rem; }
+.article-map-legend { border-top: 1px solid var(--peer-color-line); }
+.article-map-legend header { padding-block: .75rem; }
+.article-map-legend h3 { margin: 0; font-size: 1rem; line-height: 1.5; }
+.article-map-legend header p { margin: .25rem 0 0; color: var(--peer-color-ink-muted); font-size: .8125rem; }
+.article-perspective-map__articles { border-top: 1px solid var(--peer-color-line); }
+.article-perspective-map__articles > .button { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr); justify-content: stretch; align-items: start; gap: .65rem; width: 100%; height: auto; padding: .75rem .5rem; border: 0; border-bottom: 1px solid var(--peer-color-line); border-radius: 0; text-align: left; white-space: normal; color: var(--peer-color-ink); }
+.article-perspective-map__articles > .button[aria-pressed="true"] { background: #f1f3f5; }
+.article-map-marker { display: inline-grid; place-items: center; width: 1.5rem; height: 1.5rem; flex: 0 0 auto; border-radius: 50%; background: var(--article-marker-color); color: #fff; font: 600 .75rem/1 ui-sans-serif, system-ui, sans-serif; }
+.article-perspective-map__articles > .button[aria-pressed="true"] .article-map-marker { outline: 1px solid #253040; outline-offset: 2px; }
+.article-map-marker--small { width: 1.25rem; height: 1.25rem; font-size: .6875rem; }
+.article-map-legend__story { display: grid; gap: .2rem; min-width: 0; }
+.article-map-legend__story > small { color: var(--peer-color-ink-muted); font-size: .75rem; }
+.article-map-legend__key { display: grid; gap: .45rem; padding-top: .75rem; color: var(--peer-color-ink-muted); font-size: .75rem; }
+.article-map-legend__key > span { display: flex; align-items: center; gap: .5rem; }
+.article-map-legend__selected-ring { width: .65rem; height: .65rem; margin-inline: .125rem; border-radius: 50%; background: #526071; outline: 1px solid #253040; outline-offset: 2px; }
+.article-map-legend__projection { width: .75rem; height: .75rem; border: 1.5px solid #687080; border-radius: 50%; }
+.article-perspective-map .space-inspector__header > span { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.article-perspective-map__source .article-map-legend__selected { display: inline-flex; align-items: center; gap: .2rem; margin-left: auto; color: var(--peer-color-ink); }
+.article-space .graph-3d__marker { display: grid; place-items: center; min-width: 19px; height: 19px; padding: 0 4px; color: #fff; border: 1px solid #fff; border-radius: 50%; background: var(--article-marker-color); font: 600 11px/1 ui-sans-serif, system-ui, sans-serif; }
+.article-space .graph-3d__marker[data-count] { border-radius: 10px; font-size: 10px; }
+.article-space .graph-3d__marker[data-selected="true"] { outline: 1px solid #253040; outline-offset: 2px; }
 .article-perspective-map__articles strong { font-size: .875rem; font-weight: 600; line-height: 1.6; word-break: keep-all; overflow-wrap: break-word; }
 .article-perspective-map__source { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; font-size: .75rem; }
 .article-perspective-map__source small { color: var(--peer-color-ink-muted); font-size: .75rem; font-weight: 400; }

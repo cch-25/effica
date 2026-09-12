@@ -14,7 +14,7 @@ try {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(base);
-    const articleLink = page.locator('.front-page__dispatches a[href^="/articles/"]').first();
+    const articleLink = page.locator('main a[href^="/articles/"]').first();
     await articleLink.waitFor({ timeout: 30000 });
     const articlePath = await articleLink.getAttribute('href');
     const articleId = articlePath.split('/').at(-1);
@@ -29,12 +29,24 @@ try {
     await map.locator('.graph-3d[data-status="ready"]').waitFor({ timeout: 30000 });
     const choices = map.getByRole('group', { name: '같은 이슈에서 비교할 기사' }).getByRole('button');
     const expected = issueArticles.filter(item => item.analysis_status === 'READY');
-    await page.waitForFunction(count => document.querySelectorAll('.article-perspective-map__articles > button').length === count, expected.length > 1 ? expected.length : 0);
+    await page.waitForFunction(count => document.querySelectorAll('.article-perspective-map__articles > button').length === count, expected.length);
+    const graphMarkers = map.locator('.graph-3d__marker');
+    assert.equal(await graphMarkers.count(), expected.length);
+    const identities = await choices.evaluateAll(buttons => buttons.map(button => ({
+      number: button.querySelector('.article-map-marker').textContent,
+      color: button.querySelector('.article-map-marker').style.getPropertyValue('--article-marker-color'),
+    })));
+    const plotted = await graphMarkers.evaluateAll(markers => markers.map(marker => ({ number: marker.textContent, color: marker.style.getPropertyValue('--article-marker-color') })));
+    assert.deepEqual(plotted, identities);
+    assert.ok(await map.getByRole('heading', { name: '지도 속 기사' }).isVisible());
+    assert.ok(await map.getByText('빈 원과 점선: 좌표 보조 표시').isVisible());
     if (expected.length > 1) {
       const labels = await choices.allTextContents();
       for (const item of expected) assert.ok(labels.some(label => label.includes(item.title)), `missing related article ${item.id}`);
       assert.equal(await choices.first().getAttribute('aria-pressed'), 'true');
       await choices.nth(1).click();
+      assert.equal(await graphMarkers.filter({ hasText: /^2$/ }).getAttribute('data-selected'), 'true');
+      assert.equal(await graphMarkers.filter({ hasText: /^2$/ }).evaluate(marker => marker.style.getPropertyValue('--article-marker-color')), identities[1].color);
       assert.ok(await map.getByRole('link', { name: '이 기사 분석 보기' }).isVisible());
       await map.getByRole('button', { name: '읽고 있는 기사로 돌아가기' }).click();
     }

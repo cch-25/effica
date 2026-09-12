@@ -1,7 +1,7 @@
 export type GraphAxis = { label: string; min: number; max: number; suffix?: string; low: string; high: string; reversed?: boolean; showPoles?: boolean };
 // World order: horizontal, vertical, depth. Domain coordinates stay in the data.
 export type GraphAxes = readonly [GraphAxis, GraphAxis, GraphAxis];
-export type GraphPoint = { id: string; ids: string[]; label: string; values: [number, number, number] };
+export type GraphPoint = { id: string; ids: string[]; label: string; values: [number, number, number]; color?: string; marker?: string };
 export type GraphView = "space" | "front" | "top" | "side";
 export type GraphRegion = { label: string; values: [number, number, number] };
 

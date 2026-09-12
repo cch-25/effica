@@ -15,13 +15,21 @@ const axes: GraphAxes = [
   { label: "분석 신뢰도", min: 0, max: 100, suffix: "%", low: "0%", high: "100%" },
 ];
 
-type Props = { points: VisualizationPoint[]; selectedId: string; anchorId: string | undefined; title: string; onSelect: (id: string) => void };
+export type PerspectivePoint = VisualizationPoint & { color?: string; marker?: string };
+type Props = { points: PerspectivePoint[]; selectedId: string; anchorId: string | undefined; title: string; onSelect: (id: string) => void };
 
 export function PerspectiveField({ points, selectedId, anchorId, title, onSelect }: Props) {
-  const data = useMemo<GraphPoint[]>(() => makeSpaceData(points).map((datum) => ({
-    id: datum.ids[0], ids: datum.ids, label: datum.name,
-    values: [datum.value[0], datum.value[2], datum.value[1]],
-  })), [points]);
+  const data = useMemo<GraphPoint[]>(() => makeSpaceData(points).map((datum) => {
+    const members = datum.ids.map((id) => points.find((point) => point.id === id)!);
+    const selected = members.find((point) => point.id === selectedId);
+    const colors = new Set(members.map((point) => point.color));
+    return {
+      id: datum.ids[0], ids: datum.ids, label: selected?.label ?? datum.name,
+      values: [datum.value[0], datum.value[2], datum.value[1]],
+      color: selected?.color ?? (colors.size === 1 ? members[0].color : "#526071"),
+      marker: members.every((point) => point.marker) ? members.map((point) => point.marker).join("/") : undefined,
+    };
+  }), [points, selectedId]);
   const measuredIds = new Set(data.flatMap((datum) => datum.ids));
   const measured = points.filter((point) => measuredIds.has(point.id));
   const selected = points.find((point) => point.id === selectedId);
@@ -44,6 +52,6 @@ export function PerspectiveField({ points, selectedId, anchorId, title, onSelect
         <Button variant="ghost" aria-label="다음 자료" disabled={index >= measured.length - 1} onClick={() => measured[index + 1] && onSelect(measured[index + 1].id)}><ChevronRight size={17} /></Button>
       </nav>
     </div>
-    <div className="article-space__caption"><span><i /> 자료 <i className="is-selected" /> 선택</span><p>숫자는 같은 좌표의 자료 수 / 점을 다시 누르면 다음 자료</p></div>
+    <div className="article-space__caption">{points.some((point) => point.marker) ? <p>번호는 기사 목록과 같습니다. 겹친 번호의 점을 다시 누르면 다음 기사가 선택됩니다.</p> : <><span><i /> 자료 <i className="is-selected" /> 선택</span><p>숫자는 같은 좌표의 자료 수 / 점을 다시 누르면 다음 자료</p></>}</div>
   </div>;
 }
