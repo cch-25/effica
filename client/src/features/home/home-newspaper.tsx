@@ -14,6 +14,11 @@ import {
   type HomeIssueGroup,
 } from "./home-edition";
 
+function HeadlineText({ title }: { title: string }) {
+  return title.split(/(\s+)/).map((part, index) => /^\s+$/.test(part)
+    ? part : <span className="home-title-word" key={index}>{part}</span>);
+}
+
 function IssuePhoto({ article, onFailure }: { article: Article; onFailure: () => void }) {
   if (!article.imageUrl) return null;
   return <figure className="home-issue-photo">
@@ -57,8 +62,9 @@ function IssueReading({ issue, primary, groupId, fallbackArticles, children }: {
   const CoverageHeading = primary ? "h2" : "h3";
   return <div className="home-reading" data-issue-id={issue.id}>
     <div className={`home-issue-opening${photo ? " home-issue-opening--photo" : ""}`}>
+      <Heading id={`home-title-${groupId}`}><Link href={`/issues/${issue.id}`}><HeadlineText title={issue.title} /></Link></Heading>
+      {photo && <IssuePhoto key={photo.id} article={photo} onFailure={() => setFailedPhotos(previous => new Set([...previous, photo.id]))} />}
       <div className="home-issue-story">
-        <Heading id={`home-title-${groupId}`}><Link href={`/issues/${issue.id}`}>{issue.title}</Link></Heading>
         <p className="home-issue-summary">{issue.summary}</p>
         <div className="home-issue-meta"><span>기사 {issue.articleIds.length}개 / 언론사 {issue.sourceCount}곳</span><span>{ready ? "비교 가능" : "분석 준비 중"}</span>{issue.dataAsOf && <span>최근 보도 {formatPublishedDate(issue.dataAsOf)}</span>}</div>
         <div className="home-reading-actions">
@@ -68,7 +74,6 @@ function IssueReading({ issue, primary, groupId, fallbackArticles, children }: {
           </Link>
         </div>
       </div>
-      {photo && <IssuePhoto key={photo.id} article={photo} onFailure={() => setFailedPhotos(previous => new Set([...previous, photo.id]))} />}
     </div>
     {children}
     <section className="home-coverage" aria-label={`${issue.title} 관련 기사`}>
@@ -112,14 +117,28 @@ export function HomeNewspaper({ fallbackIssues, fallbackArticles }: { fallbackIs
   const query = useIssuesQuery(250);
   const issues = query.data?.items ?? (isMockMode() ? fallbackIssues : []);
   const groups = buildHomeEdition(issues);
+  const relatedIssues = groups[0]?.issues.filter((issue) => issue.id !== initialGroupIssue(groups[0]).id) ?? [];
   return <>
-    <div className="home-edition-intro"><p>{isMockMode() ? "샘플 지면 / " : ""}정치와 정책 <span>같은 쟁점의 보도를 나란히 읽습니다.</span></p><Link href="/issues">전체 이슈 보기 →</Link></div>
-    {groups.length > 1 && <nav className="home-index" aria-label="이 지면의 이슈"><strong>이 지면의 이슈</strong><ol>{groups.map((group, index) => <li key={group.id}>
-      <a href={`#home-issue-${group.id}`}><span className="home-index__number">{String(index + 1).padStart(2, "0")}</span><span>{group.title}</span>{group.issues.length > 1 && <small>쟁점 {group.issues.length}개</small>}</a>
-    </li>)}</ol></nav>}
+    <div className="home-edition-intro"><p>{isMockMode() ? "샘플 지면 / " : ""}정치와 정책 <span>같은 쟁점, 서로 다른 보도</span></p><Link href="/articles">전체 기사 보기 →</Link></div>
     {query.isPending && !isMockMode() ? <StatePanel state="loading" /> : query.isError ? <StatePanel state="error" onRetry={() => void query.refetch()} /> : !groups.length ?
       <section className="home-empty" role="status"><h1>비교할 이슈를 준비하고 있습니다.</h1><p>최근 기사를 여러 언론사에서 확보한 이슈부터 보여드립니다.</p><Link href="/issues">전체 이슈와 준비 상태 보기 →</Link></section>
-      : <div className="home-spreads">{groups.map((group, index) => <IssueSpread key={group.id} group={group} primary={index === 0} fallbackArticles={fallbackArticles} />)}</div>}
+      : <div className="home-spreads">
+        <div className={`home-front${groups.length === 1 && !relatedIssues.length ? " home-front--single" : ""}`}>
+          <IssueSpread key={groups[0].id} group={groups[0]} primary fallbackArticles={fallbackArticles} />
+          {(groups.length > 1 || relatedIssues.length > 0) && <aside className="home-rail" aria-label="주요 이슈 안내">
+            <nav className="home-index" aria-label="이 지면의 이슈"><h2>주요 이슈</h2><ol>{groups.map((group, index) => <li key={group.id}>
+              <a href={`#home-issue-${group.id}`}><span className="home-index__number">{String(index + 1).padStart(2, "0")}</span><span>{group.title}</span></a>
+              {groups.length <= 2 && <p>{initialGroupIssue(group).summary}</p>}
+              <small>{group.issues.length > 1 ? `관련 쟁점 ${group.issues.length}개` : `언론사 ${initialGroupIssue(group).sourceCount}곳의 보도`}</small>
+            </li>)}</ol></nav>
+            {relatedIssues.length > 0 && <section className="home-related" aria-labelledby="home-related-title"><h2 id="home-related-title">함께 읽을 쟁점</h2><ul>{relatedIssues.map((issue) => <li key={issue.id}><Link href={`/issues/${issue.id}`}>{issue.title}</Link></li>)}</ul></section>}
+            <Link className="home-rail-more" href="/issues">전체 이슈 보기 <span aria-hidden="true">→</span></Link>
+          </aside>}
+        </div>
+        {groups.length > 1 && <div className="home-secondary"><div className="home-secondary__heading"><h2>이슈별 보도</h2><span>여러 언론사의 기사를 한자리에서</span></div>
+          <div className="home-secondary__columns">{groups.slice(1).map((group) => <IssueSpread key={group.id} group={group} primary={false} fallbackArticles={fallbackArticles} />)}</div>
+        </div>}
+      </div>}
     <aside className="home-reading-guide" aria-label="독자 안내"><div><strong>기사 분석은 어떻게 읽나요?</strong><p>기사에서 강조한 내용과 그 근거를 살펴보세요. 편향성과 과장성 점수는 사실 여부나 기사 품질의 판정이 아닙니다.</p></div>
       <details className="home-selection-rule"><summary>지면 구성 기준</summary><p>최근 기사가 3개 이상이고 언론사 3곳 이상을 확보한 이슈를 보여드립니다. 관련 쟁점은 한 묶음으로 모읍니다.</p><p>편집 우선순위가 높은 묶음부터 최대 5개를 표시합니다. 우선순위가 같으면 언론사 수와 기사 수, 최근 갱신 시각을 차례로 봅니다.</p><p>날짜와 발행 시각은 한국 시간 기준입니다.</p></details>
     </aside>

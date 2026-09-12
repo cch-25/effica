@@ -22,7 +22,7 @@ const rows = ids.map((id, index) => ({
   opened_at: "2026-09-10T00:00:00Z", article_ids: sources.map((_, source) => `${id}-${source}`),
 }));
 
-async function installFixture(page: Page, empty = false) {
+async function installFixture(page: Page, empty = false, distinct = false) {
   await page.addInitScript(({ rows, sources, empty }) => {
     const original = window.fetch.bind(window);
     window.fetch = (input, init) => {
@@ -42,7 +42,7 @@ async function installFixture(page: Page, empty = false) {
       }
       return original(input, init);
     };
-  }, { rows, sources, empty });
+  }, { rows: distinct ? rows.map((row) => ({ ...row, coverage_group_id: row.id, coverage_group_title: row.title })) : rows, sources, empty });
 }
 
 for (const width of [1440, 1024, 768, 390, 320]) {
@@ -109,4 +109,29 @@ test("an empty edition does not show fallback stories or fabricated counts", asy
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "비교할 이슈를 준비하고 있습니다." })).toBeVisible();
   await expect(page.locator(".home-spreads")).toHaveCount(0);
+});
+
+test("five issue groups form newspaper columns and reflow on mobile", async ({ page }) => {
+  await installFixture(page, false, true);
+  await page.goto("/");
+  await expect(page.locator(".home-spread")).toHaveCount(5);
+  const directory = path.resolve("../output/playwright/home-newspaper-fixtures");
+  await mkdir(directory, { recursive: true });
+  for (const width of [1440, 768, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.evaluate(() => document.fonts.ready);
+    const positions = await page.locator(".home-secondary__columns > .home-spread").evaluateAll(elements => elements.map(element => {
+      const { x, y, width } = element.getBoundingClientRect();
+      return { x, y, width };
+    }));
+    if (width > 760) {
+      expect(positions[0].y).toBe(positions[1].y);
+      expect(positions[1].x).toBeGreaterThanOrEqual(positions[0].x + positions[0].width);
+    } else {
+      expect(positions[0].x).toBe(positions[1].x);
+      expect(positions[1].y).toBeGreaterThan(positions[0].y);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+    await page.screenshot({ path: path.join(directory, `five-groups-${width}.png`), fullPage: true });
+  }
 });
