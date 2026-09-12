@@ -61,7 +61,9 @@ describe("app shell navigation", () => {
     const nav = screen.getByRole("navigation", { name: "주요 메뉴" });
     expect(within(nav).getByRole("link", { name: "종합 1면" })).toHaveAttribute("href", "/");
     expect(within(nav).getByRole("link", { name: "이슈 비교" })).toHaveAttribute("href", "/issues");
-    expect(within(nav).getByRole("link", { name: "이슈 비교" })).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("link", { name: "기사 모음" })).toHaveAttribute("href", "/articles");
+    expect(within(nav).getByRole("link", { name: "기사 모음" })).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("link", { name: "이슈 비교" })).not.toHaveAttribute("aria-current");
     expect(screen.queryByRole("link", { name: "기사 관점 지도" })).not.toBeInTheDocument();
     expect(within(nav).getByRole("link", { name: "내 활동" })).toHaveAttribute("href", "/progress");
     expect(within(nav).getByRole("link", { name: "개인정보 관리" })).toHaveAttribute("href", "/settings/privacy");
@@ -79,7 +81,8 @@ describe("app shell navigation", () => {
 
   it.each([
     ["/issues/issue-1", "이슈 비교"],
-    ["/articles/article-1", "이슈 비교"],
+    ["/articles", "기사 모음"],
+    ["/articles/article-1", "기사 모음"],
     ["/progress", "내 활동"],
     ["/share/new", "내 활동"],
     ["/efficacy", "내 활동"],
@@ -92,11 +95,12 @@ describe("app shell navigation", () => {
     expect(within(mobile).getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
   });
 
-  it("keeps three explicit destinations in the mobile menu", () => {
+  it("keeps articles and issues as separate destinations in the mobile menu", () => {
     renderShell("/");
 
     const nav = screen.getByRole("navigation", { name: "모바일 주요 메뉴" });
-    expect(within(nav).getAllByRole("link")).toHaveLength(3);
+    expect(within(nav).getAllByRole("link")).toHaveLength(4);
+    expect(within(nav).getByRole("link", { name: "기사 모음" })).toHaveAttribute("href", "/articles");
     expect(within(nav).getByRole("link", { name: "홈" })).toHaveAttribute("aria-current", "page");
     expect(within(nav).getByRole("link", { name: "이슈 비교" })).toBeVisible();
     expect(within(nav).getByRole("link", { name: "내 활동" })).toBeVisible();

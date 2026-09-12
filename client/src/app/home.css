@@ -2,7 +2,7 @@
 .home-page { --home-muted: #596370; --home-rule: #d2d8df; }
 .home-page :is(h1,h2,h3,h4,p,strong,button,a) { word-break: keep-all; overflow-wrap: anywhere; }
 .home-page button { font: inherit; cursor: pointer; }
-.home-headline-word { display: inline-block; max-width: 100%; vertical-align: baseline; }
+.home-page a { text-decoration-skip-ink: none; text-decoration-thickness: 1px; text-underline-offset: .22em; }
 .home-edition-intro { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding: .45rem 0 .9rem; font-size: .8125rem; }
 .home-edition-intro p { margin: 0; }
 .home-edition-intro p > span { color: var(--home-muted); }
@@ -29,11 +29,15 @@
 .home-issue-meta { display: flex; align-items: baseline; flex-wrap: wrap; gap: .35rem 1rem; border-block: 1px solid var(--home-rule); padding-block: .6rem; color: var(--home-muted); font-size: .8125rem; }
 .home-compare-link { display: inline-flex; align-items: center; gap: .65rem; margin-top: .4rem; min-height: 44px; font-size: .875rem; font-weight: 650; color: #28744f; }
 .home-compare-link span { transition: transform 150ms ease; }
+.home-reading-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem 1.4rem; margin-top: .4rem; }
+.home-reading-actions .home-compare-link { margin-top: 0; }
+.home-article-link { display: inline-flex; align-items: center; gap: .65rem; min-height: 44px; font-size: .875rem; font-weight: 650; }
+.home-issue-photo__link { display: block; }
 .home-issue-photo { margin: 0; min-width: 0; }
 .home-issue-photo img { display: block; width: 100%; height: auto; aspect-ratio: 1.65; object-fit: cover; filter: grayscale(.35); }
 .home-issue-photo figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .3rem .75rem; font-size: .75rem; color: var(--home-muted); margin-top: .45rem; }
-.home-issue-photo figcaption > span { flex: 1 1 70%; }
-.home-issue-photo figcaption > a { flex-shrink: 0; }
+.home-issue-photo figcaption > a:first-child { flex: 1 1 70%; }
+.home-issue-photo figcaption > a[target] { flex-shrink: 0; }
 .home-angle-picker { border-block: 1px solid var(--home-rule); margin: .8rem 0 1.1rem; }
 .home-angle-picker summary { cursor: pointer; display: flex; justify-content: space-between; gap: 1rem; font-size: .875rem; padding: .75rem 0; list-style: none; }
 .home-angle-picker summary::-webkit-details-marker { display: none; }

@@ -39,11 +39,12 @@ export function RealArticleDetail({ articleId }: { articleId: string }) {
   return (
     <>
       {viewer.data ? <ArticleDwellTracker articleId={article.id} /> : null}
-      <nav className="content-path" aria-label="현재 콘텐츠 경로"><Link href={`/issues/${article.issueId}`}>이슈 비교</Link><span aria-hidden="true">/</span><span aria-current="page">기사 분석</span></nav>
+      <nav className="content-path" aria-label="현재 콘텐츠 경로"><Link href="/articles">기사 모음</Link>{article.issueId !== "unclustered" && <><span aria-hidden="true">/</span><Link href={`/issues/${article.issueId}`}>이슈 비교</Link></>}<span aria-hidden="true">/</span><span aria-current="page">기사 분석</span></nav>
       <div className="article-layout">
         <article className="card article-main">
           <div className="news-card__meta"><Badge>{article.source}</Badge><span>{formatPublishedDate(article.publishedAt)}</span>{!ready ? <Badge tone="warning">{article.analysisStatus === "UNTRUSTED" ? "분석 공개 제한" : article.analysisStatus === "PARTIAL" ? "일부 분석 공개" : "분석 대기 상태 확인"}</Badge> : null}</div>
           <h1>{article.title}</h1>
+          {article.originalUrl && <a className="text-link" href={article.originalUrl} target="_blank" rel="noreferrer">언론사 원문 읽기 <ExternalLink size={15} aria-hidden="true" /><span className="sr-only"> (새 탭)</span></a>}
           {article.dek && <p className="article-main__dek">{article.dek}</p>}
           {ready ? <p className="article-analysis-confidence"><DefinitionTooltip {...analysisTerms.confidence} /><strong>{formatConfidence(article.confidence)}</strong></p> : <AnalysisStatusNotice status={article.analysisStatus} articleId={articleId} />}
           <div className="section-head"><h2>AI 분석 기록</h2><span className="badge">제한 공개</span></div>

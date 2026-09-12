@@ -207,7 +207,7 @@ test("mock analysis is labelled, complete and a populated topic remains usable",
   await expect(page.getByRole("link", { name: "다자 협력과 공급망 안보 사이, 새 통상 전략의 선택지", exact: true })).toBeVisible();
 });
 
-test("guest vote lookup 401 keeps the public article visible", async ({ page }) => { await page.goto("/articles/article-05"); await expect(page.getByRole("heading", { name: "주택 공급 대책에서 세입자 보호가 빠지지 않으려면" })).toBeVisible(); await expect(page.getByRole("link", { name: "로그인 후 평가하기" })).toBeVisible(); await expect(page).toHaveURL(/\/articles\/article-05$/); });
+test("guest vote lookup 401 keeps the public article visible", async ({ page }) => { await page.goto("/articles/article-05"); await expect(page.getByRole("heading", { name: "주택 공급 대책에서 세입자 보호가 빠지지 않으려면", level: 1 })).toBeVisible(); await expect(page.getByRole("link", { name: "로그인 후 평가하기" })).toBeVisible(); await expect(page).toHaveURL(/\/articles\/article-05$/); });
 
 test("page transitions and browser history always start at the top", async ({ page }) => {
   const viewport = page.viewportSize();

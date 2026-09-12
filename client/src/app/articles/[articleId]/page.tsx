@@ -23,11 +23,12 @@ export default async function ArticlePage({ params }: { params: Promise<{ articl
     <>
       <ArticleDwellTracker articleId={article.id} />
       {article.stale && <div style={{ marginBottom: "1rem" }}><StatePanel state="stale" /></div>}
-      <nav className="content-path" aria-label="현재 콘텐츠 경로"><Link href={`/issues/${article.issueId}`}>이슈 비교</Link><span aria-hidden="true">/</span><span aria-current="page">기사 분석</span></nav>
+      <nav className="content-path" aria-label="현재 콘텐츠 경로"><Link href="/articles">기사 모음</Link><span aria-hidden="true">/</span><Link href={`/issues/${article.issueId}`}>이슈 비교</Link><span aria-hidden="true">/</span><span aria-current="page">기사 분석</span></nav>
       <div className="article-layout">
         <article className="card article-main">
           <div className="news-card__meta"><Badge tone="warning">샘플 데이터</Badge><Badge>{article.source}</Badge><span>{formatPublishedDate(article.publishedAt)}</span></div>
           <h1>{article.title}</h1><p className="article-main__dek">{article.dek}</p>
+          {article.originalUrl && <a className="text-link" href={article.originalUrl} target="_blank" rel="noreferrer">언론사 원문 읽기 <ExternalLink size={15} aria-hidden="true" /><span className="sr-only"> (새 탭)</span></a>}
           <div className="section-head"><h2>핵심 주장</h2></div><ol className="claim-list">{article.claims.map((claim) => <li key={claim}>{claim}</li>)}</ol>
           <div className="section-head"><h2>제한 공개 분석</h2></div>
           <p className="notice">이 샘플 화면은 실제 AI 분석 근거와 독자 집계를 재현하지 않습니다. 오른쪽의 수치는 화면 흐름을 확인하기 위한 예시입니다.</p>

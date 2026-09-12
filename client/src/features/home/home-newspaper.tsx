@@ -14,17 +14,14 @@ import {
   type HomeIssueGroup,
 } from "./home-edition";
 
-function Headline({ text }: { text: string }) {
-  return text.split(/(\s+)/).map((word, index) => /\s/.test(word)
-    ? word : <span className="home-headline-word" key={index}>{word}</span>);
-}
-
 function IssuePhoto({ article, onFailure }: { article: Article; onFailure: () => void }) {
   if (!article.imageUrl) return null;
   return <figure className="home-issue-photo">
-    <Image src={article.imageUrl} alt={`${article.source}의 이 쟁점 관련 기사 사진`} width={800} height={500}
-      unoptimized referrerPolicy="no-referrer" onError={onFailure} />
-    <figcaption><span>{article.title}</span><a href={article.originalUrl} target="_blank" rel="noreferrer">사진 출처: {article.source}</a></figcaption>
+    <Link className="home-issue-photo__link" href={`/articles/${article.id}`} aria-label={`${article.title} 기사 읽기`}>
+      <Image src={article.imageUrl} alt={`${article.source}의 이 쟁점 관련 기사 사진`} width={800} height={500}
+        unoptimized referrerPolicy="no-referrer" onError={onFailure} />
+    </Link>
+    <figcaption><Link href={`/articles/${article.id}`}>{article.title}</Link>{article.originalUrl && <a href={article.originalUrl} target="_blank" rel="noreferrer">사진 출처: {article.source}</a>}</figcaption>
   </figure>;
 }
 
@@ -33,11 +30,11 @@ function ArticleColumn({ article, primary }: { article: Article; primary: boolea
   const Heading = primary ? "h3" : "h4";
   return <li className="home-article">
     <div className="home-article__meta"><strong>{article.source}</strong><span>{homePublishedAt(article.publishedAt)}</span></div>
-    <Heading><Link href={`/articles/${article.id}`}><Headline text={article.title} /></Link></Heading>
+    <Heading><Link href={`/articles/${article.id}`}>{article.title}</Link></Heading>
     <p className="home-article__summary">{ready && article.dek ? <><span>분석 요약 </span>{article.dek}</> : "분석을 준비하고 있습니다. 원문에서 보도 내용을 먼저 확인할 수 있습니다."}</p>
     <div className="home-article__links">
       <Link href={`/articles/${article.id}`}>{ready ? "분석 근거 읽기" : "기사 보기"} →</Link>
-      <a href={article.originalUrl} target="_blank" rel="noreferrer">원문<span className="sr-only"> 읽기 (새 탭)</span></a>
+      {article.originalUrl && <a href={article.originalUrl} target="_blank" rel="noreferrer">원문<span className="sr-only"> 읽기 (새 탭)</span></a>}
     </div>
   </li>;
 }
@@ -53,6 +50,7 @@ function IssueReading({ issue, primary, groupId, fallbackArticles, children }: {
   const preview = publisherPreview(articles);
   const visible = expanded ? articles : preview;
   const photo = articles.find((article) => article.imageUrl && !failedPhotos.has(article.id));
+  const leadArticle = photo ?? articles[0];
   const ready = issue.analysisStatus === "READY";
   const waiting = query.isPending && !articles.length;
   const Heading = primary ? "h1" : "h2";
@@ -60,12 +58,15 @@ function IssueReading({ issue, primary, groupId, fallbackArticles, children }: {
   return <div className="home-reading" data-issue-id={issue.id}>
     <div className={`home-issue-opening${photo ? " home-issue-opening--photo" : ""}`}>
       <div className="home-issue-story">
-        <Heading id={`home-title-${groupId}`}><Headline text={issue.title} /></Heading>
+        <Heading id={`home-title-${groupId}`}><Link href={`/issues/${issue.id}`}>{issue.title}</Link></Heading>
         <p className="home-issue-summary">{issue.summary}</p>
         <div className="home-issue-meta"><span>기사 {issue.articleIds.length}개 / 언론사 {issue.sourceCount}곳</span><span>{ready ? "비교 가능" : "분석 준비 중"}</span>{issue.dataAsOf && <span>최근 보도 {formatPublishedDate(issue.dataAsOf)}</span>}</div>
-        <Link className="home-compare-link" href={`/issues/${issue.id}`}>
+        <div className="home-reading-actions">
+          {leadArticle && <Link className="home-article-link" href={`/articles/${leadArticle.id}`}>기사 읽기 <span aria-hidden="true">→</span></Link>}
+          <Link className="home-compare-link" href={`/issues/${issue.id}`}>
           {ready ? "이 쟁점의 보도 비교하기" : "이 쟁점의 기사와 준비 상태 보기"} <span aria-hidden="true">→</span>
-        </Link>
+          </Link>
+        </div>
       </div>
       {photo && <IssuePhoto key={photo.id} article={photo} onFailure={() => setFailedPhotos(previous => new Set([...previous, photo.id]))} />}
     </div>
