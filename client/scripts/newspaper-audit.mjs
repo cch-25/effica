@@ -32,7 +32,7 @@ try {
           return { ready: editorialReady && document.fonts.check(`400 16px ${family}`) && document.fonts.check(`700 16px ${family}`) && [...regular, ...bold].every(face => face.status === "loaded"), family };
         } catch (error) { return { ready: false, family, error: String(error) }; }
       });
-      if (route === '/visualization') await page.locator('.article-space .graph-3d[data-status="ready"]').waitFor({ timeout: 10000 }).catch(() => {});
+      if (route.startsWith('/articles/')) await page.locator('.article-space .graph-3d[data-status="ready"]').waitFor({ timeout: 10000 }).catch(() => {});
       const name = route === '/' ? 'home' : route.slice(1).replaceAll('/', '-');
       await page.screenshot({ path: path.join(output, `${device}-${name}.png`), fullPage: true });
       const metrics = await page.evaluate(() => {

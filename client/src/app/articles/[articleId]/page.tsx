@@ -9,6 +9,7 @@ import { ButtonLink } from "@/components/ui/button";
 import { articles } from "@/mocks/fixtures/content";
 import { clampScore, formatBiasScore, formatConfidence, formatPublishedDate, formatSensationalismScore } from "@/lib/api/formatters";
 import { RealArticleDetail } from "@/features/articles/real-article-detail";
+import { ArticlePerspectiveMap } from "@/features/articles/article-perspective-map";
 import { isMockMode } from "@/lib/api/mode";
 import { DefinitionTooltip } from "@/components/ui/definition-tooltip";
 import { analysisTerms } from "@/lib/content/analysis-terms";
@@ -32,6 +33,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ articl
           <p className="notice">이 샘플 화면은 실제 AI 분석 근거와 독자 집계를 재현하지 않습니다. 오른쪽의 수치는 화면 흐름을 확인하기 위한 예시입니다.</p>
         </article>
         <aside className="card article-side" aria-label="기사 관점 분석">
+          <Link className="text-link" href="#perspective-map">기사 관점 지도 보기 ↓</Link>
           <div><p className="eyebrow">AI 기사 평가</p><h2>편향성과 과장성</h2><p className="article-analysis-confidence"><DefinitionTooltip {...analysisTerms.confidence} /><strong>{formatConfidence(article.confidence)}</strong></p></div>
           <div className="axis" aria-label={`편향성 ${formatBiasScore(article.x)}`}>
             <div className="axis__head"><DefinitionTooltip {...analysisTerms.bias} /><span>{formatBiasScore(article.x)}</span></div>
@@ -48,6 +50,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ articl
           <ButtonLink variant="secondary" href={`/issues/${article.issueId}`}><ArrowLeft size={15} aria-hidden="true" /> 관련 이슈 비교로 돌아가기</ButtonLink>
         </aside>
       </div>
+      <ArticlePerspectiveMap article={article} relatedArticles={articles} />
       <div style={{ marginTop: "1rem" }}><VoteForm articleId={article.id} /></div>
     </>
   );

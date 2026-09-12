@@ -66,8 +66,7 @@ for (const count of [3, 6]) {
       const directory = path.resolve("../output/playwright/home-alignment");
       await mkdir(directory, { recursive: true });
       await section.screenshot({ path: path.join(directory, `${count}-articles-${width}-${testInfo.project.name}.png`) });
-      await section.getByRole("link", { name: "기사 관점 지도에서 자세히 →" }).click();
-      await expect(page).toHaveURL(/\/visualization$/);
+      await expect(section.getByRole("link", { name: "기사 안에서 관점 비교하기 →" })).toHaveAttribute("href", "/articles/layout-article-0#perspective-map");
     });
   }
 }

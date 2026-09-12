@@ -19,7 +19,6 @@ type NavItem = {
 const userNav: NavItem[] = [
   { href: "/", label: "홈", icon: Home, paths: ["/"] },
   { href: "/issues", label: "이슈 비교", icon: Newspaper, paths: ["/issues", "/articles"] },
-  { href: "/visualization", label: "기사 관점 지도", icon: Compass, paths: ["/visualization"] },
   { href: "/progress", label: "내 활동", icon: CircleGauge, paths: ["/progress", "/share", "/efficacy"] },
 ];
 
@@ -78,7 +77,7 @@ export function AppShell({ children, user, editionDate = "" }: { children: React
         </aside>
       ) : (
         <>
-          <NewspaperMasthead date={editionDate} section={pathname === "/" ? "종합" : pathname.startsWith("/issues") || pathname.startsWith("/articles") ? "보도 비교" : pathname === "/visualization" ? "자료 분석" : "독자"} />
+          <NewspaperMasthead date={editionDate} section={pathname === "/" ? "종합" : pathname.startsWith("/issues") || pathname.startsWith("/articles") ? "보도 비교" : "독자"} />
           <nav className="site-nav" aria-label="주요 메뉴">
             <Link href="/" className="site-nav__brand" aria-label="종합 1면" aria-current={pathname === "/" ? "page" : undefined}>종합 1면</Link>
             <div className="site-nav__links">
@@ -96,7 +95,7 @@ export function AppShell({ children, user, editionDate = "" }: { children: React
       <main id="main-content" className="main-content" tabIndex={-1}>
         {children}
       </main>
-      {!admin && <footer className="newspaper-footer"><Link href="/" aria-label="에피카 홈">에피카 <small>EFFICA</small></Link><p>같은 이슈를 여러 관점에서 읽고, 근거를 비교합니다.</p><nav aria-label="푸터 메뉴"><Link href="/issues">이슈 비교</Link><Link href="/visualization">기사 관점 지도</Link><Link href="/settings/privacy">개인정보 관리</Link></nav><small>© EFFICA</small></footer>}
+      {!admin && <footer className="newspaper-footer"><Link href="/" aria-label="에피카 홈">에피카 <small>EFFICA</small></Link><p>같은 이슈를 여러 관점에서 읽고, 근거를 비교합니다.</p><nav aria-label="푸터 메뉴"><Link href="/issues">이슈 비교</Link><Link href="/settings/privacy">개인정보 관리</Link></nav><small>© EFFICA</small></footer>}
       {!admin && <nav className="bottom-nav" aria-label="모바일 주요 메뉴">{userNav.map((item) => { const { href, label, icon: Icon, paths } = item; const active = isActive(pathname, paths) || (href === "/progress" && pathname.startsWith("/settings/")); return <Link key={href} href={userNavHref(item, user)} aria-current={active ? "page" : undefined}><Icon size={20} aria-hidden={true} /><span>{label}</span></Link>; })}</nav>}
     </div>
   );

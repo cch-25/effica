@@ -1,29 +1,16 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PerspectivePreview } from "@/features/share-cards/perspective-preview";
-import { VisualizationExplorer } from "@/features/visualization/visualization-explorer";
-import type { VisualizationPoint } from "@/lib/api/types";
+import { ArticlePerspectiveMap } from "@/features/articles/article-perspective-map";
+import { articles } from "@/mocks/fixtures/content";
 
-const mocks = vi.hoisted(() => ({ useVisualizationPointsQuery: vi.fn(), useViewerQuery: vi.fn() }));
+const mocks = vi.hoisted(() => ({ useIssueArticlesQuery: vi.fn() }));
 
-vi.mock("@/lib/api/queries", () => ({ useVisualizationPointsQuery: mocks.useVisualizationPointsQuery, useViewerQuery: mocks.useViewerQuery }));
+vi.mock("@/lib/api/queries", () => ({ useIssueArticlesQuery: mocks.useIssueArticlesQuery }));
 
 vi.mock("@/components/graphs/three-scene", () => ({
   createGraphScene: vi.fn(() => { throw new Error("WebGL unavailable in this test environment"); }),
 }));
-
-const point: VisualizationPoint = {
-  id: "article-1",
-  label: "한국어 기사",
-  type: "article",
-  x: -24,
-  y: 81,
-  z: -63,
-  sensationalism: 37,
-  confidence: 0.88,
-  scoreVersion: "점수-1",
-  observedAt: "2026-08-16T00:00:00Z",
-};
 
 afterEach(() => {
   cleanup();
@@ -32,17 +19,15 @@ afterEach(() => {
 
 describe("관점 분석 화면", () => {
   it("시각화에서 편향성과 과장성에 분석 신뢰도를 더한 3D 좌표를 안내한다", () => {
-    mocks.useVisualizationPointsQuery.mockReturnValue({ data: { items: [point] } });
-    mocks.useViewerQuery.mockReturnValue({ error: { status: 401 } });
+    mocks.useIssueArticlesQuery.mockReturnValue({ data: { items: articles }, isSuccess: true });
 
-    render(<VisualizationExplorer />);
+    render(<ArticlePerspectiveMap article={articles[0]} />);
 
-    expect(screen.getByRole("heading", { name: /세 기준으로 읽는/ })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "기사 관점 지도" })).toBeVisible();
     expect(screen.getAllByText("편향성").length).toBeGreaterThan(0);
     expect(screen.getAllByText("과장성").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /편향성: 기사의 주장과 강조점/ })).toBeVisible();
     expect(screen.getByRole("button", { name: /분석 신뢰도: 현재 근거로/ })).toBeVisible();
-    expect(screen.getByRole("button", { name: /평균 신뢰도: 현재 표시된 기사들의/ })).toBeVisible();
     expect(screen.queryByText(/경제|사회문화|국가.*대외/)).not.toBeInTheDocument();
     expect(screen.getByRole("img", { name: /깊이는 분석 신뢰도인 3D 그래프/ })).toBeVisible();
   });

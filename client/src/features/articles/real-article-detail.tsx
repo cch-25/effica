@@ -14,6 +14,7 @@ import { DefinitionTooltip } from "@/components/ui/definition-tooltip";
 import { analysisTerms } from "@/lib/content/analysis-terms";
 import { ButtonLink } from "@/components/ui/button";
 import { AnalysisReadinessNotice } from "./analysis-readiness-notice";
+import { ArticlePerspectiveMap } from "./article-perspective-map";
 
 function AnalysisStatusNotice({ status, articleId }: { status: "READY" | "PROCESSING" | "PARTIAL" | "UNTRUSTED"; articleId: string }) {
   if (status === "PROCESSING") return <AnalysisReadinessNotice articleId={articleId} />;
@@ -67,6 +68,7 @@ export function RealArticleDetail({ articleId }: { articleId: string }) {
           </details>}
         </article>
         <aside className="card article-side" aria-label="기사 관점 분석">
+          <Link className="text-link" href="#perspective-map">기사 관점 지도 보기 ↓</Link>
           {ready ? <><div className="axis" aria-label={`편향성 ${formatBiasScore(article.x)}`}>
             <div className="axis__head"><DefinitionTooltip {...analysisTerms.bias} /><span>{formatBiasScore(article.x)}</span></div>
             <div className="axis__labels"><span>− 좌편향</span><span>+ 우편향</span></div>
@@ -82,6 +84,7 @@ export function RealArticleDetail({ articleId }: { articleId: string }) {
           {article.issueId !== "unclustered" ? <ButtonLink variant="secondary" href={`/issues/${article.issueId}`}><ArrowLeft size={15} aria-hidden="true" /> 관련 이슈 비교로 돌아가기</ButtonLink> : null}
         </aside>
       </div>
+      <ArticlePerspectiveMap article={article} />
       <div style={{ marginTop: "1rem" }}><VoteForm articleId={article.id} /></div>
     </>
   );

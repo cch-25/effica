@@ -81,10 +81,11 @@ export function useIssueQuery(issueId: string) {
   });
 }
 
-export function useIssueArticlesQuery(issueId: string) {
+export function useIssueArticlesQuery(issueId: string, enabled = true) {
   return useQuery({
     queryKey: ["issue", issueId, "articles"],
     queryFn: async () => mapArticlePage(await apiRequest<ArticlePageDto>(`/issues/${encodeURIComponent(issueId)}/articles`)),
+    enabled,
     refetchInterval: 30_000,
   });
 }

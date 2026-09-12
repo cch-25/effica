@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { getSpaceCoordinates, histogram, makeSpaceData } from "@/features/visualization/field-model";
-import { perspectiveDistance } from "@/features/visualization/visualization-explorer";
 import type { VisualizationPoint } from "@/lib/api/types";
 
 const point = (x: number, sensationalism: number | null, type: VisualizationPoint["type"] = "article"): VisualizationPoint => ({
@@ -31,9 +30,6 @@ describe("3D perspective coordinates", () => {
   });
   it("keeps points with different confidence distinct in depth", () => {
     expect(makeSpaceData([point(0, 5), { ...point(0, 5), id: "different-confidence", confidence: .92 }])).toHaveLength(2);
-  });
-  it("compares an article to a user only by their shared bias axis", () => {
-    expect(perspectiveDistance(point(38, 100), point(4, 0, "user"))).toBe(34);
   });
   it("includes both endpoint values in histograms without dropping measurements", () => {
     const bins = histogram([0, 0, 25, 75, 100, NaN], 0, 100);

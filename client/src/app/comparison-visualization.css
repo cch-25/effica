@@ -543,6 +543,19 @@
 
 /* ARGUS workbench composition, using EFFICA's shared paper and control tokens. */
 .perspective-workspace { color: var(--peer-color-ink); }
+.article-perspective-map { margin-block: 2rem; padding-top: 1.25rem; border-top: 1px solid var(--peer-color-line); scroll-margin-top: 1rem; }
+.article-perspective-map__heading h2 { margin: 0; font-size: 1.25rem; line-height: 1.5; }
+.article-perspective-map__heading p, .article-perspective-map__status { margin: .5rem 0 1rem; color: var(--peer-color-ink-muted); font-size: .875rem; line-height: 1.7; word-break: keep-all; overflow-wrap: break-word; }
+.article-perspective-map__context { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .5rem; min-height: 3rem; margin-bottom: 1rem; padding-block: .5rem; border-block: 1px solid var(--peer-color-line); }
+.article-perspective-map__context > span { color: var(--peer-color-ink-muted); font-size: .75rem; line-height: 1.7; word-break: keep-all; }
+.article-perspective-map__context .button { min-height: 2rem; font-size: .8125rem; }
+.article-perspective-map__articles { margin-top: 1rem; border-top: 1px solid var(--peer-color-line); }
+.article-perspective-map__articles > .button { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: stretch; justify-items: start; gap: .3rem; width: 100%; height: auto; padding: .9rem 1rem; border: 0; border-bottom: 1px solid var(--peer-color-line); border-radius: 0; text-align: left; white-space: normal; }
+.article-perspective-map__articles > .button[aria-pressed="true"] { background: var(--peer-color-accent-soft); }
+.article-perspective-map__articles strong { font-size: .875rem; font-weight: 600; line-height: 1.6; word-break: keep-all; overflow-wrap: break-word; }
+.article-perspective-map__source { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; font-size: .75rem; }
+.article-perspective-map__source small { color: var(--peer-color-ink-muted); font-size: .75rem; font-weight: 400; }
+.article-perspective-map .space-inspector > .text-link { display: inline-flex; align-items: center; gap: .25rem; margin-top: 1rem; font-size: .875rem; }
 .perspective-workspace__toolbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem; border-block: 1px solid var(--peer-color-line); }
 .perspective-workspace__toolbar > span { color: var(--peer-color-ink-muted); font-size: .6875rem; }
 .space-view-switch { display: flex; }

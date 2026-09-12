@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({ useArticleQuery: vi.fn(), useArticleAnalysisQu
 
 vi.mock("@/lib/api/queries", () => ({ useArticleQuery: mocks.useArticleQuery, useArticleAnalysisQuery: mocks.useArticleAnalysisQuery, useViewerQuery: mocks.useViewerQuery }));
 vi.mock("@/features/voting/vote-form", () => ({ VoteForm: () => <div>투표 폼</div> }));
+vi.mock("@/features/articles/article-perspective-map", () => ({ ArticlePerspectiveMap: () => <div>기사 관점 지도</div> }));
 
 const article: Article = {
   id: "article-1",

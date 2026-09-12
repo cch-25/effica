@@ -31,7 +31,7 @@ function NewspaperChart({ articles }: { articles: Article[] }) {
   });
   return <figure className="front-chart">
     <svg viewBox="0 0 600 264" role="img" aria-labelledby="front-chart-title front-chart-description">
-      <title id="front-chart-title">공개 이슈 기사의 편향성과 과장성</title>
+      <title id="front-chart-title">같은 이슈 기사의 편향성과 과장성</title>
       <desc id="front-chart-description">공개 분석이 있는 기사 {plotted.length}건. 가로축은 편향성 −100부터 +100, 세로축은 과장성 0부터 100입니다. 숫자는 함께 표시된 기사 목록과 같습니다.</desc>
       <defs><pattern id="newspaper-hatching" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(35)"><line x1="0" y1="0" x2="0" y2="6" stroke="#d5d5d5" strokeWidth="1" /></pattern></defs>
       <rect x="273" y="28" width="54" height="178" fill="url(#newspaper-hatching)" />
@@ -56,10 +56,10 @@ export function FrontPage({ fallbackIssues, fallbackArticles }: { fallbackIssues
   const otherIssues = events.slice(1);
   const collection = useIssueArticleCollectionsQuery(events.map((issue) => issue.id));
   const articles = collection.items.length ? collection.items : isMockMode() ? fallbackArticles : [];
-  const leadArticles = articles.filter((article) => lead?.articleIds.includes(article.id));
+  const leadArticles = articles.filter((article) => article.issueId === lead?.id);
   const dispatches = [...new Map(leadArticles.map((article) => [publisherIdentity(article), article])).values()];
   const photo = leadArticles.find((article) => article.imageUrl);
-  const plotted = articles.filter((article) => article.analysisStatus === "READY" && article.sensationalism !== null);
+  const plotted = leadArticles.filter((article) => article.analysisStatus === "READY" && article.sensationalism !== null);
   return <>
     <div className="front-page">
       <section className="front-page__lead" aria-label="주요 이슈">
@@ -80,11 +80,11 @@ export function FrontPage({ fallbackIssues, fallbackArticles }: { fallbackIssues
     {plotted.length >= 3 && <section className="front-page__analysis" aria-labelledby="front-data-title">
       <header className="front-page__analysis-heading">
         <p className="edition-label">자료로 읽는 뉴스</p>
-        <h2 id="front-data-title">보도 관점 비교</h2>
+        <h2 id="front-data-title">이 이슈의 보도 관점</h2>
       </header>
       <ol className="analysis-story-index">{plotted.slice(0, 6).map((article) => <li key={article.id}><Link href={`/articles/${article.id}`}><strong>{article.source}</strong> {article.title}</Link></li>)}</ol>
-      <NewspaperChart articles={articles} />
-      <Link className="front-page__read front-page__analysis-more" href="/visualization">기사 관점 지도에서 자세히 →</Link>
+      <NewspaperChart articles={plotted} />
+      <Link className="front-page__read front-page__analysis-more" href={`/articles/${plotted[0].id}#perspective-map`}>기사 안에서 관점 비교하기 →</Link>
     </section>}
   </>;
 }

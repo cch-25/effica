@@ -56,12 +56,13 @@ function renderShell(pathname: string, user: UserView | null = member) {
 
 describe("app shell navigation", () => {
   it("shows the product areas and member account as explicit desktop links", () => {
-    renderShell("/visualization");
+    renderShell("/articles/article-01");
 
     const nav = screen.getByRole("navigation", { name: "주요 메뉴" });
     expect(within(nav).getByRole("link", { name: "종합 1면" })).toHaveAttribute("href", "/");
     expect(within(nav).getByRole("link", { name: "이슈 비교" })).toHaveAttribute("href", "/issues");
-    expect(within(nav).getByRole("link", { name: "기사 관점 지도" })).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("link", { name: "이슈 비교" })).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByRole("link", { name: "기사 관점 지도" })).not.toBeInTheDocument();
     expect(within(nav).getByRole("link", { name: "내 활동" })).toHaveAttribute("href", "/progress");
     expect(within(nav).getByRole("link", { name: "개인정보 관리" })).toHaveAttribute("href", "/settings/privacy");
   });
@@ -91,14 +92,13 @@ describe("app shell navigation", () => {
     expect(within(mobile).getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
   });
 
-  it("keeps four explicit destinations in the mobile menu", () => {
+  it("keeps three explicit destinations in the mobile menu", () => {
     renderShell("/");
 
     const nav = screen.getByRole("navigation", { name: "모바일 주요 메뉴" });
-    expect(within(nav).getAllByRole("link")).toHaveLength(4);
+    expect(within(nav).getAllByRole("link")).toHaveLength(3);
     expect(within(nav).getByRole("link", { name: "홈" })).toHaveAttribute("aria-current", "page");
     expect(within(nav).getByRole("link", { name: "이슈 비교" })).toBeVisible();
-    expect(within(nav).getByRole("link", { name: "기사 관점 지도" })).toBeVisible();
     expect(within(nav).getByRole("link", { name: "내 활동" })).toBeVisible();
   });
 

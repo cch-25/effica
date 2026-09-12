@@ -84,11 +84,25 @@ test("activity is the hub for share, privacy, and confidence tracking", async ({
   await expect(page.getByRole("link", { name: "내 활동으로 돌아가기" })).toBeVisible();
 });
 
-test("the article perspective map leads to the selected article and its issue", async ({ page }) => {
+test("the article perspective map compares the current article with the same issue", async ({ page }) => {
+  await page.goto("/articles/article-01");
+  const map = page.getByRole("region", { name: "기사 관점 지도" });
+  const choices = map.getByRole("group", { name: "같은 이슈에서 비교할 기사" });
+  await expect(choices.getByRole("button")).toHaveCount(3);
+  await expect(choices.getByRole("button").first()).toHaveAttribute("aria-pressed", "true");
+  await choices.getByRole("button").nth(1).click();
+  await expect(map.getByRole("link", { name: "이 기사 분석 보기" })).toHaveAttribute("href", "/articles/article-02#perspective-map");
+  await map.getByRole("button", { name: "읽고 있는 기사로 돌아가기" }).click();
+  await expect(choices.getByRole("button").first()).toHaveAttribute("aria-pressed", "true");
+  await choices.getByRole("button").nth(1).click();
+  await map.getByRole("link", { name: "이 기사 분석 보기" }).click();
+  await expect(page).toHaveURL(/\/articles\/article-02#perspective-map$/);
+  await expect(map.getByRole("complementary", { name: "선택한 기사 관점" })).toContainText("읽고 있는 기사 / 마켓포스트");
+});
+
+test("the former standalone map redirects to issue browsing", async ({ page }) => {
   await page.goto("/visualization");
-  const articleLink = page.getByRole("link", { name: "선택한 기사 분석 보기" });
-  await expect(articleLink).toHaveAttribute("href", /\/articles\/article-/);
-  await expect(page.getByRole("link", { name: "관련 이슈에서 다른 보도 비교하기" })).toBeVisible();
+  await expect(page).toHaveURL(/\/issues$/);
 });
 
 test("reader evaluation can be submitted, revised and deleted", async ({ page }) => {
