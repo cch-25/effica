@@ -121,6 +121,8 @@ export function mapIssue(dto: IssueDto | IssueDetailDto): Issue {
     openedAt: dto.opened_at,
     freshnessStatus: dto.freshness_status ?? "CURRENT",
     editorialPriority: dto.editorial_priority ?? null,
+    coverageGroupId: dto.coverage_group_id ?? null,
+    coverageGroupTitle: dto.coverage_group_title ? decodeHtmlEntities(dto.coverage_group_title) : null,
     updatedAt: dto.last_activity_at,
     articleIds: dto.article_ids,
   };

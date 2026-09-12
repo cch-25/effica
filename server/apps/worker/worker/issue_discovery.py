@@ -30,6 +30,7 @@ from apps.api.app.domains.analysis.provider import (
 from apps.api.app.domains.content.adapters import CrawlerAdapter
 from apps.api.app.domains.content.canonical import canonicalize_url
 from apps.api.app.domains.content.policy import CrawlerPolicyGuard
+from apps.api.app.domains.issues.coverage import diversify_coverage
 from apps.api.app.domains.issues.editorial_policy import publisher_identity
 
 from .llm_budget import DailyLLMBudgetExceeded, LLMRequestSuppressed
@@ -309,6 +310,7 @@ class IssueDiscoveryService:
         candidates.sort(key=lambda item: (
             min(3, len({publisher_identity(url) for url in item["seed_urls"]})), item["priority"],
         ), reverse=True)
+        candidates = diversify_coverage(candidates)
         result["candidate_count"] = len(candidates)
         # First discover broadly, then explicitly report publisher policy scarcity.
         if len(approved) < 3:

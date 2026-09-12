@@ -18,6 +18,15 @@ export const hearingIssues = [
 ];
 
 describe("homepage issue groups", () => {
+  it("uses server groups even when titles suggest a different grouping", () => {
+    const explicit = hearingIssues.map((item) => ({ ...item, coverageGroupId: item.id, coverageGroupTitle: item.title }));
+    expect(buildHomeEdition(explicit)).toHaveLength(5);
+    const related = explicit.map((item) => ({ ...item, coverageGroupId: "edition-event", coverageGroupTitle: "서버에서 지정한 지면" }));
+    expect(buildHomeEdition(related)).toEqual([{ id: "edition-event", title: "서버에서 지정한 지면", issues: related }]);
+    // A legacy page must not pull a server-declared singleton into its heuristic group.
+    expect(buildHomeEdition([explicit[0], hearingIssues[2]])).toHaveLength(2);
+  });
+
   it("groups the reported four overlapping appointment angles, preserving all cohorts", () => {
     const groups = buildHomeEdition(hearingIssues);
     expect(groups).toHaveLength(2);

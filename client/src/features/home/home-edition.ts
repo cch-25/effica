@@ -29,6 +29,11 @@ function timestamp(value: string | null | undefined): number {
 }
 
 export function areRelatedHomeIssues(left: Issue, right: Issue): boolean {
+  // Server metadata is authoritative, including an explicit singleton. Keep
+  // the title fallback only for fixtures and APIs predating these fields.
+  if (left.coverageGroupId || right.coverageGroupId) {
+    return Boolean(left.coverageGroupId && left.coverageGroupId === right.coverageGroupId);
+  }
   if (left.topic !== right.topic) return false;
   const leftTime = timestamp(left.dataAsOf ?? left.updatedAt);
   const rightTime = timestamp(right.dataAsOf ?? right.updatedAt);
@@ -50,7 +55,7 @@ export function buildHomeEdition(issues: Issue[], limit = featuredIssueLimit): H
   for (const issue of candidates) {
     const matches = groups.filter((group) => group.issues.some((member) => areRelatedHomeIssues(member, issue)));
     if (!matches.length) {
-      groups.push({ id: issue.id, title: issue.title, issues: [issue] });
+      groups.push({ id: issue.coverageGroupId || issue.id, title: issue.coverageGroupTitle || issue.title, issues: [issue] });
       continue;
     }
     const target = matches[0];
@@ -62,7 +67,7 @@ export function buildHomeEdition(issues: Issue[], limit = featuredIssueLimit): H
   }
   for (const group of groups) {
     group.issues.sort(compareIssueImportance);
-    if (group.issues.length > 1 && group.issues.every(isAppointment)) group.title = "장관 후보자 인사청문회";
+    if (!group.issues[0].coverageGroupId && group.issues.length > 1 && group.issues.every(isAppointment)) group.title = "장관 후보자 인사청문회";
   }
   // Group first, then apply the homepage limit so related angles cannot use up
   // all five slots and crowd an unrelated event out of the edition.

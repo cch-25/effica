@@ -1141,6 +1141,7 @@ class MariaDBResultApplier:
         Discovery never routes its articles through keyword clustering. Old
         editions retire only after at least one eligible replacement is saved.
         """
+        from apps.api.app.domains.issues.coverage import diversify_coverage
         from apps.api.app.domains.issues.editorial_policy import (
             is_current_article,
             publisher_identity,
@@ -1151,8 +1152,10 @@ class MariaDBResultApplier:
         if isinstance(result, dict):
             result["published_issue_count"] = 0
         edition_ids: list[str] = []
+        edition_items: list[dict[str, Any]] = []
         seen_urls: set[str] = set()
-        for candidate in result.get("issues", []):
+        candidates = [item for item in result.get("issues", []) if isinstance(item, Mapping)]
+        for candidate in diversify_coverage(candidates):
             if len(edition_ids) >= 5:
                 break
             if (not isinstance(candidate, Mapping)
@@ -1205,20 +1208,8 @@ class MariaDBResultApplier:
                 f"{topic}:{candidate.get('issue_key') or candidate['title']}".encode()
             ).hexdigest()[:40]
             issue_id = _stable_id(key)
-            # Reuse the exact event when discovery finds an already-associated
-            # article, even if the model worded its semantic event key differently.
-            for member in members:
-                overlap = _rows(await self._execute(session, """
-                    SELECT i.id, i.editorial_key FROM issues i
-                    JOIN issue_memberships im ON im.issue_id = i.id
-                    WHERE im.article_id = :article_id
-                      AND i.editorial_key LIKE 'daily-issue:%'
-                    ORDER BY i.last_activity_at DESC LIMIT 1
-                """, {"article_id": _row(member, "id")}))
-                if overlap:
-                    issue_id = str(_row(overlap[0], "id"))
-                    key = str(_row(overlap[0], "editorial_key"))
-                    break
+            # Only the stable event key establishes identity. A shared article
+            # or reading section must not overwrite another issue's membership.
             if issue_id in edition_ids:
                 continue
             data_as_of = max(_database_timestamp(_row(item, "published_at")) for item in members)
@@ -1248,6 +1239,8 @@ class MariaDBResultApplier:
                 """, {"issue_id": issue_id, "article_id": _row(member, "id"), "now": now})
                 seen_urls.add(str(_row(member, "canonical_url")))
             edition_ids.append(issue_id)
+            edition_items.append({**candidate, "id": issue_id,
+                                  "article_ids": [str(_row(member, "id")) for member in members]})
             if isinstance(result, dict):
                 result["published_issue_count"] = len(edition_ids)
             analysis_rows = _rows(await self._execute(
@@ -1262,7 +1255,7 @@ class MariaDBResultApplier:
             # Fill unused front-page slots with still-valid active events. Keep
             # their opening date, article timestamps, version and review intact.
             prior_rows = _rows(await self._execute(session, """
-                SELECT i.id AS issue_id, a.id AS article_id, a.canonical_url,
+                SELECT i.id AS issue_id, i.title, i.topic, a.id AS article_id, a.canonical_url,
                        a.published_at, a.created_at
                 FROM issues i JOIN issue_memberships im ON im.issue_id = i.id
                 JOIN articles a ON a.id = im.article_id
@@ -1278,17 +1271,24 @@ class MariaDBResultApplier:
             from apps.api.app.domains.content.retention import expired
 
             prior_publishers: dict[str, set[str]] = {}
+            prior_items: dict[str, dict[str, Any]] = {}
             for row in prior_rows:
                 prior_id = str(_row(row, "issue_id"))
                 identity = publisher_identity(str(_row(row, "canonical_url") or ""))
                 if (identity and is_current_article(_row(row, "published_at"), now=now)
                         and not expired(_row(row, "published_at"), _row(row, "created_at"), now)):
                     prior_publishers.setdefault(prior_id, set()).add(identity)
-            for prior_id, publishers in prior_publishers.items():
+                    item = prior_items.setdefault(prior_id, {
+                        "id": prior_id, "title": _row(row, "title"), "topic": _row(row, "topic"),
+                        "article_ids": [],
+                    })
+                    item["article_ids"].append(str(_row(row, "article_id")))
+            eligible_prior = [item for prior_id, item in prior_items.items()
+                              if prior_id not in edition_ids and len(prior_publishers[prior_id]) >= 3]
+            for item in diversify_coverage(eligible_prior, represented=edition_items):
                 if len(edition_ids) >= 5:
                     break
-                if prior_id in edition_ids or len(publishers) < 3:
-                    continue
+                prior_id = item["id"]
                 edition_ids.append(prior_id)
                 await self._execute(session, """
                     UPDATE issues SET editorial_priority=:priority WHERE id=:id

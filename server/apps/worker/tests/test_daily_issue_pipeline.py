@@ -233,6 +233,41 @@ def test_daily_edition_has_at_most_five_distinct_events():
     assert not any(row["article_id"].startswith("event-5-") for row in session.articles.values())
 
 
+def test_persistence_keeps_distinct_events_before_filling_related_angles():
+    candidates = [issue(event=f"event-{i}") for i in range(6)]
+    for index, candidate in enumerate(candidates):
+        candidate["topic"] = "정치"
+        candidate["title"] = (f"김승원 장관 후보자 검증 쟁점 {index}" if index < 4
+                              else ["호르무즈 해협 파병 논쟁", "연금 소득대체율 인상"][index - 4])
+    session = EditorialSession()
+    asyncio.run(applier()._apply_discover_issues(
+        session, Job(id="daily", job_type="discover_issues", payload={}), {"issues": candidates}, NOW,
+    ))
+    assert [row["title"] for row in session.writes("INSERT INTO issues")] == [
+        candidates[i]["title"] for i in [0, 4, 5, 1, 2]]
+
+
+def test_shared_article_never_overwrites_a_different_event_but_same_key_updates():
+    class OverlappingSession(EditorialSession):
+        async def execute(self, statement, params):
+            if "SELECT i.id, i.editorial_key FROM issues" in " ".join(str(statement).split()):
+                return [{"id": "other-angle", "editorial_key": "daily-issue:other-angle"}]
+            return await super().execute(statement, params)
+
+    session = OverlappingSession()
+    session.memberships["other-angle"] = ["tax-0", "original-1", "original-2"]
+    candidate = issue()
+    for title in [candidate["title"], "세금 개편안 조정 후속 논쟁"]:
+        asyncio.run(applier()._apply_discover_issues(
+            session, Job(id="daily", job_type="discover_issues", payload={}),
+            {"issues": [{**candidate, "title": title}]}, NOW,
+        ))
+    saved = session.writes("INSERT INTO issues")
+    assert saved[0]["id"] == saved[1]["id"] != "other-angle"
+    assert session.memberships["other-angle"] == ["tax-0", "original-1", "original-2"]
+    assert session.memberships[saved[0]["id"]] == ["tax-0", "tax-1", "tax-2"]
+
+
 def test_unrelated_sports_article_gets_no_public_topic_bucket():
     session = EditorialSession()
     asyncio.run(MariaDBResultApplier(lambda: None)._upsert_topic_membership(
@@ -264,6 +299,24 @@ def test_new_edition_keeps_valid_previous_events_without_refreshing_dates():
     # No UPDATE of their dates, content, issue version or comparison review.
     assert all("last_activity_at" not in sql and "version=" not in sql for sql, _ in session.statements
                if sql.startswith("UPDATE issues SET editorial_priority"))
+
+
+def test_carryover_prioritizes_events_absent_from_the_new_edition():
+    candidate = {**issue(), "topic": "정치", "title": "김승원 장관 후보자 신약 청탁 의혹"}
+    session = EditorialSession()
+    for index in range(5):
+        for number in range(3):
+            session.prior_rows.append({
+                "issue_id": f"prior-{index}", "article_id": f"prior-{index}-{number}",
+                "title": (f"김승원 장관 후보자 검증 쟁점 {index}" if index < 4 else "호르무즈 해협 파병 논쟁"),
+                "topic": "정치", "canonical_url": f"https://paper-{number}.kr/{index}",
+                "published_at": NOW - timedelta(days=2), "created_at": NOW - timedelta(days=2),
+            })
+    asyncio.run(applier()._apply_discover_issues(
+        session, Job(id="daily", job_type="discover_issues", payload={}), {"issues": [candidate]}, NOW,
+    ))
+    assert [row["id"] for row in session.writes("UPDATE issues SET editorial_priority")] == [
+        "prior-4", "prior-0", "prior-1", "prior-2"]
 
 
 def test_persistence_caps_ordinary_articles_at_five_and_extra_context_at_eight():

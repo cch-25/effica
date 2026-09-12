@@ -93,6 +93,7 @@ from apps.api.app.domains.engagement.read import (
     evaluate_read_eligibility,
     verify_redirect_token,
 )
+from apps.api.app.domains.issues.coverage import annotate_coverage_groups
 from apps.api.app.domains.issues.editorial_policy import (
     MIN_PUBLIC_ISSUE_SOURCES,
     is_curated_issue,
@@ -156,7 +157,7 @@ def _public_memory_issues(platform: PlatformState) -> dict[str, dict[str, Any]]:
         if len(publishers) >= MIN_PUBLIC_ISSUE_SOURCES:
             public_issue = {key: value for key, value in issue.items() if key != "editorial_key"}
             output[issue_id] = {**public_issue, "article_ids": members, "source_count": len(publishers)}
-    return output
+    return {item["id"]: item for item in annotate_coverage_groups(list(output.values()))}
 
 
 def _public_memory_article_ids(platform: PlatformState) -> set[str]:

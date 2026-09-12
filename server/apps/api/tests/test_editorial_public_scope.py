@@ -129,6 +129,8 @@ async def test_repository_rechecks_real_membership_coverage(violation: str) -> N
         rows = await repo.list_issue_rows()
         assert len(rows) == 1
         assert rows[0]["source_count"] == 3
+        assert rows[0]["coverage_group_id"] == issue.id
+        assert rows[0]["coverage_group_title"] == issue.title
         assert rows[0]["data_as_of"] == now - timedelta(days=6)
         assert len((await repo.issue_article_rows(issue.id)) or []) == 3
         assert await repo.article_view(articles[0].id) is not None
@@ -162,4 +164,49 @@ async def test_repository_rechecks_real_membership_coverage(violation: str) -> N
         assert await repo.issue_comparison_view(issue_id=issue.id, article_ids=[article.id for article in articles[:2]]) is None
         assert await repo.feed_items(user_id=None, personalized_requested=False) == ([], False)
         assert await repo.visualization_rows(entity_type="article", issue_id=None, user_id=None) == []
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_repository_section_identity_survives_date_filters():
+    now = utc_now()
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        events = [Issue(
+            id=new_ulid(), title=title, summary="후보자 검증과 청문회 쟁점", topic="정치",
+            status=IssueStatus.ACTIVE, issue_kind=IssueKind.EVENT,
+            editorial_key=f"daily-issue:angle-{index}", editorial_priority=index + 1,
+            opened_at=now - timedelta(days=3), last_activity_at=now - timedelta(hours=2 - index),
+        ) for index, title in enumerate([
+            "김승원 장관 후보자 신약 청탁 의혹", "김승원 장관 후보자 인사청문회 증인 채택 무산",
+        ])]
+        session.add_all(events)
+        for index in range(3):
+            url = f"https://publisher{index}.co.kr/report"
+            source = Source(id=new_ulid(), name=f"Publisher {index}", source_type=SourceType.RSS,
+                            canonical_url=url, active=True, policy_status=SourcePolicyStatus.APPROVED)
+            article = Article(id=new_ulid(), source_id=source.id, canonical_url=url,
+                              canonical_url_hash=hashlib.sha256(url.encode()).digest(),
+                              title="청문회 보도", published_at=now - timedelta(hours=1), status=ArticleStatus.ACTIVE)
+            session.add_all([source, article])
+            await session.flush()
+            version = ArticleVersion(id=new_ulid(), article_id=article.id,
+                                     content_hash=hashlib.sha256(article.id.encode()).digest(),
+                                     normalized_text_ref="fixture://hearing", fetched_at=now)
+            session.add(version)
+            await session.flush()
+            article.current_version_id = version.id
+            session.add_all([IssueMembership(issue_id=event.id, article_id=article.id, confidence=1)
+                             for event in events])
+        await session.commit()
+        repo = MariaDBPlatformRepository(session, encryption_secret="x" * 40)
+        rows = await repo.list_issue_rows(from_time=now - timedelta(minutes=90))
+        assert [row["id"] for row in rows] == [events[1].id]
+        assert rows[0]["coverage_group_id"] == events[0].id
+        detail = await repo.issue_view(events[1].id)
+        assert detail["coverage_group_id"] == rows[0]["coverage_group_id"]
+        assert detail["coverage_group_title"] == "장관 후보자 인사청문회"
     await engine.dispose()

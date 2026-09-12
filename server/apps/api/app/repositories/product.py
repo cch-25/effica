@@ -55,7 +55,7 @@ from apps.api.app.db.models import (
     VoteAggregateSnapshot,
 )
 from apps.api.app.db.ulid import new_ulid
-from apps.api.app.db.utc import utc_now
+from apps.api.app.db.utc import ensure_utc, utc_now
 from apps.api.app.domains.content.trust import (
     is_trusted_assessment,
     public_assessment_evidence,
@@ -66,6 +66,7 @@ from apps.api.app.domains.content.trust import (
 )
 from apps.api.app.domains.engagement.read import evaluate_read_eligibility
 from apps.api.app.domains.feed.ranking import FeedCandidate, rank_feed
+from apps.api.app.domains.issues.coverage import annotate_coverage_groups
 from apps.api.app.domains.issues.editorial_policy import (
     MIN_PUBLIC_ISSUE_SOURCES,
     PUBLIC_CONTENT_MAX_AGE,
@@ -434,10 +435,6 @@ class ProductRepositoryMixin:
             Issue.status == IssueStatus.ACTIVE,
             Issue.last_activity_at >= freshness_cutoff,
         )
-        if from_time:
-            statement = statement.where(Issue.last_activity_at >= from_time)
-        if to_time:
-            statement = statement.where(Issue.last_activity_at <= to_time)
         public_members = await self._public_issue_memberships()
         rows = [row for row in (await self.session.scalars(statement)).all() if row.id in public_members]
         memberships = list(
@@ -521,6 +518,12 @@ class ProductRepositoryMixin:
                 "version": row.version,
                 "article_ids": article_ids,
             })
+        output = annotate_coverage_groups(output)
+        # A filtered list and an unfiltered detail must name the same section.
+        if from_time:
+            output = [item for item in output if item["last_activity_at"] >= ensure_utc(from_time)]
+        if to_time:
+            output = [item for item in output if item["last_activity_at"] <= ensure_utc(to_time)]
         if topic:
             output = [item for item in output if item["topic"].casefold() == topic.casefold()]
         direction = -1 if recent_first else 1

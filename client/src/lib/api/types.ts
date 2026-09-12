@@ -41,6 +41,8 @@ export type Article = Omit<AxisScores, "sensationalism"> & {
 };
 
 export type Issue = {
+  coverageGroupId?: string | null;
+  coverageGroupTitle?: string | null;
   id: string;
   title: string;
   summary: string;

@@ -25,5 +25,8 @@ it("maps generated issue and visualization contracts to camelCase screen models"
   };
   expect(mapIssuePage(issues).items[0]).toMatchObject({ id: "i1", status: "preparing", articleIds: ["a1", "a2"], openedAt: "2026-08-16T00:00:00Z" });
   expect(mapIssuePage({ items: [{ ...issues.items[0], article_ids: ["a1", "a2", "a3"] }] }).items[0].status).toBe("balanced");
+  expect(mapIssuePage({ items: [{ ...issues.items[0], coverage_group_id: "section-1", coverage_group_title: "인사 검증 &amp; 청문회" }] }).items[0])
+    .toMatchObject({ coverageGroupId: "section-1", coverageGroupTitle: "인사 검증 & 청문회" });
+  expect(mapIssuePage(issues).items[0]).toMatchObject({ coverageGroupId: null, coverageGroupTitle: null });
   expect(mapVisualizationPointPage(points).items[0]).toMatchObject({ id: "a1", type: "article", scoreVersion: "current", sensationalism: null });
 });

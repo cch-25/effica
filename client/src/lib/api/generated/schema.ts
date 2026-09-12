@@ -1737,6 +1737,13 @@ export interface components {
             analysis_status: components["schemas"]["AnalysisStatus"];
             /** Article Ids */
             article_ids: string[];
+            /**
+             * Coverage Group Id
+             * @description Reading section ID; never a merged comparison issue.
+             */
+            coverage_group_id?: string | null;
+            /** Coverage Group Title */
+            coverage_group_title?: string | null;
             /** Data As Of */
             data_as_of?: string | null;
             distribution: components["schemas"]["IssueDistribution"];
@@ -1801,6 +1808,13 @@ export interface components {
             analysis_status: components["schemas"]["AnalysisStatus"];
             /** Article Ids */
             article_ids: string[];
+            /**
+             * Coverage Group Id
+             * @description Reading section ID; never a merged comparison issue.
+             */
+            coverage_group_id?: string | null;
+            /** Coverage Group Title */
+            coverage_group_title?: string | null;
             /** Data As Of */
             data_as_of?: string | null;
             /** Editorial Priority */

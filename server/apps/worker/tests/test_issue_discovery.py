@@ -292,6 +292,34 @@ async def test_discovery_stops_searching_after_filling_the_edition():
     assert len(fixture.paid_requests) == 3
 
 
+@pytest.mark.parametrize("reject_first", [False, True])
+async def test_discovery_searches_distinct_events_before_more_related_angles(monkeypatch, reject_first):
+    fixture = _Harness()
+    fixture.service.max_issues = 3
+    titles = ["김승원 장관 후보자 신약 청탁 의혹", "김승원 장관 후보자 증인 채택 무산",
+              "김승원 장관 후보자 공직 적격성 검증", "호르무즈 해협 파병 논쟁", "연금 소득대체율 인상"]
+    fixture.topics = [{**TOPIC, "title": title, "issue_key": str(index), "priority": 99 - index}
+                      for index, title in enumerate(titles)]
+    searched = []
+
+    async def discover_one(_day, candidate, *_args):
+        key = candidate["issue_key"]
+        searched.append(key)
+        if reject_first and key == "0":
+            return None
+        return {**candidate, "articles": [
+            {"canonical_url": f"https://publisher-{number}.test/{key}",
+             "publisher_key": f"publisher-{number}.test", "publisher": f"Publisher {number}",
+             "title": candidate["title"], "content": "검증된 기사 본문 " * 100}
+            for number in range(3)]}
+
+    monkeypatch.setattr(fixture.service, "_discover_one", discover_one)
+    result = await fixture.discover()
+    assert searched == (["0", "3", "4", "1"] if reject_first else ["0", "3", "4"])
+    assert {row["issue_key"] for row in result["issues"]} == {"1" if reject_first else "0", "3", "4"}
+    assert len(fixture.paid_requests) == 1  # Only mocked topic discovery; no extra grouping call.
+
+
 async def test_reserved_analysis_capacity_stops_more_search_without_losing_valid_issues():
     fixture = _Harness()
     fixture.topics.append({**TOPIC, "issue_key": "another-event"})

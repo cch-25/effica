@@ -17,6 +17,8 @@ const rows = ids.map((id, index) => ({
   summary: index === 3 ? "해협 파병과 안보 지원 여부를 두고 정부와 국회가 입장을 내놨습니다. 국회 동의와 안전 대책이 주요 쟁점입니다." : "후보자 검증을 두고 여야의 입장이 엇갈립니다. 제기된 의혹과 후보자의 해명을 같은 쟁점을 다룬 기사에서 확인할 수 있습니다.",
   source_count: 4, analysis_status: index === 2 ? "PARTIAL" : "READY", freshness_status: "CURRENT",
   editorial_priority: index + 1, data_as_of: "2026-09-11T03:00:00Z", last_activity_at: "2026-09-11T03:00:00Z",
+  coverage_group_id: index === 3 ? "hormuz" : "kim",
+  coverage_group_title: index === 3 ? titles[index] : "장관 후보자 인사청문회",
   opened_at: "2026-09-10T00:00:00Z", article_ids: sources.map((_, source) => `${id}-${source}`),
 }));
 

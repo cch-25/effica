@@ -230,6 +230,8 @@ class IssueView(ContractModel):
     data_as_of: datetime | None = None
     freshness_status: FreshnessStatus = FreshnessStatus.CURRENT
     editorial_priority: int | None = Field(default=None, gt=0)
+    coverage_group_id: str | None = Field(default=None, description="Reading section ID; never a merged comparison issue.")
+    coverage_group_title: str | None = None
     version: int
     article_ids: list[str]
     opened_at: datetime
