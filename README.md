@@ -2,8 +2,6 @@
 
 # EFFICA
 
-### Same issue. Different coverage.
-
 **One issue. Many perspectives. Your judgment.**
 
 Compare coverage of the same event side by side.<br />

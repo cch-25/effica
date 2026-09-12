@@ -22,7 +22,7 @@ const newspaperFont = localFont({
 });
 
 export const metadata: Metadata = {
-  title: { default: "EFFICA | 같은 이슈, 다른 보도", template: "%s | EFFICA" },
+  title: { default: "EFFICA", template: "%s | EFFICA" },
   description: "같은 이슈를 여러 관점에서 읽고, 근거를 비교하는 뉴스 플랫폼",
   icons: {
     icon: [
