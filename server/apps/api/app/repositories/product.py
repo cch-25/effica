@@ -1519,6 +1519,33 @@ class ProductRepositoryMixin:
         )
         return True
 
+    async def activity_rows(self, user_id: str) -> list[dict[str, Any]]:
+        """One row per read or actively rated article, including expired reading records."""
+        reads = (await self.session.scalars(select(ReadSession).where(
+            ReadSession.user_id == user_id,
+            ReadSession.status == ReadSessionStatus.ELIGIBLE,
+        ))).all()
+        votes = (await self.session.scalars(select(Vote).where(
+            Vote.user_id == user_id, Vote.active.is_(True),
+            Vote.article_id.is_not(None),
+        ).order_by(Vote.revision))).all()
+        rows: dict[str, dict[str, Any]] = {}
+        for read in reads:
+            key = read.article_key or read.article_id or read.id
+            timestamp = read.returned_at or read.outbound_at or read.expires_at
+            previous = rows.get(key)
+            if previous is None or ensure_utc(timestamp) > ensure_utc(previous["last_activity_at"]):
+                rows[key] = {"id": key, "article_id": read.article_id,
+                             "read": True, "my_vote": None, "last_activity_at": timestamp}
+        for vote in votes:
+            key = str(vote.article_id)
+            row = rows.setdefault(key, {"id": key, "article_id": key, "read": False,
+                                        "last_activity_at": vote.updated_at})
+            row["my_vote"] = {"x": vote.x, "sensationalism": vote.sensationalism}
+            if ensure_utc(vote.updated_at) > ensure_utc(row["last_activity_at"]):
+                row["last_activity_at"] = vote.updated_at
+        return sorted(rows.values(), key=lambda row: (ensure_utc(row["last_activity_at"]), row["id"]), reverse=True)
+
     async def credit_rows(self, user_id: str) -> list[dict[str, Any]]:
         rows = list(
             (

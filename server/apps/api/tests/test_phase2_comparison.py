@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.app.api.v1.dependencies import get_state
@@ -66,21 +69,46 @@ def test_public_issue_comparison_suppresses_one_voter_and_reveals_five() -> None
     assert one_aggregate["qualified_count"] == 1
     assert one_aggregate["small_segments_suppressed"] is True
     assert one_aggregate["qualified"] == {
-        "x": None,
-        "y": None,
-        "z": None,
-        "sensationalism": None,
+        "x": None, "y": None, "z": None, "sensationalism": None,
     }
     five_aggregate = five_voters.json()["articles"][0]["vote_aggregate"]
     assert five_aggregate["qualified_count"] == 5
     assert five_aggregate["small_segments_suppressed"] is False
     assert five_aggregate["qualified"] == {
-        "x": 20.0,
-        "y": -10.0,
-        "z": 5.0,
-        "sensationalism": 25.0,
+        "x": 20.0, "y": -10.0, "z": 5.0, "sensationalism": 25.0,
     }
 
+
+def test_admin_can_exclude_unsupported_fact_without_erasing_generated_evidence() -> None:
+    state = PlatformState()
+    issue = next(iter(state.issues.values()))
+    snapshot = state.comparison_snapshots[issue["id"]]
+    snapshot["reviewed_at"] = None
+    original = deepcopy(snapshot["common_facts"])
+    excluded_id = original[0]["id"]
+    app.dependency_overrides[get_state] = lambda: state
+    try:
+        with TestClient(app) as client:
+            headers = {"X-Debug-Role": "ADMIN", "X-CSRF-Token": "local-csrf", "If-Match": snapshot["id"]}
+            invalid = client.post(
+                f"/api/v1/admin/issues/{issue['id']}/comparison",
+                headers={**headers, "Idempotency-Key": "unknown-fact"},
+                json={"reason": "근거를 대조했습니다.", "excluded_fact_ids": ["unknown"]},
+            )
+            assert invalid.status_code == 400
+            assert snapshot["reviewed_at"] is None
+            result = client.post(
+                f"/api/v1/admin/issues/{issue['id']}/comparison",
+                headers={**headers, "Idempotency-Key": "exclude-unsupported-fact"},
+                json={"reason": "수치가 한 기사에만 있어 공통 사실에서 제외합니다.", "excluded_fact_ids": [excluded_id]},
+            )
+            assert result.status_code == 200
+            public = client.get(_comparison_url(issue["id"], issue["article_ids"][:2]))
+            assert public.status_code == 200
+            assert excluded_id not in {fact["id"] for fact in public.json()["common_facts"]}
+            assert snapshot["generated_common_facts"] == original
+    finally:
+        app.dependency_overrides.clear()
 
 def test_issue_comparison_validation_and_readiness_errors_are_stable() -> None:
     client = TestClient(app)
@@ -120,10 +148,21 @@ def test_issue_comparison_validation_and_readiness_errors_are_stable() -> None:
         article["current_version_id"] = original_version_id
 
 
-def test_admin_comparison_review_is_explicit_provenanced_and_idempotent() -> None:
+@pytest.mark.parametrize("article_count", [3, 5, 8])
+def test_admin_comparison_review_is_explicit_provenanced_and_idempotent(article_count: int) -> None:
     state = PlatformState()
     issue = next(iter(state.issues.values()))
     snapshot = state.comparison_snapshots[issue["id"]]
+    template_id = issue["article_ids"][0]
+    while len(snapshot["article_frames"]) < article_count:
+        article_id = new_id()
+        article = deepcopy(state.articles[template_id])
+        article["id"] = article_id
+        article["current_version_id"] = new_id()
+        state.articles[article_id] = article
+        issue["article_ids"].append(article_id)
+        snapshot["article_frames"][article_id] = deepcopy(snapshot["article_frames"][template_id])
+        snapshot["article_version_ids"][article_id] = article["current_version_id"]
     snapshot["reviewed_at"] = None
     snapshot["reviewed_by"] = None
     app.dependency_overrides[get_state] = lambda: state

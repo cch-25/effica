@@ -91,3 +91,25 @@ def test_demo_credentials_keep_member_permissions_and_populated_activity():
     assert client.get("/api/v1/me").status_code == 401
     client.post("/api/v1/auth/login", json={"username": "user", "password": "1234"})
     assert client.get("/api/v1/me/progress").json() == progress
+
+
+def test_activity_is_private_and_matches_saved_vote():
+    from apps.api.app.state import STATE
+
+    guest = TestClient(app)
+    assert guest.get("/api/v1/me/activity").status_code == 401
+    client = TestClient(app)
+    client.post("/api/v1/auth/login", json={"username": "user", "password": "1234"})
+    headers = {"X-CSRF-Token": client.cookies["csrf"]}
+    article_id = next(iter(STATE.articles))
+    for x in (-33, 33):
+        response = client.put(f"/api/v1/articles/{article_id}/vote", headers=headers,
+                              json={"x": x, "y": 0, "z": 0, "sensationalism": 50})
+        assert response.status_code == 200
+    response = client.get("/api/v1/me/activity")
+    assert response.status_code == 200
+    rows = response.json()["items"]
+    row = next(row for row in rows if row["article_id"] == article_id)
+    assert row["my_vote"] == {"x": 33, "sensationalism": 50}
+    assert sum(row["article_id"] == article_id for row in rows) == 1
+    assert guest.get("/api/v1/me/activity").status_code == 401

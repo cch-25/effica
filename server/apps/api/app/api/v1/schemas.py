@@ -534,6 +534,10 @@ class ReasonRequest(ContractModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+class IssueComparisonReviewRequest(ReasonRequest):
+    excluded_fact_ids: list[str] = Field(default_factory=list, max_length=12)
+
+
 class RollbackRequest(ReasonRequest):
     target_revision_id: str
 

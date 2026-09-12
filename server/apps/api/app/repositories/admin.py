@@ -1078,6 +1078,7 @@ class AdminRepositoryMixin:
         actor_id: str,
         idempotency_key: str,
         reason: str,
+        excluded_fact_ids: Sequence[str] = (),
         request_id: str | None = None,
     ) -> dict[str, Any]:
         expected_snapshot_id = str(snapshot_id).strip().strip('"')
@@ -1134,7 +1135,7 @@ class AdminRepositoryMixin:
             if (
                 not isinstance(version_map, Mapping)
                 or not isinstance(article_frames, Mapping)
-                or not 2 <= len(version_map) <= 4
+                or not 2 <= len(version_map) <= 8
                 or set(version_map) != set(article_frames)
             ):
                 raise AdminValidationError("Comparison article-version provenance is missing.")
@@ -1161,6 +1162,19 @@ class AdminRepositoryMixin:
             }
             if current_versions != expected_versions:
                 raise AdminConflictError("Comparison inputs changed before review.")
+            fact_payload = snapshot.common_facts_json
+            facts = fact_payload.get("common_facts", []) if isinstance(fact_payload, Mapping) else []
+            excluded = set(excluded_fact_ids)
+            if not excluded.issubset({fact["id"] for fact in facts}):
+                raise AdminValidationError("Unknown common fact exclusion.")
+            if excluded:
+                snapshot.common_facts_json = {
+                    **dict(fact_payload),
+                    "generated_common_facts": fact_payload.get("generated_common_facts", facts),
+                    "common_facts": [fact for fact in facts if fact["id"] not in excluded],
+                    "excluded_fact_ids": sorted(set(fact_payload.get("excluded_fact_ids", [])) | excluded),
+                    "review_reason": reason,
+                }
             before = {
                 "snapshot_id": snapshot.id,
                 "reviewed_at": snapshot.reviewed_at,
@@ -1181,7 +1195,7 @@ class AdminRepositoryMixin:
         return await self._run_mutation(
             scope=f"admin:issue-comparison-review:{issue_id}",
             idempotency_key=idempotency_key,
-            payload={"snapshot_id": expected_snapshot_id, "reason": reason},
+            payload={"snapshot_id": expected_snapshot_id, "reason": reason, "excluded_fact_ids": list(excluded_fact_ids)},
             actor_id=actor_id,
             action="ISSUE_COMPARISON_REVIEWED",
             target_type="issue_comparison_snapshot",
