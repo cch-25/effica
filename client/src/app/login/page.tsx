@@ -24,8 +24,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       {oauthError ? <p role="alert" className="form-error">{oauthError}</p> : null}
       <LoginOptions returnTo={returnTo} />
       <div className="oauth-list"><ButtonLink variant="secondary" className="oauth-button" href={`/login?method=id&returnTo=${encodeURIComponent(returnTo)}`}>아이디 로그인</ButtonLink></div>
-      <p className="login-page__notice">처음 이용하시면 약관 동의와 설문을 진행합니다.</p>
-      <Link className="login-page__back" href="/">로그인 없이 둘러보기</Link>
+      <p className="login-page__notice">처음 이용하시면 이용 동의 후 원래 보던 화면으로 돌아갑니다.</p>
+      <Link className="login-page__back" href={returnTo}>로그인 없이 둘러보기</Link>
     </section>
   );
 }

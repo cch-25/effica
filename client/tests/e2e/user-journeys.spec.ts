@@ -9,27 +9,16 @@ test("Google login facade, separate consent, questionnaire, demographics, home",
     await consentBoxes.nth(index).check();
     await expect(consentBoxes.nth(index)).toBeChecked();
   }
-  await page.getByRole("button", { name: "동의하고 관점 설문으로" }).click();
-  await expect(page).toHaveURL(/\/onboarding\/questionnaire/);
-  for (let step = 0; step < 3; step += 1) {
-    const neutralAnswers = page.getByRole("radio", { name: "3", exact: true });
-    await expect(neutralAnswers).toHaveCount(10);
-    for (let index = 0; index < 10; index += 1) await neutralAnswers.nth(index).click();
-    await page.getByRole("button", { name: step < 2 ? "다음 문항" : "저장하고 결과 확인" }).click();
-  }
-  await expect(page).toHaveURL(/\/onboarding\/demographics/);
-  await page.getByRole("button", { name: "건너뛰고 홈으로" }).click();
+  await page.getByRole("button", { name: "동의하고 계속하기" }).click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole("heading", { name: "도심 주택 공급 대책", level: 1 })).toBeVisible({ timeout: 15_000 });
-  await expect(page.locator(".home-issue-meta")).toContainText("최근 보도");
-  const primaryNav = page.getByRole("navigation", { name: /^주요 메뉴$|^모바일 주요 메뉴$/ });
-  await expect(primaryNav.getByRole("link", { name: "이슈 비교" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "오늘의 이슈" })).toBeVisible();
+
 });
 
 test("issue, article analysis, and passive dwell tracking", async ({ page }) => {
   await page.goto("/issues/issue-housing");
   const started = page.waitForResponse((response) => response.url().includes("/articles/article-01/read-sessions") && response.request().method() === "POST");
-  await page.getByRole("link", { name: "상세 분석 보기" }).first().click();
+  await page.getByRole("link", { name: "기사 분석과 내 평가 →" }).first().click();
   await expect(page.getByText("샘플 데이터")).toBeVisible();
   await expect(page.getByText(/실제 AI 분석 근거와 독자 집계를 재현하지 않습니다/)).toBeVisible();
   await expect(page.getByRole("navigation", { name: "현재 콘텐츠 경로" }).getByRole("link", { name: "이슈 비교" })).toHaveAttribute("href", "/issues/issue-housing");
@@ -43,29 +32,20 @@ test("issue, article analysis, and passive dwell tracking", async ({ page }) => 
   expect(returnResponse.request().postDataJSON()).toEqual({ client_elapsed_ms: expect.any(Number) });
 });
 
-test("today's issues keeps top stories above broad topic sections without horizontal overflow", async ({ page }) => {
+test("issues are listed once and topic filters only show available categories", async ({ page }) => {
   await page.goto("/issues");
-  await expect(page.getByRole("heading", { name: "지금 비교할 수 있는 주요 이슈" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "주제별 전체 찾아보기" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "경제" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "정치" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "사회" })).toBeVisible();
-  await page.getByRole("button", { name: "주제와 기간" }).click();
-  await expect(page.getByRole("checkbox")).toHaveCount(3);
-  await expect(page.getByRole("checkbox", { name: "스포츠" })).toHaveCount(0);
-  await page.keyboard.press("Escape");
-  await expect(page.locator(".issue-rank-list > li")).toHaveCount(1);
-  await expect(page.locator(".issue-rank-list")).not.toContainText("AI 기본법 시행 준비");
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await expect(page.getByRole("heading", { name: "오늘의 이슈" })).toBeVisible();
+  await expect(page.locator(".ux-issue-list > li")).toHaveCount(3);
+  await page.getByRole("button", { name: "사회", exact: true }).click();
+  await expect(page.locator(".ux-issue-list > li")).toHaveCount(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
 test("home, issue comparison, article analysis, and issue return are one connected path", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("navigation", { name: /^주요 메뉴$|^모바일 주요 메뉴$/ }).getByRole("link", { name: "이슈 비교", exact: true }).click();
-  await expect(page).toHaveURL(/\/issues$/);
   await page.getByRole("link", { name: /도심 주택 공급 대책/ }).first().click();
   await expect(page).toHaveURL(/\/issues\/issue-housing/);
-  await page.getByRole("link", { name: "상세 분석 보기" }).first().click();
+  await page.getByRole("link", { name: "기사 분석과 내 평가 →" }).first().click();
   await expect(page).toHaveURL(/\/articles\/article-/);
   await page.getByRole("link", { name: "관련 이슈 비교로 돌아가기" }).click();
   await expect(page).toHaveURL(/\/issues\/issue-housing/);
@@ -76,10 +56,10 @@ test("activity is the hub for share, privacy, and confidence tracking", async ({
   await page.getByRole("link", { name: "공유 카드 만들기" }).click();
   await expect(page).toHaveURL(/\/share\/new$/);
   await page.getByRole("link", { name: "내 활동으로 돌아가기" }).click();
-  await page.getByRole("main").getByRole("link", { name: "개인정보 관리" }).click();
+  await page.getByRole("navigation", { name: "푸터 메뉴" }).getByRole("link", { name: "개인정보 관리" }).click();
   await expect(page).toHaveURL(/\/settings\/privacy$/);
   await page.getByRole("link", { name: "내 활동으로 돌아가기" }).click();
-  await page.getByRole("link", { name: /정치 이슈 이해 자신감 변화/ }).click();
+  await page.getByRole("link", { name: /이슈 이해 자신감 기록/ }).click();
   await expect(page).toHaveURL(/\/efficacy$/);
   await expect(page.getByRole("link", { name: "내 활동으로 돌아가기" })).toBeVisible();
 });
@@ -87,17 +67,17 @@ test("activity is the hub for share, privacy, and confidence tracking", async ({
 test("the article perspective map compares the current article with the same issue", async ({ page }) => {
   await page.goto("/articles/article-01");
   const map = page.getByRole("region", { name: "기사 관점 지도" });
-  const choices = map.getByRole("group", { name: "같은 이슈에서 비교할 기사" });
+  const choices = map.getByRole("group", { name: "지도 기사 선택" });
   await expect(choices.getByRole("button")).toHaveCount(3);
   await expect(choices.getByRole("button").first()).toHaveAttribute("aria-pressed", "true");
   await choices.getByRole("button").nth(1).click();
-  await expect(map.getByRole("link", { name: "이 기사 분석 보기" })).toHaveAttribute("href", "/articles/article-02#perspective-map");
-  await map.getByRole("button", { name: "읽고 있는 기사로 돌아가기" }).click();
+  await expect(map.getByRole("link", { name: "이 기사 분석 보기 →" })).toHaveAttribute("href", "/articles/article-02");
+  await choices.getByRole("button").first().click();
   await expect(choices.getByRole("button").first()).toHaveAttribute("aria-pressed", "true");
   await choices.getByRole("button").nth(1).click();
-  await map.getByRole("link", { name: "이 기사 분석 보기" }).click();
-  await expect(page).toHaveURL(/\/articles\/article-02#perspective-map$/);
-  await expect(map.getByRole("complementary", { name: "선택한 기사 관점" })).toContainText("읽고 있는 기사 / 마켓포스트");
+  await map.getByRole("link", { name: "이 기사 분석 보기 →" }).click();
+  await expect(page).toHaveURL(/\/articles\/article-02$/);
+  await expect(choices.getByRole("button").first()).toHaveAttribute("aria-pressed", "true");
 });
 
 test("the former standalone map redirects to issue browsing", async ({ page }) => {
@@ -107,17 +87,17 @@ test("the former standalone map redirects to issue browsing", async ({ page }) =
 
 test("reader evaluation can be submitted, revised and deleted", async ({ page }) => {
   await page.goto("/articles/article-01");
-  await page.getByRole("button", { name: "약간 우편향 +33" }).click();
+  await page.getByRole("button", { name: "약간 우편향" }).click();
   await page.getByRole("button", { name: "독자 평가 저장" }).click();
-  await expect(page.getByText("크레딧 10이 지급되었습니다.")).toBeVisible();
-  await page.getByRole("button", { name: "우편향 +67" }).click();
+  await expect(page.getByText("평가가 저장되었습니다. 아래에서 AI 분석과 내 평가를 비교해 보세요.")).toBeVisible();
+  await page.getByRole("button", { name: "우편향", exact: true }).click();
   await page.getByRole("button", { name: "독자 평가 저장" }).click();
   await expect(page.getByText("수정사항이 반영되었습니다.")).toBeVisible();
   await page.getByRole("button", { name: "내 평가 삭제" }).click();
   await expect(page.getByText(/현재 독자 평가를 삭제/)).toBeVisible();
 });
 
-test("efficacy response updates due state and connects to progress", async ({ page }) => { await page.goto("/efficacy"); await page.getByRole("button", { name: "이번 측정 저장" }).click(); await expect(page.getByText(/다음 측정은 30일 후에 가능합니다/)).toBeVisible(); await page.goto("/progress"); await expect(page.getByRole("link", { name: /정치 이슈 이해 자신감 변화/ })).toBeVisible(); });
+test("efficacy response updates due state and connects to progress", async ({ page }) => { await page.goto("/efficacy"); await page.getByRole("button", { name: "이번 측정 저장" }).click(); await expect(page.getByText(/다음 측정은 30일 후에 가능합니다/)).toBeVisible(); await page.goto("/progress"); await expect(page.getByRole("link", { name: /이슈 이해 자신감 기록/ })).toBeVisible(); });
 
 test("share card create, ready, public actions and revoke", async ({ page }) => {
   const pageErrors: Error[] = [];
@@ -139,7 +119,7 @@ test("the optional ideology test can be skipped while the card stays unmeasured"
   await page.goto("/onboarding/questionnaire?returnTo=%2Fshare%2Fnew");
   await page.getByRole("button", { name: "검사는 나중에 하기" }).click();
   await expect(page).toHaveURL(/\/share\/new$/);
-  await expect(page.getByText(/검사 미실시 \/ 기본 좌표/)).toBeVisible();
+  await expect(page.getByText(/아직 검사하지 않았습니다/)).toBeVisible();
 });
 
 test("admin is fail-closed and accepts the dedicated credentials", async ({ page }) => {

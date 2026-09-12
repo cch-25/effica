@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { CheckboxField } from "@/components/ui/form-controls";
 import { apiRequest } from "@/lib/api/client";
 import type { ConsentSubmission, ConsentView } from "@/lib/api/contracts";
-import { withReturnTo } from "@/lib/navigation/return-to";
 
 function consentCopy(consent: ConsentView): { label: string; description: string } {
   if (consent.purpose === "SERVICE") return {
@@ -39,12 +38,13 @@ export function ConsentForm({ returnTo }: { returnTo: string }) {
         const body: ConsentSubmission = { consent_version_id: consent.id, granted: true };
         await apiRequest<ConsentView>("/me/consents", { method: "POST", body: JSON.stringify(body) });
       }
-      router.push(withReturnTo("/onboarding/questionnaire", returnTo));
+      router.push(returnTo);
+      router.refresh();
     } catch { setError("동의를 저장하지 못했습니다. 서버 상태를 확인하고 다시 시도해 주세요."); }
     finally { setBusy(false); }
   };
   return (
-    <form action={withReturnTo("/onboarding/questionnaire", returnTo)} method="get" onSubmit={submit}>
+    <form action={returnTo} method="get" onSubmit={submit}>
       <div className="choice-grid">
         {consents?.map((consent) => {
           const copy = consentCopy(consent);
@@ -52,7 +52,7 @@ export function ConsentForm({ returnTo }: { returnTo: string }) {
         })}
       </div>
       {error && <p role="alert" style={{ color: "var(--danger)", marginTop: "1rem" }}>{error}</p>}
-      <div className="form-actions"><Button type="button" variant="secondary" onClick={() => router.push(returnTo)}>동의하지 않고 이전 화면으로</Button><Button type="submit" disabled={busy || !consents}>{busy ? "동의 저장 중..." : "동의하고 관점 설문으로"}</Button></div>
+      <div className="form-actions"><Button type="button" variant="secondary" onClick={() => router.push(returnTo)}>동의하지 않고 이전 화면으로</Button><Button type="submit" disabled={busy || !consents}>{busy ? "동의 저장 중..." : "동의하고 계속하기"}</Button></div>
     </form>
   );
 }

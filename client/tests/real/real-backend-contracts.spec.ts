@@ -15,7 +15,7 @@ test("public issue comparison is accessible and does not overflow on mobile", as
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
-  await expect(page.getByRole("region", { name: "선택한 기사 비교" })).toBeVisible();
+  await expect(page.locator(".ux-comparison")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   const mobile = await new AxeBuilder({ page }).analyze();
   expect(mobile.violations.filter(({ impact }) => impact === "critical" || impact === "serious")).toEqual([]);
@@ -76,16 +76,12 @@ test("real OAuth callback restores returnTo without requiring the optional ideol
   );
   expect(replay.status()).toBe(400);
 
-  const csrf = (await page.context().cookies()).find((cookie) => cookie.name === "csrf")?.value;
-  expect(csrf).toBeTruthy();
-  const consents = await (await page.request.get("/api/v1/consents")).json() as Array<{ id: string }>;
-  for (const consent of consents) {
-    const granted = await page.request.post("/api/v1/me/consents", {
-      headers: { "X-CSRF-Token": csrf! },
-      data: { consent_version_id: consent.id, granted: true },
-    });
-    expect(granted.status()).toBe(200);
-  }
+  await page.goto(firstDestination.toString());
+  const boxes = page.getByRole("checkbox");
+  await expect(boxes.first()).toBeVisible();
+  for (const box of await boxes.all()) await box.check();
+  await page.getByRole("button", { name: "동의하고 계속하기" }).click();
+  await expect(page).toHaveURL("http://127.0.0.1:3100/issues?source=oauth");
   const afterConsent = await (await page.request.get("/api/v1/me")).json();
   expect(afterConsent.consent_complete).toBe(true);
   expect(afterConsent.onboarding_complete).toBe(false);
@@ -115,10 +111,9 @@ test("a questionnaire saved in a separate tab refreshes the original consumption
   const saved = await page.request.post("/api/v1/me/questionnaire-responses", { headers: memberHeaders, data: { questionnaire_version_id: version.id, answers } });
   expect(saved.ok()).toBeTruthy();
   await page.goto("/share/new");
-  await expect(page.getByRole("img", { name: "검사 결과: 경제 0, 사회문화 0, 국제 0", exact: true })).toBeVisible();
-  const popupPromise = page.waitForEvent("popup");
-  await page.getByRole("link", { name: "정치 이념 검사 다시 하기" }).click();
-  const questionnaire = await popupPromise;
+  await expect(page.getByRole("img", { name: "좌우 성향과 권위 / 자유: 좌우 0, 세로 0", exact: true })).toBeVisible();
+  const questionnaire = await context.newPage();
+  await questionnaire.goto(await page.getByRole("link", { name: "정치 이념 검사 다시 하기" }).getAttribute("href") ?? "/onboarding/questionnaire");
   for (let step = 0; step < 3; step++) {
     const groups = questionnaire.getByRole("radiogroup");
     await expect(groups).toHaveCount(10);
@@ -129,7 +124,7 @@ test("a questionnaire saved in a separate tab refreshes the original consumption
   }
   await expect(questionnaire).toHaveURL(/\/share\/new$/);
   // Do not reload or synthesize focus: the real cross-tab notification must update it.
-  await expect(page.getByRole("img", { name: "검사 결과: 경제 -10, 사회문화 0, 국제 0", exact: true })).toBeVisible();
+  await expect(page.getByRole("img", { name: "좌우 성향과 권위 / 자유: 좌우 -10, 세로 0", exact: true })).toBeVisible();
   const marker = await page.evaluate(() => localStorage.getItem("effica:profile-updated"));
   expect(marker).toMatch(/^\d+$/);
   await questionnaire.close();

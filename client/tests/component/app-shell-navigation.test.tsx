@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppShell } from "@/components/layout/app-shell";
@@ -15,6 +15,7 @@ vi.mock("@/lib/api/client", () => ({ apiRequest: api.request }));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => navigation.pathname,
+  useRouter: () => ({ replace: vi.fn(), refresh: vi.fn() }),
 }));
 
 const member: UserView = {
@@ -59,13 +60,13 @@ describe("app shell navigation", () => {
     renderShell("/articles/article-01");
 
     const nav = screen.getByRole("navigation", { name: "주요 메뉴" });
-    expect(within(nav).getByRole("link", { name: "종합 1면" })).toHaveAttribute("href", "/");
-    expect(within(nav).getByRole("link", { name: "이슈 비교" })).toHaveAttribute("href", "/issues");
+    expect(within(nav).getByRole("link", { name: "이슈 비교" })).toHaveAttribute("href", "/");
     expect(within(nav).getByRole("link", { name: "기사 모음" })).toHaveAttribute("href", "/articles");
     expect(within(nav).getByRole("link", { name: "기사 모음" })).toHaveAttribute("aria-current", "page");
     expect(within(nav).getByRole("link", { name: "이슈 비교" })).not.toHaveAttribute("aria-current");
     expect(screen.queryByRole("link", { name: "기사 관점 지도" })).not.toBeInTheDocument();
     expect(within(nav).getByRole("link", { name: "내 활동" })).toHaveAttribute("href", "/progress");
+    fireEvent.click(within(nav).getByText("김시민"));
     expect(within(nav).getByRole("link", { name: "개인정보 관리" })).toHaveAttribute("href", "/settings/privacy");
   });
 
@@ -74,7 +75,7 @@ describe("app shell navigation", () => {
 
     const desktop = screen.getByRole("navigation", { name: "주요 메뉴" });
     const mobile = screen.getByRole("navigation", { name: "모바일 주요 메뉴" });
-    expect(within(desktop).getByRole("link", { name: "로그인" })).toHaveAttribute("href", "/login");
+    expect(within(desktop).getByRole("link", { name: "로그인" })).toHaveAttribute("href", "/login?returnTo=%2Fissues");
     expect(within(desktop).getByRole("link", { name: "내 활동" })).toHaveAttribute("href", "/login?returnTo=%2Fprogress");
     expect(within(mobile).getByRole("link", { name: "내 활동" })).toHaveAttribute("href", "/login?returnTo=%2Fprogress");
   });
@@ -99,9 +100,9 @@ describe("app shell navigation", () => {
     renderShell("/");
 
     const nav = screen.getByRole("navigation", { name: "모바일 주요 메뉴" });
-    expect(within(nav).getAllByRole("link")).toHaveLength(4);
+    expect(within(nav).getAllByRole("link")).toHaveLength(3);
     expect(within(nav).getByRole("link", { name: "기사 모음" })).toHaveAttribute("href", "/articles");
-    expect(within(nav).getByRole("link", { name: "홈" })).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("link", { name: "이슈 비교" })).toHaveAttribute("aria-current", "page");
     expect(within(nav).getByRole("link", { name: "이슈 비교" })).toBeVisible();
     expect(within(nav).getByRole("link", { name: "내 활동" })).toBeVisible();
   });
@@ -111,7 +112,8 @@ describe("app shell navigation", () => {
 
     const desktop = screen.getByRole("navigation", { name: "주요 메뉴" });
     const mobile = screen.getByRole("navigation", { name: "모바일 주요 메뉴" });
-    expect(within(desktop).getByRole("link", { name: "개인정보 관리" })).toHaveAttribute("aria-current", "page");
+    fireEvent.click(within(desktop).getByText("김시민"));
+    expect(within(desktop).getByRole("link", { name: "개인정보 관리" })).toHaveAttribute("href", "/settings/privacy");
     expect(within(mobile).getByRole("link", { name: "내 활동" })).toHaveAttribute("aria-current", "page");
   });
 

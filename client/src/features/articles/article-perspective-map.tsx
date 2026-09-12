@@ -1,14 +1,10 @@
 "use client";
 
-import { useState, type CSSProperties } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useIssueArticlesQuery } from "@/lib/api/queries";
 import type { Article } from "@/lib/api/types";
-import { PerspectiveField, type PerspectivePoint } from "@/features/visualization/perspective-field";
-import { SelectedBiasChart, SelectedScoreChart } from "@/features/visualization/distribution-charts";
-import { articleMapMarkers } from "./article-map-markers";
 
 type Props = { article: Article; relatedArticles?: Article[] };
 
@@ -39,53 +35,15 @@ export function ArticlePerspectiveMap({ article, relatedArticles }: Props) {
 function ArticlePerspectiveContent({ article, articles }: { article: Article; articles: Article[] }) {
   const [selectedId, setSelectedId] = useState(article.id);
   const selected = articles.find((item) => item.id === selectedId) ?? article;
-  const markers = articleMapMarkers(articles);
-  const points: PerspectivePoint[] = articles.map((item) => ({
-    id: item.id, label: item.title, type: "article",
-    x: item.x, y: item.y, z: item.z, sensationalism: item.sensationalism,
-    confidence: item.confidence, scoreVersion: item.scoreVersion, observedAt: item.publishedAt,
-    ...markers.get(item.id),
-  }));
-  const current = points.find((point) => point.id === selected.id)!;
-  const isReading = selected.id === article.id;
-
-  return <>
-    <div className="article-perspective-map__context">
-      <span>기사 {articles.length}개 / 가로: 편향 / 높이: 과장 / 깊이: 분석 신뢰도</span>
-      {!isReading ? <Button variant="ghost" onClick={() => setSelectedId(article.id)}>읽고 있는 기사로 돌아가기</Button> : null}
-    </div>
-    <div className="perspective-workspace__main">
-      <PerspectiveField points={points} selectedId={selected.id} anchorId={undefined} title="이 기사와 같은 이슈의 보도 관점 좌표, 깊이는 분석 신뢰도인 3D 그래프" onSelect={setSelectedId} />
-      <div className="article-perspective-map__sidebar">
-        <section className="article-map-legend" aria-labelledby="article-map-legend-title">
-          <header><h3 id="article-map-legend-title">지도 속 기사</h3><p>색은 언론사, 번호는 기사입니다.</p></header>
-          <div className="article-perspective-map__articles" role="group" aria-label="같은 이슈에서 비교할 기사">
-            {articles.map((item) => {
-              const identity = markers.get(item.id)!;
-              const isSelected = selected.id === item.id;
-              return <Button key={item.id} variant="ghost" aria-pressed={isSelected} onClick={() => setSelectedId(item.id)}>
-                <span className="article-map-marker" style={{ "--article-marker-color": identity.color } as CSSProperties}>{identity.marker}</span>
-                <span className="article-map-legend__story">
-                  <span className="article-perspective-map__source">{item.source}{item.id === article.id ? <small>읽는 기사</small> : null}{isSelected ? <small className="article-map-legend__selected"><Check size={12} aria-hidden="true" />선택됨</small> : null}</span>
-                  <strong>{item.title}</strong>
-                  {item.sensationalism === null ? <small>좌표 미측정</small> : null}
-                </span>
-              </Button>;
-            })}
-          </div>
-          <div className="article-map-legend__key"><span><i className="article-map-legend__selected-ring" aria-hidden="true" />테두리: 선택한 기사</span><span><i className="article-map-legend__projection" aria-hidden="true" />빈 원과 점선: 좌표 보조 표시</span></div>
-        </section>
-        <aside className="space-inspector" aria-label="선택한 기사 관점">
-        <header className="space-inspector__header">
-          <span><span className="article-map-marker article-map-marker--small" style={{ "--article-marker-color": current.color } as CSSProperties}>{current.marker}</span>{isReading ? "읽고 있는 기사" : "같은 이슈의 다른 기사"} / {selected.source}</span>
-          <h3 className="space-inspector__title">{selected.title}</h3>
-        </header>
-        <SelectedBiasChart point={current} />
-        <SelectedScoreChart point={current} />
-        {selected.sensationalism === null ? <p className="article-perspective-map__status">과장성 측정값이 없어 이 기사는 지도에 점으로 표시하지 않습니다.</p> : null}
-        {!isReading ? <Link className="text-link" href={`/articles/${selected.id}#perspective-map`}>이 기사 분석 보기 <ArrowUpRight size={15} aria-hidden="true" /></Link> : null}
-        </aside>
-      </div>
-    </div>
-  </>;
+  return <div className="ux-scatter-layout">
+    <svg className="ux-scatter" viewBox="0 0 560 350" role="img" aria-label="기사 관점: 가로 편향성 -100부터 100, 세로 과장성 0부터 100. 점이 진할수록 분석 신뢰도가 높습니다.">
+      <path d="M60 25V290H510 M285 25V290" fill="none" stroke="currentColor" opacity=".25" />
+      {[0, 50, 100].map((value) => <g key={value}><path d={`M60 ${290 - value * 2.5}H510`} stroke="currentColor" opacity=".12" /><text x="48" y={295 - value * 2.5} textAnchor="end">{value}</text></g>)}
+      <text x="60" y="320">좌편향 -100</text><text x="285" y="320" textAnchor="middle">중립 0</text><text x="510" y="320" textAnchor="end">우편향 +100</text><text x="60" y="18">과장성</text>
+      {articles.filter((item) => item.sensationalism !== null).map((item, index) => <g key={item.id}>
+        <circle cx={60 + (item.x + 100) * 2.25} cy={290 - item.sensationalism! * 2.5} r={selected.id === item.id ? 9 : 7} fill="var(--accent)" opacity={.35 + item.confidence * .65} stroke={selected.id === item.id ? "currentColor" : "none"} strokeWidth="2"><title>{`${index + 1}. ${item.source}: 편향성 ${item.x}, 과장성 ${item.sensationalism}, 신뢰도 ${Math.round(item.confidence * 100)}%`}</title></circle>
+      </g>)}
+    </svg>
+    <div>{selected.sensationalism === null && <p>과장성 측정값이 없어 이 기사는 지도에 점으로 표시하지 않습니다.</p>}<p>점을 가리키면 점수를 볼 수 있습니다. 겹친 기사도 아래 목록에서 각각 선택할 수 있습니다.</p><div className="ux-scatter-choices" role="group" aria-label="지도 기사 선택">{articles.map((item, index) => <Button key={item.id} variant="ghost" aria-pressed={selected.id === item.id} onClick={() => setSelectedId(item.id)}>{index + 1}. {item.source}</Button>)}</div><h3>{selected.title}</h3><p>편향성 {selected.x > 0 ? "+" : ""}{selected.x} / 과장성 {selected.sensationalism ?? "미측정"}</p>{selected.id !== article.id && <Link href={`/articles/${selected.id}`}>이 기사 분석 보기 →</Link>}</div>
+  </div>;
 }

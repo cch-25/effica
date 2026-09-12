@@ -80,13 +80,13 @@ it("shows public article-level analysis while the cross-article review is pendin
   render(<IssueComparison issue={issue} articles={[article("a", "출처 A"), article("b", "출처 B")]} initialArticles="a,b" />);
 
   expect(screen.getByRole("status", { name: "이슈 비교 준비 상태" })).toBeVisible();
-  expect(screen.getByText(/최초 발행/)).toBeVisible();
+  expect(screen.queryByText(/최초 발행/)).not.toBeInTheDocument();
   expect(screen.getByText(/최신 보도/)).toBeVisible();
-  expect(screen.getByText("비교 준비 완료 기사 2개, 출처 2곳")).toBeVisible();
+  expect(screen.getByText(/현재 분석 완료: 기사 2개/)).toBeVisible();
   expect(screen.getByRole("heading", { name: "기사별 AI 분석 비교" })).toBeVisible();
-  expect(screen.getByText("공통 사실과 보도 프레임은 편집 검수 후 공개됩니다.")).toBeVisible();
-  expect(screen.getAllByRole("button", { name: /편향성:/ })).toHaveLength(2);
-  expect(screen.getAllByRole("link", { name: /기사 원문 보기, 새 창/ })).toHaveLength(2);
+  expect(screen.getByText("기사별 점수를 먼저 비교해 보세요.")).toBeVisible();
+  expect(screen.getAllByText("편향성")).toHaveLength(2);
+  expect(screen.queryByRole("link", { name: /기사 원문 보기, 새 창/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "공통으로 확인된 사실" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "잠시 연결이 불안정합니다" })).not.toBeInTheDocument();
 });
@@ -100,7 +100,7 @@ it("keeps the comparison focused on shared facts, framing, and the two scores", 
         source_count: 2,
         data_as_of: "2026-08-26T00:00:00Z",
       },
-      common_facts: [{ id: "fact-1", text: "두 기사는 같은 정책 발표를 다룹니다." }],
+      common_facts: [{ id: "fact-1", text: "두 기사는 같은 정책 발표를 다룹니다.", article_ids: ["a", "b"] }],
       articles: [
         {
           article: { id: "a", source: "출처 A", title: "출처 A 기사", published_at: "2026-08-26T00:00:00Z", canonical_url: "https://a.example.test" },
@@ -133,12 +133,12 @@ it("keeps the comparison focused on shared facts, framing, and the two scores", 
 
   expect(screen.getByRole("heading", { name: "공통으로 확인된 사실" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "보도별 관점" })).toBeVisible();
-  expect(screen.getAllByText("핵심 관점")).toHaveLength(2);
-  expect(screen.getAllByRole("link", { name: /기사 원문 보기, 새 창/ })).toHaveLength(2);
-  expect(screen.getAllByRole("button", { name: /편향성:/ })).toHaveLength(2);
+  expect(screen.getAllByText("핵심 관점")).toHaveLength(1);
+  expect(screen.queryByRole("link", { name: /기사 원문 보기, 새 창/ })).not.toBeInTheDocument();
+  expect(screen.getAllByText("편향성")).toHaveLength(2);
   expect(screen.getAllByText(/분석 신뢰도/)).toHaveLength(2);
-  expect(screen.getAllByText("독자 평가 / AI 평가와 별도")).toHaveLength(2);
-  expect(screen.getAllByRole("link", { name: "상세 분석 보기" })).toHaveLength(2);
+  expect(screen.getAllByText("근거 확인")).toHaveLength(2);
+  expect(screen.getAllByRole("link", { name: "기사 분석과 내 평가 →" })).toHaveLength(2);
 });
 
 it("repairs an invalid article URL to a ready selection from distinct sources", () => {
@@ -153,7 +153,7 @@ it("repairs an invalid article URL to a ready selection from distinct sources", 
   render(<IssueComparison issue={issue} articles={[article("a", "출처 A"), article("b", "출처 B")]} initialArticles="missing,b" />);
 
   expect(mocks.replace).toHaveBeenCalledWith("/issues/issue-1?articles=a%2Cb", { scroll: false });
-  expect(screen.getByText("2개 기사, 2곳 출처 선택")).toBeVisible();
+  expect(screen.getByText("비교할 기사 변경 (2개 선택)")).toBeVisible();
 });
 
 it("does not add a second article from an already selected source", () => {
@@ -170,10 +170,11 @@ it("does not add a second article from an already selected source", () => {
     articles={[article("a", "출처 A"), article("b", "출처 B"), article("c", "출처 A")]}
     initialArticles="a,b"
   />);
+  fireEvent.click(screen.getByText("비교할 기사 변경 (2개 선택)"));
   fireEvent.click(screen.getByRole("button", { name: "출처 A 기사 비교에 추가하기" }));
 
   expect(screen.getByText("같은 출처에서는 기사 1개만 선택할 수 있습니다.")).toBeVisible();
-  expect(screen.getByText("2개 기사, 2곳 출처 선택")).toBeVisible();
+  expect(screen.getByText("비교할 기사 변경 (2개 선택)")).toBeVisible();
   expect(mocks.replace).not.toHaveBeenCalled();
 });
 
@@ -190,15 +191,17 @@ it("keeps issue context and hides the selector while fewer than two articles are
   render(<IssueComparison issue={issue} articles={[article("a", "출처 A"), processing]} initialArticles="a,b" />);
 
   expect(screen.getByRole("heading", { name: "비교 이슈" })).toBeVisible();
+  expect(screen.getByText("비교할 이슈의 요약")).not.toBeVisible();
+  fireEvent.click(screen.getByText("이슈 배경 읽기"));
   expect(screen.getByText("비교할 이슈의 요약")).toBeVisible();
   expect(screen.getByRole("link", { name: "전체 이슈로 돌아가기" })).toHaveAttribute("href", "/issues");
-  expect(screen.getByText("비교 준비 완료 기사 1개, 출처 1곳")).toBeVisible();
+  expect(screen.getByText(/현재 분석 완료: 기사 1개/)).toBeVisible();
   expect(screen.getByRole("heading", { name: "확보한 기사" })).toBeVisible();
   expect(screen.getByRole("link", { name: "출처 A 기사" })).toHaveAttribute("href", "/articles/a");
   expect(screen.getByRole("link", { name: "출처 B 기사" })).toHaveAttribute("href", "/articles/b");
   expect(screen.getByText("출처 B / 분석 준비 중")).toBeVisible();
   expect(screen.getAllByRole("link", { name: /확보한 기사 원문 보기/ })).toHaveLength(2);
-  expect(screen.getByText("확보한 기사의 분석을 준비하고 있습니다.")).toBeVisible();
+  expect(screen.getByText("이 기사 조합의 공통 사실과 관점 비교는 아직 제공되지 않습니다.")).toBeVisible();
   expect(screen.queryByRole("heading", { name: "비교할 기사" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "기사별 AI 분석 비교" })).not.toBeInTheDocument();
 });

@@ -46,44 +46,15 @@ async function installFixture(page: Page, empty = false) {
 }
 
 for (const width of [1440, 1024, 768, 390, 320]) {
-  test(`readers can choose a distinct event and a related angle at ${width}px`, async ({ page }, testInfo) => {
+  test(`one issue list stays readable at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 });
     await installFixture(page);
     await page.goto("/");
-    const menu = page.getByRole("navigation", { name: "이 지면의 이슈" });
-    const lead = page.locator(".home-spread--lead");
-    await expect(menu.getByRole("link")).toHaveCount(2);
-    await expect(page.locator(".home-spread")).toHaveCount(2);
-    await expect(lead.locator(".home-reading")).toHaveAttribute("data-issue-id", "kim");
-    await expect(lead.locator(".home-article-list > li")).toHaveCount(3);
-    await expect(lead.locator(".home-coverage")).toContainText("발행 시각순");
-    await expect(lead.locator(".home-article").first()).toContainText("12:00 발행");
-    await expect(lead.getByRole("link", { name: "이 쟁점의 보도 비교하기" })).toHaveAttribute("href", "/issues/kim");
-    await expect(page.locator(".front-chart, .edition-articles, .headline-band")).toHaveCount(0);
-    await lead.getByRole("button", { name: "이 쟁점의 기사 4개 모두 보기" }).click();
-    await expect(lead.locator(".home-article-list > li")).toHaveCount(4);
-    await lead.getByRole("button", { name: "언론사별 기사 3개만 보기" }).click();
-    await expect(lead.locator(".home-article-list > li")).toHaveCount(3);
-
-    await page.locator(".home-angle-picker summary").click();
-    await page.getByRole("button", { name: new RegExp(titles[1]) }).click();
-    await expect(lead.locator("h1")).toHaveText(titles[1]);
-    await expect(lead.locator(".home-reading")).toHaveAttribute("data-issue-id", "yong");
-    await expect(lead.locator(".home-article").first()).toContainText(titles[1]);
-    await expect(lead.locator(".home-article-list")).not.toContainText(titles[0]);
-    await expect(page.locator(".home-angle-picker summary")).toBeFocused();
-
-    await menu.getByRole("link", { name: new RegExp(titles[3]) }).click();
-    const other = page.locator("#home-issue-hormuz");
-    await expect(other).toBeInViewport();
-    await expect(other.locator("h2")).toHaveText(titles[3]);
-    await expect(other.locator(".home-reading")).toHaveAttribute("data-issue-id", "hormuz");
-    await expect(other.locator(".home-angle-picker")).toHaveCount(0);
-    await expect(other.locator(".home-article-list > li")).toHaveCount(3);
-    await expect(other.locator(".home-article-list")).not.toContainText("용혜인");
-    await expect(other.locator(".home-compare-link")).toHaveAttribute("href", "/issues/hormuz");
-    await expect(other.locator(".home-article__links").first().getByRole("link", { name: "분석 근거 읽기" })).toHaveAttribute("href", "/articles/hormuz-0");
-
+    await expect(page.locator(".ux-issue-list > li")).toHaveCount(5);
+    await expect(page.getByText("5개 이슈 / 20개 기사")).toBeVisible();
+    for (let index = 0; index < ids.length; index++) {
+      await expect(page.locator(`.ux-issue-list a[href="/issues/${ids[index]}"]`)).toContainText(titles[index]);
+    }
     await page.evaluate(() => document.fonts.ready);
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
     const directory = path.resolve("../output/playwright/home-newspaper-fixtures");
@@ -93,20 +64,9 @@ for (const width of [1440, 1024, 768, 390, 320]) {
   });
 }
 
-test("a selected unready angle is not presented as ready to compare", async ({ page }) => {
-  await installFixture(page);
-  await page.goto("/");
-  await expect(page.locator(".home-angle-picker")).toBeVisible();
-  await page.locator(".home-angle-picker summary").click();
-  await page.getByRole("button", { name: new RegExp(titles[2]) }).click();
-  await expect(page.getByRole("link", { name: "이 쟁점의 기사와 준비 상태 보기" })).toHaveAttribute("href", "/issues/witness");
-  await expect(page.locator(".home-spread--lead .home-article").first()).toContainText("분석을 준비하고 있습니다.");
-  await expect(page.locator(".home-spread--lead").getByRole("link", { name: "이 쟁점의 보도 비교하기" })).toHaveCount(0);
-});
-
-test("an empty edition does not show fallback stories or fabricated counts", async ({ page }) => {
+test("an empty list does not show fallback stories or fabricated counts", async ({ page }) => {
   await installFixture(page, true);
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "비교할 이슈를 준비하고 있습니다." })).toBeVisible();
-  await expect(page.locator(".home-spreads")).toHaveCount(0);
+  await expect(page.getByText("현재 표시할 이슈가 없습니다.")).toBeVisible();
+  await expect(page.locator(".ux-issue-list")).toHaveCount(0);
 });

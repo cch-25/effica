@@ -11,6 +11,7 @@ import {
   useMyVoteQuery,
   useVoteAggregateQuery,
   useVoteMutation,
+  useArticleQuery,
 } from "@/lib/api/queries";
 import { formatBiasScore, formatSensationalismScore } from "@/lib/api/formatters";
 
@@ -43,20 +44,18 @@ function ChoiceScale({ legend, value, choices, onChange }: { legend: string; val
       <div className="choice-scale__grid">
         {choices.map((choice) => {
           const selected = value === choice.value;
-          const displayedValue = choice.value > 0 ? `+${choice.value}` : String(choice.value);
           return (
             <Button
               variant="secondary"
               className="choice-button"
               key={choice.value}
-              aria-label={`${choice.label} ${displayedValue}`}
+              aria-label={choice.label}
               aria-pressed={selected}
               data-selected={selected ? "" : undefined}
               data-tone={choice.tone}
               onClick={() => onChange(choice.value)}
             >
               <span>{choice.label}</span>
-              <small>{displayedValue}</small>
             </Button>
           );
         })}
@@ -91,8 +90,10 @@ function VoteEditor({
   initialVote: Vote | null;
 }) {
   const [vote, setVote] = useState<Vote>(
-    initialVote ?? { x: 0, y: 0, z: 0, sensationalism: 0 },
+    initialVote ? { x: initialVote.x, y: initialVote.y, z: initialVote.z, sensationalism: initialVote.sensationalism } : { x: 0, y: 0, z: 0, sensationalism: 0 },
   );
+  const article = useArticleQuery(articleId);
+  const [savedVote, setSavedVote] = useState(initialVote);
   const [hasVote, setHasVote] = useState(initialVote !== null);
   const [message, setMessage] = useState("");
   const [messageTitle, setMessageTitle] = useState("완료");
@@ -108,19 +109,19 @@ function VoteEditor({
     try {
       const saved = await saveVote.mutateAsync(vote);
       setHasVote(true);
+      setSavedVote(saved);
       setMessageTitle("완료");
       setNoticeVersion((value) => value + 1);
       setMessage(saved.save_status === "updated" || (saved.save_status == null && saved.revision > 1)
         ? "수정사항이 반영되었습니다."
-        : (saved.credit_delta ?? 0) > 0
-          ? `크레딧 ${saved.credit_delta}이 지급되었습니다.`
-          : "평가가 저장되었습니다. 이번 저장으로 추가 지급된 크레딧은 없습니다.");
+        : "평가가 저장되었습니다. 아래에서 AI 분석과 내 평가를 비교해 보세요.");
     } catch { setMessageTitle("저장 실패"); setNoticeVersion((value) => value + 1); setMessage("독자 평가를 저장하지 못했습니다. 기존 평가는 유지됩니다."); }
   };
   const remove = async () => {
     try {
       await deleteVote.mutateAsync();
       setHasVote(false);
+      setSavedVote(null);
       setMessageTitle("완료");
       setNoticeVersion((value) => value + 1);
       setVote({ x: 0, y: 0, z: 0, sensationalism: 0 });
@@ -134,12 +135,13 @@ function VoteEditor({
       <ChoiceScale legend="과장성 (낮음 ↔ 높음)" value={vote.sensationalism} choices={SENSATIONALISM_CHOICES} onChange={(value) => update("sensationalism", value)} />
       <div className="notice">기사의 표현과 관점을 평가해 주세요. 이 평가는 내 정치성향 검사 결과를 바꾸지 않습니다. 독자 평가는 별도로 집계되며 공식 AI 점수를 즉시 교체하지 않습니다.</div>
       <div className="form-actions"><Button variant="ghost" onClick={() => void remove()} disabled={busy || !hasVote}>내 평가 삭제</Button><Button onClick={() => void submit()} disabled={busy}>독자 평가 저장</Button></div>
+      {savedVote && <p className="vote-feedback" role="status">저장한 내 평가: 편향성 {formatBiasScore(savedVote.x)}, 과장성 {savedVote.sensationalism}.{article.data?.analysisStatus === "READY" && <> AI 분석: 편향성 {formatBiasScore(article.data.x)}, 과장성 {formatSensationalismScore(article.data.sensationalism)}.</>}</p>}
       <div className="reader-aggregate" aria-live="polite">
         <strong>독자 평가 집계</strong>
         {aggregatePending && <p>집계 반영 중입니다. 표시된 수치가 있으면 최근 집계 기준입니다.</p>}
         {aggregate.data?.qualified_count && !aggregate.data.small_segments_suppressed ? (
           <p>편향성 {aggregate.data.qualified.x === null ? "미측정" : formatBiasScore(aggregate.data.qualified.x)}, 과장성 {formatSensationalismScore(aggregate.data.qualified.sensationalism)}</p>
-        ) : !aggregatePending && !aggregate.isError ? <p>{aggregate.data?.qualified_count ? "공개 기준보다 참여자가 적어 점수를 표시하지 않습니다." : "아직 공개할 독자 집계가 없습니다."}</p> : null}
+        ) : !aggregatePending && !aggregate.isError ? <p>{aggregate.data?.qualified_count ? `독자 평균 공개까지 ${Math.max(0, 5 - (aggregate.data?.qualified_count ?? 0))}명의 평가가 더 필요합니다.` : "독자 평균은 5명부터 공개됩니다. 내 평가는 위에서 바로 확인할 수 있습니다."}</p> : null}
         {aggregate.isError && <p>독자 집계 기준을 불러오지 못했습니다.</p>}
         {aggregate.data?.small_segments_suppressed && <small>작은 집단의 세부 결과는 공개하지 않습니다.</small>}
       </div>

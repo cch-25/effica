@@ -8,7 +8,6 @@ import { RadioScale } from "@/components/ui/form-controls";
 import { apiRequest } from "@/lib/api/client";
 import { notifyProfileUpdated } from "@/lib/api/profile-sync";
 import type { ProfileView, QuestionnaireSubmission, QuestionnaireVersionView } from "@/lib/api/contracts";
-import { withReturnTo } from "@/lib/navigation/return-to";
 
 type Question = { id: string; label: string; axis?: string };
 const legacyLabels: Record<string, string> = {
@@ -66,7 +65,7 @@ export function QuestionnaireForm({ returnTo }: { returnTo: string }) {
       await apiRequest<ProfileView>("/me/questionnaire-responses", { method: "POST", body: JSON.stringify(body) });
       notifyProfileUpdated();
       await queryClient.invalidateQueries({ queryKey: ["me"] });
-      router.push(returnTo === "/share/new" ? returnTo : withReturnTo("/onboarding/demographics", returnTo));
+      router.push(returnTo);
     } catch { setError("응답을 저장하지 못했습니다. 입력한 답변은 유지되어 있으니 다시 시도해 주세요."); }
     finally { setBusy(false); }
   };
@@ -85,10 +84,10 @@ export function QuestionnaireForm({ returnTo }: { returnTo: string }) {
       </fieldset>)}</div>
       {error && <p role="alert" style={{ color: "var(--danger)" }}>{error}</p>}
       <div className="form-actions">
-        <Button type="button" variant="secondary" disabled={busy} onClick={() => page > 0 ? goToPage(page - 1) : router.push(withReturnTo("/onboarding/consent", returnTo))}>{page > 0 ? "이전 문항" : "동의 단계로"}</Button>
+        <Button type="button" variant="secondary" disabled={busy} onClick={() => page > 0 ? goToPage(page - 1) : router.push(returnTo)}>{page > 0 ? "이전 문항" : "이전 화면으로"}</Button>
         <Button type="submit" disabled={busy || !questions.length}>{busy ? "응답 저장 중..." : page < pageCount - 1 ? "다음 문항" : "저장하고 결과 확인"}</Button>
       </div>
-      <Button type="button" variant="ghost" disabled={busy} onClick={() => router.push(returnTo === "/share/new" ? returnTo : withReturnTo("/onboarding/demographics", returnTo))}>검사는 나중에 하기</Button>
+      <Button type="button" variant="ghost" disabled={busy} onClick={() => router.push(returnTo)}>검사는 나중에 하기</Button>
     </form>
   );
 }

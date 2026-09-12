@@ -73,11 +73,11 @@ for (const route of mobileRoutes) {
 
 test("vote controls and the coordinate plot are keyboard accessible", async ({ page }) => {
   await page.goto("/articles/article-01");
-  const perspectiveChoice = page.getByRole("button", { name: "약간 우편향 +33" });
+  const perspectiveChoice = page.getByRole("button", { name: "약간 우편향", exact: true });
   await perspectiveChoice.focus(); await page.keyboard.press("Enter"); await expect(perspectiveChoice).toHaveAttribute("aria-pressed", "true");
   const map = page.getByRole("region", { name: "기사 관점 지도" });
-  await expect(map.getByRole("img", { name: /이 기사와 같은 이슈의 보도 관점 좌표/ })).toBeVisible();
-  const choice = map.getByRole("group", { name: "같은 이슈에서 비교할 기사" }).getByRole("button").nth(1);
+  await expect(map.getByRole("img", { name: /기사 관점: 가로 편향성/ })).toBeVisible();
+  const choice = map.getByRole("group", { name: "지도 기사 선택" }).getByRole("button").nth(1);
   await choice.focus(); await page.keyboard.press("Enter");
   await expect(choice).toHaveAttribute("aria-pressed", "true");
 });

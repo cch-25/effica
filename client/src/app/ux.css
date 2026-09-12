@@ -1,0 +1,74 @@
+/* Reading and comparison share one compact, responsive workspace. */
+.ux-issue-index { max-width: 1120px; margin: auto; }
+.ux-issue-index .page-header { align-items: end; }
+.ux-issue-index h1, .comparison-hero h1 { font-size: clamp(1.4rem, 2.1vw, 2rem); line-height: 1.5; word-break: keep-all; }
+.ux-issue-list { list-style: none; margin: 0; padding: 0; }
+.ux-issue-list li { border-bottom: 1px solid var(--line); }
+.ux-issue-list a { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2rem; padding: 1.5rem 0; color: inherit; text-decoration: none; transition: opacity .15s; }
+.ux-issue-list a:hover { opacity: .72; }
+.ux-issue-list h2 { font-size: 1.2rem; line-height: 1.5; margin: .25rem 0; word-break: keep-all; }
+.ux-issue-list p { font-size: .95rem; line-height: 1.7; color: var(--muted); margin: .4rem 0 0; max-width: 72ch; }
+.ux-issue-list a > span { align-self: center; font-size: .82rem; white-space: nowrap; color: var(--muted); }
+.ux-issue-list a > span strong { display: block; margin-top: .75rem; color: var(--foreground); }
+.account-menu { position: relative; justify-self: end; min-width: 0; font-size: .9rem; }
+.account-menu > summary { cursor: pointer; padding: .65rem .4rem; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-menu > div { position: absolute; right: 0; top: 100%; min-width: 180px; z-index: 50; padding: .75rem; background: var(--surface, #f8fbff); border: 1px solid var(--line); box-shadow: 0 5px 16px #0001; display: grid; gap: .5rem; }
+.account-menu a { color: inherit; padding: .5rem; }
+.comparison-selector { margin-bottom: 1.5rem; }
+.comparison-selector > summary, .article-analysis-details > summary { cursor: pointer; padding: .85rem 0; font-weight: 700; }
+.comparison-context { margin: 1rem 0; font-size: .9rem; }
+.comparison-context > summary { cursor: pointer; }
+.ux-fact { padding: 1rem 0; border-bottom: 1px solid var(--line); }
+.ux-fact h3 { font-size: 1rem; line-height: 1.7; }
+.ux-fact ul { display: flex; flex-wrap: wrap; gap: .6rem 1.5rem; padding: 0; list-style: none; }
+.ux-fact li { display: flex; gap: .5rem; font-size: .85rem; }
+.ux-comparison { margin: 2rem 0; }
+.ux-comparison h2, .common-facts h2 { font-size: 1.25rem; }
+.ux-comparison-head, .ux-comparison-row > div { display: grid; gap: 1.5rem; }
+.ux-comparison-head { padding: 1.2rem 0; }
+.ux-comparison-head > div { min-width: 0; }
+.ux-comparison-head a { display: block; color: inherit; font-size: .95rem; line-height: 1.6; margin-top: .5rem; }
+.ux-comparison-row { border-top: 1px solid var(--line); padding: 1rem 0; }
+.ux-comparison-row h3 { font-size: .85rem; margin: 0 0 .75rem; color: var(--muted); }
+.ux-comparison-row p { font-size: .95rem; line-height: 1.8; margin: 0 0 .75rem; word-break: keep-all; overflow-wrap: break-word; }
+.ux-mobile-source { display: none; }
+.ux-scatter-layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 2rem; align-items: center; }
+.ux-scatter { width: 100%; height: auto; color: var(--foreground, #202b33); }
+.ux-scatter text, .ux-ideology-plots text { fill: currentColor; font-size: 13px; }
+.ux-scatter-choices { display: flex; flex-wrap: wrap; gap: .25rem; }
+.ux-scatter-choices [aria-pressed=true] { text-decoration: underline; font-weight: 700; }
+.ux-scatter-layout h3 { font-size: 1.05rem; line-height: 1.7; }
+.ux-ideology-plots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.ux-ideology-plots figure { margin: 0; }
+.ux-ideology-plots svg { width: 100%; max-height: 290px; }
+.ux-ideology-plots figcaption { font-size: .9rem; text-align: center; }
+.comparison-review section { border-top: 1px solid var(--line); padding: 1rem 0; }
+.comparison-review p, .comparison-review a, .comparison-review small { overflow-wrap: anywhere; }
+.vote-feedback { padding: 1rem 0; font-weight: 700; line-height: 1.8; }
+.ux-activity-list { padding: 0; list-style: none; }
+.ux-activity-list li { padding: 1rem 0; border-bottom: 1px solid var(--line); }
+.ux-activity-list h3 { font-size: 1rem; line-height: 1.6; }
+.ux-activity-list small { color: var(--muted); }
+.ux-activity-list p { font-size: .9rem; }
+.article-main h1 { font-size: clamp(1.35rem, 2vw, 1.9rem); line-height: 1.55; }
+@media (max-width: 680px) {
+ .ux-issue-list a { grid-template-columns: minmax(0, 1fr); gap: .75rem; padding: 1.2rem 0; }
+ .ux-issue-list a > span { display: flex; justify-content: space-between; align-items: center; }
+ .ux-issue-list a > span strong { margin: 0; }
+ .ux-issue-list h2 { font-size: 1.05rem; }
+ .ux-comparison-head { display: none; }
+ .ux-comparison-row > div { grid-template-columns: minmax(0, 1fr) !important; gap: .75rem; }
+ .ux-mobile-source { display: block; font-size: .85rem; margin-bottom: .3rem; }
+ .ux-comparison-row h3 { font-size: 1rem; color: inherit; }
+ .ux-scatter-layout, .ux-ideology-plots { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+ .ux-scatter text { font-size: 22px; }
+ .ux-ideology-plots text { font-size: 18px; }
+ .site-nav { grid-template-columns: minmax(0, 1fr) auto !important; }
+ .site-nav__links { display: none !important; }
+ .bottom-nav { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+ .newspaper-masthead__note { display: none; }
+ .account-menu > summary { max-width: 130px; }
+}
+@media (prefers-reduced-motion: reduce) { .ux-issue-list a { transition: none; } }
+/* Editorial exclusions keep the source material visible during review. */
+.review-exclusion { display: flex; align-items: center; gap: .5rem; margin: .75rem 0 1rem; font-size: .875rem; }

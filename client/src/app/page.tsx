@@ -1,9 +1,4 @@
-import "./home.css";
-import { articles, issues } from "@/mocks/fixtures/content";
-import { HomeNewspaper } from "@/features/home/home-newspaper";
+import { IssuesBrowser } from "@/features/issues/issues-browser";
+import { issues } from "@/mocks/fixtures/content";
 
-export default function HomePage() {
-  return <div className="home-page" data-layout="newspaper">
-    <HomeNewspaper fallbackIssues={issues} fallbackArticles={articles} />
-  </div>;
-}
+export default function HomePage() { return <IssuesBrowser fallback={issues} />; }

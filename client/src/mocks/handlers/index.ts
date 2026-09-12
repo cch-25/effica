@@ -118,6 +118,7 @@ export const handlers = [
     self_reported_profile: { x: 4, y: 0, z: 0, sensationalism: null, confidence: 0.68 },
     behavioral_profile: null,
   })),
+  http.get(`${prefix}/me/activity`, () => HttpResponse.json({ items: [], next_cursor: null })),
   http.get(`${prefix}/me/credits`, () => HttpResponse.json({
     items: [{
       id: "01H0000000000000000000000B",

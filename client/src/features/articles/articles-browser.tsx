@@ -7,7 +7,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { StatePanel } from "@/components/ui/state-panel";
-import { issueTopics } from "@/features/issues/issue-selection";
 import { homePublishedAt } from "@/features/home/home-edition";
 import { directoryEntries, loadDirectoryArticles, loadDirectoryIssues } from "./article-directory-data";
 
@@ -24,22 +23,15 @@ function ArticleRow({ entry }: { entry: ReturnType<typeof directoryEntries>[numb
   const [failedImage, setFailedImage] = useState(false);
   const showImage = Boolean(article.imageUrl) && !failedImage;
   const topics = [...new Set(issues.map((issue) => issue.topic))];
-  const relatedIssue = issues.find((issue) => issue.kind === "EVENT");
   return <li className={`article-directory-row${showImage ? " article-directory-row--photo" : ""}`}>
     <article>
       <div className="article-directory-row__byline"><strong>{article.source}</strong><span>{homePublishedAt(article.publishedAt)}</span><span>{topics.join(" / ")}</span></div>
       <h2><Link href={`/articles/${article.id}`}>{article.title}</Link></h2>
-      {article.dek && <p className="article-directory-row__summary">{article.analysisStatus === "READY" && "분석 요약 "}{article.dek}</p>}
-      <nav className="article-directory-row__links" aria-label={`${article.title} 기사 이동`}>
-        <Link href={`/articles/${article.id}`}>기사 읽기 →</Link>
-        {article.originalUrl && <a href={article.originalUrl} target="_blank" rel="noreferrer">언론사 원문 <span aria-hidden="true">↗</span><span className="sr-only"> (새 탭)</span></a>}
-        {relatedIssue && <Link href={`/issues/${relatedIssue.id}`}>관련 보도 비교</Link>}
-        {article.analysisStatus !== "READY" && <span className="article-directory-row__status">{article.analysisStatus === "UNTRUSTED" ? "분석 공개 제한" : article.analysisStatus === "PARTIAL" ? "일부 분석 공개" : "분석 준비 중"}</span>}
-      </nav>
+
     </article>
-    {showImage && <Link className="article-directory-row__photo" href={`/articles/${article.id}`} aria-label={`${article.title} 기사 사진으로 읽기`}>
+    {showImage && <div className="article-directory-row__photo">
       <Image src={article.imageUrl!} alt="" width={240} height={160} unoptimized referrerPolicy="no-referrer" onError={() => setFailedImage(true)} />
-    </Link>}
+    </div>}
   </li>;
 }
 
@@ -55,7 +47,7 @@ export function ArticlesBrowser({ filters }: { filters: ArticleFilters }) {
     enabled: index.isSuccess,
     staleTime: 60_000,
   });
-  const topics = [...new Set<string>([...issueTopics, ...(index.data ?? []).map((issue) => issue.topic)])];
+  const topics = [...new Set<string>((index.data ?? []).map((issue) => issue.topic))];
   const entries = directoryEntries(collection.data?.articles ?? [], issues);
   const sources = [...new Set(entries.map(({ article }) => article.source))].sort((a, b) => a.localeCompare(b, "ko"));
   const search = filters.q.trim().normalize("NFKC").toLocaleLowerCase();
@@ -72,7 +64,7 @@ export function ArticlesBrowser({ filters }: { filters: ArticleFilters }) {
   };
 
   return <div className="articles-page">
-    <header className="page-header"><div className="page-header__body"><h1>기사 모음</h1><p className="page-header__description">카테고리별 기사를 최신순으로 읽고, 언론사 원문과 분석을 확인하세요.</p></div></header>
+    <header className="page-header"><div className="page-header__body"><h1>기사 모음</h1><p className="page-header__description">제목을 선택하면 AI 분석과 원문 링크를 확인할 수 있습니다.</p></div></header>
     <nav className="article-categories" aria-label="기사 카테고리">
       {["", ...topics].map((topic) => <Link key={topic} href={directoryHref({ ...filters, topic, source: "" })} scroll={false} aria-current={filters.topic === topic ? "page" : undefined}>{topic || "전체"}</Link>)}
     </nav>

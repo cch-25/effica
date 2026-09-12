@@ -1,7 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RealArticleDetail } from "@/features/articles/real-article-detail";
-import { ArticleCard } from "@/features/feed/article-card";
 import type { Article } from "@/lib/api/types";
 
 const mocks = vi.hoisted(() => ({ useArticleQuery: vi.fn(), useArticleAnalysisQuery: vi.fn(), useViewerQuery: vi.fn() }));
@@ -37,23 +36,6 @@ afterEach(() => {
 });
 
 describe("기사 LLM 편향 표시", () => {
-  it("기사 카드에 한국어 편향 라벨과 x값을 표시한다", () => {
-    render(<ArticleCard article={article} />);
-
-    expect(screen.getByText(/AI 편향성.*좌편향.*-24/)).toBeVisible();
-    expect(screen.getByText(/AI 과장성.*0\/100/)).toBeVisible();
-    expect(screen.queryByText(/LLM 평가|PROCESSING|READY/)).not.toBeInTheDocument();
-    expect(screen.getByText("2026. 08. 16.")).toBeVisible();
-    expect(screen.queryByText("8분")).not.toBeInTheDocument();
-  });
-
-  it("준비 중 기사는 임의 점수 대신 분석 상태를 표시한다", () => {
-    render(<ArticleCard article={{ ...article, analysisStatus: "PROCESSING", analysisProvider: null }} />);
-
-    expect(screen.getByText("AI 분석 준비 중")).toBeVisible();
-    expect(screen.queryByText(/AI 편향성|AI 과장성|PROCESSING/)).not.toBeInTheDocument();
-  });
-
   it("기사 상세에 한국어 편향 라벨과 x값을 표시한다", () => {
     mocks.useArticleQuery.mockReturnValue({ isPending: false, isError: false, data: article });
     mocks.useArticleAnalysisQuery.mockReturnValue({ isPending: false, isError: false, data: { assessments: { article_version_id: "v1", assessments: [] }, history: { items: [] } } });
@@ -63,8 +45,7 @@ describe("기사 LLM 편향 표시", () => {
 
     expect(screen.getByLabelText(/편향성.*좌편향.*-24/)).toBeVisible();
     expect(screen.getByLabelText("과장성 0/100")).toBeVisible();
-    expect(screen.getByRole("button", { name: /편향성: 기사의 주장과 강조점/ })).toBeVisible();
-    expect(screen.getByText(/공개할 수 있는 AI 분석 기록이 없습니다/)).toBeVisible();
+    expect(screen.getByText("분석에 사용한 근거 보기")).toBeVisible();
     expect(screen.queryByText(/LLM 평가|PROCESSING|READY/)).not.toBeInTheDocument();
     expect(screen.queryByText("사회문화")).not.toBeInTheDocument();
     expect(screen.queryByText(/국가.*대외/)).not.toBeInTheDocument();

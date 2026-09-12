@@ -76,7 +76,7 @@ export function CredentialsLoginForm({ returnTo, admin = false }: { returnTo: st
       <Link className="form-brand" href="/">EFFICA</Link>
       <p className="eyebrow">{admin ? "관리자 접속" : "데모 계정"}</p>
       <h1 id="admin-login-title">{title}</h1>
-      <p className="form-card__intro">{admin ? "운영 도구에 접근하려면 관리자 계정을 입력하세요." : "활동 기록이 쌓인 데모 계정으로 서비스를 둘러보세요."}</p>
+      <p className="form-card__intro">{admin ? "운영 도구에 접근하려면 관리자 계정을 입력하세요." : "데모 아이디 user / 비밀번호 1234로 활동 기록을 둘러보세요."}</p>
       <form onSubmit={(event) => void submit(event)}>
         <TextField
           label="아이디"
