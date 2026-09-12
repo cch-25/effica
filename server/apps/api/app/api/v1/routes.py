@@ -42,7 +42,6 @@ from apps.api.app.api.v1.schemas import (
     FeedItem,
     FeedPage,
     IssueComparisonReviewPreview,
-    IssueComparisonReviewRequest,
     IssueComparisonReviewView,
     IssueComparisonView,
     IssueDetailView,
@@ -1919,53 +1918,6 @@ async def delete_vote(
         )
 
 
-@router.get("/me/activity", response_model=Page, operation_id="get_activity")
-async def activity(
-    cursor: str | None = None,
-    principal: Principal = Depends(require_member),
-    platform: PlatformState = Depends(get_state),
-    repository: MariaDBPlatformRepository | None = Depends(get_repository),
-) -> dict[str, Any]:
-    if repository is not None:
-        page = _page(await repository.activity_rows(principal.user_id), cursor)
-        for row in page["items"]:
-            article = await repository.article_view(row["article_id"]) if row["article_id"] else None
-            score = await repository.current_score(row["article_id"]) if article else None
-            row.update(article=article, ai_score=score)
-        return page
-    credited = {
-        str(entry.get("event_key", "")).removeprefix("read:")
-        for entry in platform.credits.get(principal.user_id, [])
-        if entry.get("event_type") == "QUALIFIED_READ"
-    }
-    rows: dict[str, dict[str, Any]] = {}
-    for session_id, session in platform.read_sessions.items():
-        if session.get("user_id") != principal.user_id or session_id not in credited:
-            continue
-        key = session["article_id"]
-        timestamp = session.get("returned_at") or session.get("outbound_at") or session["expires_at"]
-        previous = rows.get(key)
-        if previous is None or timestamp > previous["last_activity_at"]:
-            rows[key] = {"id": key, "article_id": key, "read": True,
-                         "my_vote": None, "last_activity_at": timestamp}
-    for (user_id, article_id), history in platform.votes.items():
-        if user_id != principal.user_id or not history or not history[-1].get("active"):
-            continue
-        vote = history[-1]
-        timestamp = vote.get("updated_at") or vote["created_at"]
-        row = rows.setdefault(article_id, {"id": article_id, "article_id": article_id,
-                                          "read": False, "last_activity_at": timestamp})
-        row["my_vote"] = {"x": vote["x"], "sensationalism": vote["sensationalism"]}
-        row["last_activity_at"] = max(timestamp, row["last_activity_at"])
-    public_ids = _public_memory_article_ids(platform)
-    page = _page(sorted(rows.values(), key=lambda row: (row["last_activity_at"], row["id"]), reverse=True), cursor)
-    for row in page["items"]:
-        article = platform.articles.get(row["article_id"]) if row["article_id"] in public_ids else None
-        score = (platform.scores.get(row["article_id"]) or [None])[-1] if article else None
-        row.update(article=article, ai_score=score if article and article.get("analysis_status") == "READY" else None)
-    return page
-
-
 @router.get("/me/credits", response_model=Page, operation_id="get_credits")
 async def credits(
     cursor: str | None = None,
@@ -2836,7 +2788,7 @@ async def admin_get_issue_comparison(
 )
 async def admin_review_issue_comparison(
     issue_id: str,
-    body: IssueComparisonReviewRequest,
+    body: ReasonRequest,
     request: Request,
     principal: Principal = Depends(require_admin),
     key: str = Depends(require_idempotency_key),
@@ -2852,7 +2804,6 @@ async def admin_review_issue_comparison(
                 actor_id=principal.user_id,
                 idempotency_key=key,
                 reason=body.reason,
-                excluded_fact_ids=body.excluded_fact_ids,
                 request_id=request.state.request_id,
             )
         )
@@ -2902,20 +2853,11 @@ async def admin_review_issue_comparison(
         if (
             not isinstance(expected_versions, dict)
             or not isinstance(article_frames, dict)
-            or not 2 <= len(expected_versions) <= 8
+            or not 2 <= len(expected_versions) <= 4
             or set(expected_versions) != set(article_frames)
             or current_versions != expected_versions
         ):
             raise ApiError(409, "VERSION_CONFLICT", "Comparison inputs changed before review.")
-        excluded = set(body.excluded_fact_ids)
-        facts = snapshot["common_facts"]
-        if not excluded.issubset({fact["id"] for fact in facts}):
-            raise ApiError(400, "ADMIN_VALIDATION_ERROR", "Unknown common fact exclusion.")
-        if excluded:
-            snapshot.setdefault("generated_common_facts", facts)
-            snapshot["common_facts"] = [fact for fact in facts if fact["id"] not in excluded]
-            snapshot["excluded_fact_ids"] = sorted(set(snapshot.get("excluded_fact_ids", [])) | excluded)
-            snapshot["review_reason"] = body.reason
         snapshot["reviewed_at"] = utcnow()
         snapshot["reviewed_by"] = principal.user_id
         result = {
@@ -2931,7 +2873,7 @@ async def admin_review_issue_comparison(
         platform,
         f"admin:issue-comparison-review:{issue_id}",
         key,
-        {"snapshot_id": expected_snapshot_id, **body.model_dump()},
+        {"snapshot_id": expected_snapshot_id, "reason": body.reason},
         review,
     )
 

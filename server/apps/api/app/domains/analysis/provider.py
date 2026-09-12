@@ -1174,7 +1174,7 @@ class HttpLLMProvider(LLMProvider):
                     "type": "json_schema",
                     "name": "issue_comparison",
                     "strict": True,
-                    "schema": _issue_comparison_schema([str(row["article_id"]) for row in articles]),
+                    "schema": _issue_comparison_schema(),
                 }
             },
         }
@@ -1377,7 +1377,7 @@ def _chat_completion_assessment_schema() -> dict[str, object]:
     }
 
 
-def _issue_comparison_schema(article_ids: list[str]) -> dict[str, object]:
+def _issue_comparison_schema() -> dict[str, object]:
     string_list = {
         "type": "array",
         "maxItems": 12,
@@ -1396,12 +1396,7 @@ def _issue_comparison_schema(article_ids: list[str]) -> dict[str, object]:
                     "properties": {
                         "id": {"type": "string", "minLength": 1, "maxLength": 80},
                         "text": {"type": "string", "minLength": 1, "maxLength": 600},
-                        "article_ids": {
-                            "type": "array",
-                            "minItems": 2,
-                            "maxItems": len(article_ids),
-                            "items": {"type": "string", "enum": article_ids},
-                        },
+                        "article_ids": string_list,
                         "evidence_refs": string_list,
                     },
                     "required": ["id", "text", "article_ids", "evidence_refs"],
@@ -1427,7 +1422,7 @@ def _issue_comparison_schema(article_ids: list[str]) -> dict[str, object]:
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
-                        "article_id": {"type": "string", "enum": article_ids},
+                        "article_id": {"type": "string", "minLength": 1},
                         "headline_frame": {
                             "type": "string",
                             "minLength": 1,

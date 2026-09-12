@@ -430,9 +430,6 @@ def test_openai_issue_comparison_uses_strict_schema_and_validates_support(articl
     assert text_format["format"]["name"] == "issue_comparison"
     assert text_format["format"]["strict"] is True
     assert text_format["format"]["schema"]["properties"]["article_frames"]["maxItems"] == 8
-    fact_ids = text_format["format"]["schema"]["properties"]["common_facts"]["items"]["properties"]["article_ids"]
-    assert fact_ids["minItems"] == 2
-    assert fact_ids["items"]["enum"] == [row["article_id"] for row in articles]
     assert "publisher identity" in str(seen[0]["input"])
     assert "at least two distinct supplied ARTICLE_ID" in str(seen[0]["input"])
     assert "exactly one article_frames item" in str(seen[0]["input"])

@@ -703,12 +703,6 @@ async def test_db_product_engagement_vertical_slice() -> None:
         assert updated_vote and updated_vote["revision"] == 2
         assert updated_vote["save_status"] == "updated"
         assert updated_vote["credit_delta"] == 0
-        activity_rows = await repository.activity_rows(user_id)
-        assert len(activity_rows) == 1
-        assert activity_rows[0]["article_id"] == article_id
-        assert activity_rows[0]["my_vote"] == {"x": -1, "sensationalism": 5}
-        assert activity_rows[0]["read"] is False
-        assert await repository.activity_rows(new_ulid()) == []
         vote_credits = [
             row
             for row in await repository.credit_rows(user_id)
