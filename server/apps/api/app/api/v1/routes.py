@@ -88,6 +88,7 @@ from apps.api.app.domains.auth.providers import (
     OAuthProviderConfig,
     provider_from_config,
 )
+from apps.api.app.domains.content.trust import public_assessment_evidence
 from apps.api.app.domains.engagement.read import (
     create_redirect_token,
     evaluate_read_eligibility,
@@ -1298,7 +1299,7 @@ async def get_issue_comparison(
                         "actual_model_id": assessment["actual_model_id"],
                         "prompt_version": assessment["prompt_version"],
                         "summary": assessment["rationale_summary"],
-                        "evidence": list(assessment.get("evidence") or [])[:5],
+                        "evidence": public_assessment_evidence(assessment),
                         "confidence": assessment["confidence"],
                         "provider": "openai",
                         "created_at": assessment["created_at"],
@@ -1422,7 +1423,7 @@ async def article_assessments(
             "actual_model_id": str(item.get("actual_model_id") or item["model_alias"]),
             "prompt_version": str(item.get("prompt_version") or "fixture-v1"),
             "summary": str(item.get("rationale_summary") or "제한 공개 분석"),
-            "evidence": list(item.get("evidence") or []),
+            "evidence": public_assessment_evidence(item),
             "confidence": float(item.get("confidence") or 0),
             "provider": "openai",
             "created_at": item.get("created_at") or utcnow(),

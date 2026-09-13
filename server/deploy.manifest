@@ -34,6 +34,7 @@ apps/api/app/domains/auth/providers.py
 apps/api/app/domains/auth/service.py
 apps/api/app/domains/content/__init__.py
 apps/api/app/domains/content/adapters.py
+apps/api/app/domains/content/boilerplate.py
 apps/api/app/domains/content/canonical.py
 apps/api/app/domains/content/policy.py
 apps/api/app/domains/content/retention.py

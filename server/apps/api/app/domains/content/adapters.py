@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import urljoin
 from xml.etree import ElementTree
 
+from .boilerplate import is_article_boilerplate, strip_article_boilerplate
 from .canonical import canonicalize_url, content_hash, normalize_text, url_hash
 from .policy import CrawlerPolicyError, CrawlerPolicyGuard
 
@@ -42,7 +43,7 @@ class ArticleCandidate:
     def __post_init__(self) -> None:
         object.__setattr__(self, "url", canonicalize_url(self.url))
         object.__setattr__(self, "title", normalize_text(self.title))
-        object.__setattr__(self, "body", normalize_text(self.body))
+        object.__setattr__(self, "body", normalize_text(strip_article_boilerplate(self.body)))
 
     @property
     def canonical_url(self) -> str:
@@ -166,7 +167,8 @@ class APIAdapter(SourceAdapter):
             url=str(url),
             title=_string_value(self._field(item, "title", "headline", "name")),
             body=_string_value(
-                self._field(item, "content", "body", "description", "summary", "text")
+                self._field(item, "content", "body", "description", "summary", "text"),
+                article_body=True,
             ),
             author=_author_value(self._field(item, "author", "byline", "creator")),
             published_at=parse_datetime(
@@ -256,7 +258,7 @@ class RSSAdapter(SourceAdapter):
                 ArticleCandidate(
                     url=canonical,
                     title=title,
-                    body=_html_to_text(body),
+                    body=_html_to_text(body, article_body=True),
                     author=_author_value(
                         _first_nonempty(
                             fields.get("creator"), fields.get("dc:creator"), fields.get("author")
@@ -331,7 +333,7 @@ class _FixtureHTMLParser(HTMLParser):
     """
 
     _SKIP_TAGS = frozenset(
-        {"script", "style", "noscript", "template", "svg", "canvas", "nav", "header", "footer", "aside", "form"}
+        {"script", "style", "noscript", "template", "svg", "canvas", "nav", "header", "footer", "aside", "form", "button", "select", "textarea"}
     )
     _CONTENT_WORDS = re.compile(
         r"(?:^|[-_])(?:content|article|story|entry|post|body|main|text|detail|news|prose)(?:[-_]|$)",
@@ -340,7 +342,8 @@ class _FixtureHTMLParser(HTMLParser):
     _BOILERPLATE_WORDS = re.compile(
         r"(?:^|[\s_-])(?:comments?|related|recommend(?:ed|ation)?|share|sharing|social|"
         r"advert(?:isement)?|promo|banner|newsletter|breadcrumb|nav|date|time|"
-        r"caption|cap|func|view[_-]?count|read[_-]?count|hit[_-]?count|hits)(?:[\s_-]|$)",
+        r"caption|cap|func|toolbar|tools|button|btn|print|font[_-]?size|"
+        r"view[_-]?count|read[_-]?count|hit[_-]?count|hits)(?:[\s_-]|$)",
         re.I,
     )
     _VOID_TAGS = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"})
@@ -360,6 +363,7 @@ class _FixtureHTMLParser(HTMLParser):
         self._block_chunks: list[str] = []
         self._block_score = 0
         self._block_boilerplate = False
+        self._block_ordered_start = 0
         self.blocks: list[tuple[int, str]] = []
         self.content_chunks: list[tuple[int, str]] = []
         self.ordered_body_chunks: list[tuple[int, str]] = []
@@ -410,6 +414,7 @@ class _FixtureHTMLParser(HTMLParser):
         itemprop = attrs_d.get("itemprop", "").lower()
         boilerplate = bool(self._BOILERPLATE_WORDS.search(marker))
         skip = self._skipping or tag in self._SKIP_TAGS or boilerplate
+        skip = skip or attrs_d.get("role", "").lower() in {"button", "toolbar", "menu"}
         skip = skip or "hidden" in attrs_d or attrs_d.get("aria-hidden", "").lower() == "true"
         container_score = _html_container_score(tag, marker, itemprop)
         is_content = (
@@ -429,6 +434,7 @@ class _FixtureHTMLParser(HTMLParser):
         if not skip and tag in {"p", "h1", "h2", "h3", "h4", "blockquote", "pre", "li"}:
             self._finish_block()
             self._block_tag = tag
+            self._block_ordered_start = len(self.ordered_body_chunks)
             self._block_chunks = []
             score = max(3, self.content_score) if tag in {"p", "blockquote", "pre", "li"} else 1
             self._block_score = score
@@ -466,12 +472,15 @@ class _FixtureHTMLParser(HTMLParser):
             return
         if self._title_depth:
             self.title.append(data)
+        # Inline emphasis can contain a word such as '크게' within real prose.
+        # Classify paragraphs as a whole instead of dropping individual words.
+        body_data = data if self._block_tag else strip_article_boilerplate(data)
         if self.in_content and self._block_tag not in {"h1", "h2", "h3", "h4"}:
-            self.ordered_body_chunks.append((self.content_score, data))
+            self.ordered_body_chunks.append((self.content_score, body_data))
         if self._block_tag and not self._skipping:
-            self._block_chunks.append(data)
+            self._block_chunks.append(body_data)
         elif self.in_content:
-            self.content_chunks.append((self.content_score, data))
+            self.content_chunks.append((self.content_score, body_data))
         # Link text is captured in a separate lightweight way; it is only used
         # for discovered index links and never becomes article body content.
         for index in range(len(self._stack) - 1, -1, -1):
@@ -483,8 +492,13 @@ class _FixtureHTMLParser(HTMLParser):
 
     def _finish_block(self) -> None:
         if self._block_tag is not None:
-            text = normalize_text(" ".join(self._block_chunks))
-            if text and not self._block_boilerplate:
+            raw_text = " ".join(self._block_chunks)
+            text = normalize_text(strip_article_boilerplate(raw_text))
+            if text != normalize_text(raw_text):
+                del self.ordered_body_chunks[self._block_ordered_start:]
+                if text and self._block_tag not in {"h1", "h2", "h3", "h4"}:
+                    self.ordered_body_chunks.append((self._block_score, text))
+            if text and not self._block_boilerplate and not is_article_boilerplate(text):
                 self.blocks.append((self._block_score, text))
                 if self._block_tag == "h1":
                     self.headings.append(text)
@@ -537,7 +551,7 @@ class CrawlerAdapter(SourceAdapter):
             or (parser.headings[0] if parser.headings else "")
             or normalize_text("".join(parser.title))
         )
-        body = _string_value(json_article.get("articleBody"))
+        body = _string_value(json_article.get("articleBody"), article_body=True)
         if not body:
             body = _select_html_body(parser.blocks, parser.content_chunks, parser.ordered_body_chunks)
         article_signal = bool(json_article) or parser.has_article_container or parser.meta.get("og:type", "").lower() == "article"
@@ -553,7 +567,8 @@ class CrawlerAdapter(SourceAdapter):
             body = ""
         if not body and article_signal:
             body = _html_to_text(
-                parser.meta.get("description") or parser.meta.get("og:description") or ""
+                parser.meta.get("description") or parser.meta.get("og:description") or "",
+                article_body=True,
             )
         canonical = (
             _string_value(json_article.get("url"))
@@ -723,18 +738,20 @@ def _path_get(value: Any, path: Any) -> Any:
     return current
 
 
-def _string_value(value: Any) -> str:
+def _string_value(value: Any, *, article_body: bool = False) -> str:
     if value in (None, ""):
         return ""
     if isinstance(value, Mapping):
         for key in ("name", "text", "value", "content", "html"):
             nested = _mapping_value(value, key)
             if nested not in (None, ""):
-                return _string_value(nested)
+                return _string_value(nested, article_body=article_body)
         return ""
     if isinstance(value, (list, tuple, set)):
-        return normalize_text(" ".join(_string_value(item) for item in value))
-    return _html_to_text(str(value))
+        return normalize_text(" ".join(
+            _string_value(item, article_body=article_body) for item in value
+        ))
+    return _html_to_text(str(value), article_body=article_body)
 
 
 def _author_value(value: Any) -> str | None:
@@ -791,10 +808,19 @@ class _InlineTextParser(HTMLParser):
             self.parts.append(data)
 
 
-def _html_to_text(value: Any) -> str:
+def _html_to_text(value: Any, *, article_body: bool = False) -> str:
     if value in (None, ""):
         return ""
     text = str(value)
+    if article_body:
+        text = strip_article_boilerplate(text)
+        if "<" in text and ">" in text:
+            body_parser = _FixtureHTMLParser()
+            body_parser.feed(f"<article>{text}</article>")
+            body_parser.close()
+            return _select_html_body(
+                body_parser.blocks, body_parser.content_chunks, body_parser.ordered_body_chunks
+            )
     if "<" not in text or ">" not in text:
         return normalize_text(unescape(text))
     parser = _InlineTextParser()

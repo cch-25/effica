@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .boilerplate import evidence_contains_boilerplate
+
 _SYNTHETIC_ALIASES = frozenset({"dummy-crawl-v1", "deterministic-stub"})
 CODEX_DIRECT_ALIAS = "codex-direct-20260910"
 CODEX_DIRECT_MODEL = "codex-subagent-direct"
@@ -144,7 +146,7 @@ def public_assessment_summary(evidence: Any, *, fallback: str | None = None) -> 
     if isinstance(evidence, Sequence) and not isinstance(evidence, (str, bytes, bytearray)):
         rationales = [
             str(item.get("rationale", "")).strip()
-            for item in evidence
+            for item in public_assessment_evidence(evidence)
             if isinstance(item, Mapping) and str(item.get("rationale", "")).strip()
         ]
         if rationales:
@@ -160,4 +162,10 @@ def public_assessment_evidence(evidence: Any) -> list[dict[str, Any]]:
     values = evidence.get("evidence") if isinstance(evidence, Mapping) else evidence
     if not isinstance(values, Sequence) or isinstance(values, (str, bytes, bytearray)):
         return []
-    return [dict(item) for item in values if isinstance(item, Mapping)][:5]
+    return [
+        dict(item) for item in values
+        if isinstance(item, Mapping)
+        and isinstance(item.get("quote"), str)
+        and item["quote"].strip()
+        and not evidence_contains_boilerplate(item["quote"])
+    ][:5]

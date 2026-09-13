@@ -27,6 +27,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from ..content.boilerplate import evidence_contains_boilerplate
 from .schema import AssessmentInput, AssessmentStatus, Evidence, ModelAssessment
 
 
@@ -380,6 +381,8 @@ def validate_public_evidence(
                     )
                 evidence_start = resolved_start
                 evidence_end = resolved_start + len(parsed.quote)
+        if evidence_contains_boilerplate(parsed.quote):
+            continue
         try:
             rationale = sanitize_rationale(
                 parsed.rationale,
@@ -1204,6 +1207,10 @@ class HttpLLMProvider(LLMProvider):
             "natural Korean, regardless of the source language. Evidence.quote is the only language "
             "exception: copy it exactly from CONTENT without translating, paraphrasing, correcting, "
             "or normalizing it. "
+            "Ignore publisher page controls and metadata when scoring or selecting evidence: "
+            "publication/update timestamps, preferred-source prompts, font-size controls, "
+            "share/print/subscribe buttons, navigation, and advertisements are not reporting. "
+            "Do not quote these as evidence, even when they appear in CONTENT. "
             "Return exactly two evaluation scores. X is political bias: -100 means strongly "
             "left-biased, 0 means neutral/balanced, and +100 means strongly right-biased. "
             "Judge framing, selection and omission of facts, loaded wording, attribution, and "
