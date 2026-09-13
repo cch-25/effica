@@ -52,11 +52,6 @@ export function AlgoInfographic() {
     </nav>
     <section className={styles.experiment} aria-labelledby="experiment-title">
       <header className={styles.experimentHeading}><div><h2 id="experiment-title">{chapter.title}</h2><p>{chapter.subtitle}</p></div><span className={styles.demoLabel}>설명용 가상 데이터</span></header>
-      <div className={styles.stage}>
-        <div ref={host} className={styles.canvas} role="img" aria-label={`${chapter.title} ${result}`} data-status={status} />
-        {status !== "ready" && <div className={styles.fallback}><strong>{status === "loading" ? "3D 계산 장면 준비 중" : "이 환경에서는 3D를 표시할 수 없습니다."}</strong><p>{result}</p></div>}
-        <div className={styles.stageTools}><span>THREE.JS / {state.mode.toUpperCase()}</span><div><Button variant="ghost" disabled={status !== "ready"} aria-pressed={rotating} onClick={() => { runtime.current?.setInteractive(!rotating); setRotating(!rotating); }}>회전 {rotating ? "켜짐" : "꺼짐"}</Button><Button variant="ghost" disabled={status !== "ready"} onClick={() => runtime.current?.resetView()}>시점 초기화</Button></div></div>
-      </div>
       <div className={styles.console}>
         <div className={styles.action}>
           {state.mode === "fetch" && <Button onClick={() => setState(current => ({ ...current, step: (current.step + 1) % 4 }))}>{["출처 확인", "원문 요청 + 검증", "이슈로 묶기", "다시 수집하기"][state.step]}<span aria-hidden="true">→</span></Button>}
@@ -67,11 +62,16 @@ export function AlgoInfographic() {
         </div>
         <output className={styles.readout} aria-live="polite">{result}</output>
       </div>
+      <div className={styles.stage}>
+        <div className={styles.stageTools}><span>THREE.JS / {state.mode.toUpperCase()}</span><div><Button variant="ghost" disabled={status !== "ready"} aria-pressed={rotating} onClick={() => { runtime.current?.setInteractive(!rotating); setRotating(!rotating); }}>회전 {rotating ? "켜짐" : "꺼짐"}</Button><Button variant="ghost" disabled={status !== "ready"} onClick={() => runtime.current?.resetView()}>시점 초기화</Button><Button variant="ghost" onClick={() => changeMode(CHAPTERS[(active + 1) % CHAPTERS.length].id)}>{active === 4 ? "처음으로" : "다음 과정"}<span aria-hidden="true">→</span></Button></div></div>
+        <div ref={host} className={styles.canvas} role="img" aria-label={`${chapter.title} ${result}`} data-status={status} />
+        {status !== "ready" && <div className={styles.fallback}><strong>{status === "loading" ? "3D 계산 장면 준비 중" : "이 환경에서는 3D를 표시할 수 없습니다."}</strong><p>{result}</p></div>}
+      </div>
       <div className={styles.caption}><p>{state.mode === "fetch" ? ["검색 요약은 주소를 찾는 힌트입니다. 아직 기사 본문이 아닙니다.", "미승인 출처는 요청 전에 멈춥니다.", "HTTP 응답에서 본문을 추출합니다. 84자 응답은 본문 200자 기준에서 탈락합니다.", "같은 논쟁을 다룬 원문 3편. 중복 매체 없이 비교를 구성합니다."][state.step]
         : state.mode === "evidence" ? "문장은 가상 예시입니다. 근거 범위 [21, 45)는 실제 예시 글자 수로 계산합니다."
         : state.mode === "weights" ? "설명용 비중: 모델 60%, 상대 프레임 20%, 독자 평가 15%, 출처 사전값 5%."
         : state.mode === "coordinates" ? "각 축을 바꿔 보세요. 점과 바닥 투영이 해당 수치로 이동합니다."
-        : state.diverse ? "A 다음에 같은 매체 B를 건너뜁니다. A와 이슈가 겹치는 C는 제외합니다." : "반복에 따른 감점은 유지하며 연속 매체와 중복 이슈의 선택 제한만 해제합니다."}</p><Button variant="ghost" onClick={() => changeMode(CHAPTERS[(active + 1) % CHAPTERS.length].id)}>{active === 4 ? "처음으로" : "다음 과정"}<span aria-hidden="true">→</span></Button></div>
+        : state.diverse ? "A 다음에 같은 매체 B를 건너뜁니다. A와 이슈가 겹치는 C는 제외합니다." : "반복에 따른 감점은 유지하며 연속 매체와 중복 이슈의 선택 제한만 해제합니다."}</p></div>
       <details className={styles.details} key={state.mode}><summary>계산식과 적용 기준</summary><TechnicalNote mode={state.mode} /></details>
     </section>
     <footer className={styles.footer}><p>관점 ≠ 정답 / 선정성 ≠ 품질 / 분석 신뢰도 ≠ 진실 확률</p><Link href="/issues">실제 이슈 비교하기 →</Link></footer>

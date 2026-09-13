@@ -5,12 +5,15 @@ import { SIGNALS, rankingExample, weightedScore, type AlgorithmState } from "./a
 const INK = 0x24352e;
 const GREEN = 0x27835a;
 const WHITE = 0xfafbf7;
+const SIGNAL_COLORS = [0x397bea, 0xec735f, 0x9660de, 0xe6ab35, 0x229e88];
+const SIGNAL_INKS = ["#285fbd", "#b84a38", "#7946ba", "#956714", "#167a68"];
+const ARTICLE_COLORS = [0xb9d4ff, 0xffdc96, 0xf6b9ac, 0xd4bcf4];
 type Moving = { object: THREE.Object3D; position: THREE.Vector3; scale: THREE.Vector3 };
 
 export function createAlgorithmScene(host: HTMLDivElement, initial: AlgorithmState) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "low-power" });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
-  renderer.setClearColor(0xf0f3ee);
+  renderer.setClearColor(0xf5f5f9);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.domElement.setAttribute("aria-hidden", "true");
@@ -53,7 +56,7 @@ export function createAlgorithmScene(host: HTMLDivElement, initial: AlgorithmSta
   const px = (x: number) => x * (narrow ? .59 : 1);
 
   function material(color: number, opacity = 1) {
-    const value = new THREE.MeshStandardMaterial({ color, roughness: .5, metalness: .08, transparent: opacity < 1, opacity });
+    const value = new THREE.MeshStandardMaterial({ color, roughness: .32, metalness: .12, transparent: opacity < 1, opacity });
     materials.push(value); return value;
   }
   function box(w: number, h: number, d: number, color = INK, opacity = 1) {
@@ -131,10 +134,10 @@ export function createAlgorithmScene(host: HTMLDivElement, initial: AlgorithmSta
     const documents = rows.map((y, i) => {
       line([[px(-3.5), y, -.2], [px(3.6), y, -.2]], 0xb5c0b8, true);
       label(["A", "B", "C", "미승인", "D / 84자"][i], px(-4.6), y, 0, narrow ? .24 : .26, "#43584a", narrow ? .8 : 1.2);
-      return paper(px(-3.7), y, .2, narrow ? .4 : .62, .43);
+      return paper(px(-3.7), y, .2, narrow ? .4 : .62, .43, [SIGNAL_COLORS[0], SIGNAL_COLORS[2], SIGNAL_COLORS[3], 0x9ca4b2, SIGNAL_COLORS[1]][i]);
     });
-    const rejectA = label("×", px(-1.75), rows[3], .4, .4, "#69716b");
-    const rejectD = label("×", px(.55), rows[4], .4, .4, "#69716b");
+    const rejectA = label("×", px(-1.75), rows[3], .4, .4, SIGNAL_INKS[1]);
+    const rejectD = label("×", px(.55), rows[4], .4, .4, SIGNAL_INKS[1]);
     const quorum = line([[px(3.95), 1.75, 0], [px(4.3), 1.75, 0], [px(4.3), -.25, 0], [px(3.95), -.25, 0]], INK);
     apply = value => {
       documents.forEach((doc, i) => {
@@ -151,18 +154,18 @@ export function createAlgorithmScene(host: HTMLDivElement, initial: AlgorithmSta
     label("분석할 원문", docX, 2.35, .1, .3);
     label("예시신문 / 김기자", docX, 1.35, .16, .23, "#6b7d71", docWidth - .3);
     label("정부가 새로운 지원\n대책을 발표했다.", docX, .5, .16, .27, "#3e5144", docWidth - .25);
-    const band = box(docWidth - .25, .9, .018, 0xd1e7d6); band.position.set(docX, -.48, .075); content.add(band);
+    const band = box(docWidth - .25, .9, .018, 0xd9c8f8); band.position.set(docX, -.48, .075); content.add(band);
     label("예산 부담은 남았지만\n단기 효과가 기대된다.", docX, -.48, .18, .27, "#234d35", docWidth - .4);
     label("시행 범위는 추가 논의한다.", docX, -1.3, .18, .22, "#6b7d71", docWidth - .3);
     const mask = box(docWidth - .35, .3, .07, INK); mask.position.set(docX, 1.35, .4); content.add(mask);
     mask.castShadow = false;
     const maskLabel = label("출처 가림", docX, 1.35, .47, .21, "#ffffff", docWidth - .5);
     const sourceLabel = content.children.find(child => child instanceof THREE.Sprite && Math.abs(child.position.y - 1.35) < .01 && child !== maskLabel);
-    const quote = box(narrow ? 2.35 : 3.45, 1.4, .18, 0xd5e9db); quote.position.set(docX, -.48, -.2); content.add(quote);
+    const quote = box(narrow ? 2.35 : 3.45, 1.4, .18, 0xd9c8f8); quote.position.set(docX, -.48, -.2); content.add(quote);
     const quoteText = label("예산 부담은 남았지만\n단기 효과가 기대된다.", quoteX, -.2, .4, .27, "#234d35", narrow ? 2.15 : 3.15);
-    const offset = label("[21, 45)", quoteX, 1.15, .1, .42, "#27835a");
+    const offset = label("[21, 45)", quoteX, 1.15, .1, .42, SIGNAL_INKS[2]);
     label("정확한 원문 위치", quoteX, 2.35, .1, .28);
-    const connector = line([[docX + docWidth / 2, -.48, .15], [quoteX - (narrow ? 1.2 : 1.8), -.2, .3]], GREEN, true);
+    const connector = line([[docX + docWidth / 2, -.48, .15], [quoteX - (narrow ? 1.2 : 1.8), -.2, .3]], SIGNAL_COLORS[2], true);
     apply = value => {
       mask.visible = maskLabel.visible = value.step > 0;
       if (sourceLabel) sourceLabel.visible = value.step === 0;
@@ -177,35 +180,50 @@ export function createAlgorithmScene(host: HTMLDivElement, initial: AlgorithmSta
     const xs = [-3.7, -1.85, 0, 1.85, 3.7].map(px);
     line([[px(-4.6), base, .25], [px(4.6), base, .25]], 0x8a9c8d);
     label("0", px(-4.65), base, .3, .22);
-    const bars = xs.map((x, i) => { const bar = box(narrow ? .5 : .85, 1, .65, i === 4 ? INK : GREEN); bar.position.set(x, base, 0); content.add(bar); return bar; });
+    const bars = xs.map((x, i) => { const bar = box(narrow ? .5 : .85, 1, .65, SIGNAL_COLORS[i]); bar.position.set(x, base, 0); bar.rotation.y = -.12; content.add(bar); return bar; });
     const labels: THREE.Sprite[] = [];
+    const valueLabels: THREE.Sprite[] = [];
+    const signs: number[] = [];
     const bridges: THREE.Line[] = [];
     xs.slice(0, -1).forEach((x, i) => {
-      const mat = new THREE.LineDashedMaterial({ color: 0x9aa99d, dashSize: .06, gapSize: .05 }); materials.push(mat);
+      const mat = new THREE.LineDashedMaterial({ color: SIGNAL_COLORS[i], dashSize: .06, gapSize: .05, transparent: true, opacity: .6 }); materials.push(mat);
       const geometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x, base, 0), new THREE.Vector3(xs[i + 1], base, 0)]); geometries.push(geometry);
       const bridge = new THREE.Line(geometry, mat); content.add(bridge); bridges.push(bridge);
     });
-    SIGNALS.forEach((item, i) => label(item.label, xs[i], -2.05, .1, narrow ? .22 : .26, "#415848", narrow ? 1.03 : 1.5));
-    label("합계", xs[4], -2.05, .1, .27);
-    label("가중 기여량을 쌓으면 최종 x", 0, 2.55, 0, .3);
+    SIGNALS.forEach((item, i) => label(item.label, xs[i], -1.95, .1, narrow ? .22 : .25, SIGNAL_INKS[i], narrow ? 1.03 : 1.5));
+    label("합계", xs[4], -1.95, .1, .26, SIGNAL_INKS[4]);
+    label("가중 기여량을 쌓으면 최종 x", 0, 2.55, 0, .26);
+    syncFrame = () => {
+      bars.forEach((bar, i) => {
+        if (valueLabels[i]) valueLabels[i].position.y = bar.position.y + bar.scale.y / 2 + (i === 4 ? .46 : .32);
+        if (!bridges[i]) return;
+        const end = bar.position.y + signs[i] * bar.scale.y / 2;
+        const attr = bridges[i].geometry.getAttribute("position") as THREE.BufferAttribute;
+        attr.setXYZ(0, xs[i] + (narrow ? .25 : .425), end, .1);
+        attr.setXYZ(1, xs[i + 1] - (narrow ? .25 : .425), end, .1);
+        attr.needsUpdate = true; bridges[i].computeLineDistances();
+      });
+    };
     let oldModel: number | undefined;
     apply = value => {
       if (value.model === oldModel) return;
       oldModel = value.model;
       labels.forEach(removeLabel); labels.length = 0;
+      valueLabels.length = 0;
       let total = 0;
       SIGNALS.forEach((item, i) => {
         const input = i === 0 ? value.model : item.value;
         const contribution = input * item.weight;
+        signs[i] = Math.sign(contribution);
         const start = total; total += contribution;
         target(bars[i], xs[i], base + (start + contribution / 2) * factor, 0, 1, Math.max(.035, Math.abs(contribution * factor)), 1);
-        labels.push(label(`${input} × ${item.weight.toFixed(2)}`, xs[i], -2.48, .1, narrow ? .2 : .24, "#5f7366", narrow ? 1.05 : 1.7));
-        labels.push(label(`${contribution > 0 ? "+" : ""}${contribution.toFixed(1)}`, xs[i], base + Math.max(start, total) * factor + .4, .1, .26, "#27835a"));
-        const attr = bridges[i].geometry.getAttribute("position") as THREE.BufferAttribute;
-        attr.setXYZ(0, xs[i], base + total * factor, .1); attr.setXYZ(1, xs[i + 1], base + total * factor, .1); attr.needsUpdate = true; bridges[i].computeLineDistances();
+        labels.push(label(`${input} × ${item.weight.toFixed(2)}`, xs[i], -2.34, .1, narrow ? .2 : .22, SIGNAL_INKS[i], narrow ? 1.05 : 1.7));
+        const valueLabel = label(`${contribution > 0 ? "+" : ""}${contribution.toFixed(1)}`, xs[i], base + Math.max(start, total) * factor + .32, .1, .26, SIGNAL_INKS[i]);
+        labels.push(valueLabel); valueLabels.push(valueLabel);
       });
       target(bars[4], xs[4], base + total * factor / 2, 0, 1, Math.max(.035, Math.abs(total * factor)), 1);
-      labels.push(label(`${weightedScore(value.model)}`, xs[4], base + Math.max(0, total) * factor + .55, .1, .46, "#23372b"));
+      const sumLabel = label(`${weightedScore(value.model)}`, xs[4], base + Math.max(0, total) * factor + .46, .1, .42, SIGNAL_INKS[4]);
+      labels.push(sumLabel); valueLabels.push(sumLabel);
     };
   }
   function buildCoordinates() {
@@ -217,18 +235,18 @@ export function createAlgorithmScene(host: HTMLDivElement, initial: AlgorithmSta
       grid.push([x, -1.35, -1.5], [x, 1.45, -1.5], [-2, y, -1.5], [2, y, -1.5]);
     }
     for (let i = 0; i < grid.length; i += 2) line(grid.slice(i, i + 2), 0xc7d1c7);
-    line([origin, [2, -1.35, 1.5]], INK); line([origin, [-2, 1.45, 1.5]], INK); line([origin, [-2, -1.35, -1.5]], INK);
+    line([origin, [2, -1.35, 1.5]], SIGNAL_COLORS[0]); line([origin, [-2, 1.45, 1.5]], SIGNAL_COLORS[1]); line([origin, [-2, -1.35, -1.5]], SIGNAL_COLORS[2]);
     label("−100", -2, -1.7, 1.5, .23); label("+100", 2, -1.7, 1.5, .23);
-    label("관점 x", 0, -2, 1.6, .29);
-    label("선정성 s", -2.15, 1.95, 1.5, .29);
+    label("관점 x", 0, -2, 1.6, .29, SIGNAL_INKS[0]);
+    label("선정성 s", -2.15, 1.95, 1.5, .29, SIGNAL_INKS[1]);
     label("0", -2.38, -1.35, 1.5, .23); label("100", -2.4, 1.45, 1.5, .23);
-    label("신뢰도 C", -2.5, -.9, -1.8, .28);
+    label("신뢰도 C", -2.5, -.9, -1.8, .28, SIGNAL_INKS[2]);
     label("0", -2.4, -1.6, 1.05, .22); label("1", -2.4, -1.6, -1.5, .22);
     const geometry = new THREE.SphereGeometry(.13, 28, 20); geometries.push(geometry);
     const point = new THREE.Mesh(geometry, material(GREEN)); point.castShadow = true; content.add(point);
     const dot = new THREE.Mesh(geometry, material(0x87b198)); dot.scale.set(.65, .12, .65); content.add(dot);
-    const guide = line([[0, 0, 0], [0, 0, 0]], GREEN, true);
-    const projection = line([[0, 0, 0], [0, 0, 0], [0, 0, 0]], GREEN, true);
+    const guide = line([[0, 0, 0], [0, 0, 0]], SIGNAL_COLORS[1], true);
+    const projection = line([[0, 0, 0], [0, 0, 0], [0, 0, 0]], SIGNAL_COLORS[2], true);
     let pointLabel: THREE.Sprite | undefined;
     syncFrame = () => {
       const { x, y, z } = point.position;
@@ -253,9 +271,9 @@ export function createAlgorithmScene(host: HTMLDivElement, initial: AlgorithmSta
     label("선택 순서", right, 2.3, .1, .3);
     const { initial: items } = rankingExample(false);
     const cards = items.map((item, i) => {
-      const card = box(width, .63, .18, WHITE); card.position.set(left, row(i), 0); content.add(card);
+      const card = box(width, .63, .18, ARTICLE_COLORS[i]); card.position.set(left, row(i), 0); content.add(card);
       label(`${item.id}   ${item.source}매체 / ${item.issue}   ${item.score.toFixed(3)}`, left, row(i), .16, narrow ? .2 : .24, "#3b5242", width - .2);
-      const output = box(width, .63, .25, 0xd6e7d9); output.position.set(left, row(i), -.4); content.add(output);
+      const output = box(width, .63, .25, ARTICLE_COLORS[i]); output.position.set(left, row(i), -.4); content.add(output);
       return { item, output };
     });
     line([[px(-.65), 0, 0], [px(.65), 0, 0]], INK);
@@ -267,18 +285,19 @@ export function createAlgorithmScene(host: HTMLDivElement, initial: AlgorithmSta
       cards.forEach(({ item, output }) => {
         const i = ranked.selected.findIndex(selected => selected.id === item.id);
         const y = i < 0 ? -2.5 : row(i);
-        target(output, right, y, i < 0 ? -.8 : .2, i < 0 ? .85 : 1, 1, 1);
+        const depth = i < 0 ? -.8 : .2;
+        target(output, right, y, depth, i < 0 ? .85 : 1, 1, 1);
         const text = i < 0 ? `${item.id}   같은 이슈 → 제외` : `${i + 1}   ${item.id} / ${item.source}매체 / ${item.issue}`;
         const tag = label(text, right, y, .5, narrow ? .2 : .25, i < 0 ? "#768479" : "#254a32", width - .2);
         // Labels share the same interpolation as the physical rows.
-        tag.position.set(output.position.x, output.position.y, .5);
-        target(tag, right, y, .5, tag.scale.x, tag.scale.y, 1); labels.push(tag);
+        tag.position.set(output.position.x, output.position.y, output.position.z + .16);
+        target(tag, right, y, depth + .16, tag.scale.x, tag.scale.y, 1); labels.push(tag);
       });
     };
   }
   function resetView() {
     controls.target.set(0, -.1, 0);
-    camera.position.set(state.mode === "coordinates" ? 6.7 : state.mode === "weights" ? 1.5 : 3.5, state.mode === "coordinates" ? 4.5 : 4.3, 13);
+    camera.position.set(state.mode === "coordinates" ? 6.7 : state.mode === "weights" ? 0 : 3.5, state.mode === "coordinates" ? 4.5 : 4.3, 13);
     controls.update(); dirty = true;
   }
   function build() {
@@ -294,7 +313,9 @@ export function createAlgorithmScene(host: HTMLDivElement, initial: AlgorithmSta
     const width = Math.max(host.clientWidth, 1), height = Math.max(host.clientHeight, 1);
     const nextNarrow = width < 600;
     renderer.setSize(width, height, false);
-    const halfWidth = nextNarrow ? 3.45 : 5.8;
+    // Preserve vertical safe space too: wide viewports must not crop titles
+    // or push input labels into the toolbar. Units include rotation clearance.
+    const halfWidth = Math.max(nextNarrow ? 3.45 : 5.8, 3.35 * width / height);
     const halfHeight = halfWidth * height / width;
     camera.left = -halfWidth; camera.right = halfWidth; camera.top = halfHeight; camera.bottom = -halfHeight;
     camera.updateProjectionMatrix();
