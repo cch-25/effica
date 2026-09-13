@@ -3,7 +3,7 @@
 import { Avatar } from "@base-ui/react/avatar";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { BarChart3, BookOpenText, Boxes, CircleGauge, Compass, FileText, Home, Landmark, Newspaper, Power, SlidersHorizontal, Sparkles, UserRound } from "lucide-react";
+import { BarChart3, BookOpenText, Boxes, CircleGauge, Compass, FileText, Home, Landmark, Newspaper, Orbit, Power, SlidersHorizontal, Sparkles, UserRound } from "lucide-react";
 import { useState, type ComponentType, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import type { UserView } from "@/lib/api/contracts";
@@ -22,6 +22,7 @@ const userNav: NavItem[] = [
   { href: "/", label: "홈", icon: Home, paths: ["/"] },
   { href: "/articles", label: "기사 모음", icon: BookOpenText, paths: ["/articles"] },
   { href: "/issues", label: "이슈 비교", icon: Newspaper, paths: ["/issues"] },
+  { href: "/algo", label: "알고리즘", icon: Orbit, paths: ["/algo"] },
   { href: "/progress", label: "내 활동", icon: CircleGauge, paths: ["/progress", "/share", "/efficacy"] },
 ];
 
@@ -91,7 +92,7 @@ export function AppShell({ children, user, editionDate = "" }: { children: React
         </aside>
       ) : (
         <>
-          <NewspaperMasthead date={editionDate} section={pathname === "/" ? "종합" : pathname.startsWith("/articles") ? "기사" : pathname.startsWith("/issues") ? "보도 비교" : "독자"} />
+          <NewspaperMasthead date={editionDate} section={pathname === "/" ? "종합" : pathname.startsWith("/articles") ? "기사" : pathname.startsWith("/issues") ? "보도 비교" : pathname.startsWith("/algo") ? "알고리즘" : "독자"} />
           <nav className="site-nav" aria-label="주요 메뉴">
             <Link href="/" className="site-nav__brand" aria-label="종합 1면" aria-current={pathname === "/" ? "page" : undefined}>종합 1면</Link>
             <div className="site-nav__links">

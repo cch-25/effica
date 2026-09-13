@@ -66,6 +66,7 @@ describe("app shell navigation", () => {
     expect(within(nav).getByRole("link", { name: "기사 모음" })).toHaveAttribute("href", "/articles");
     expect(within(nav).getByRole("link", { name: "기사 모음" })).toHaveAttribute("aria-current", "page");
     expect(within(nav).getByRole("link", { name: "이슈 비교" })).not.toHaveAttribute("aria-current");
+    expect(within(nav).getByRole("link", { name: "알고리즘" })).toHaveAttribute("href", "/algo");
     expect(screen.queryByRole("link", { name: "기사 관점 지도" })).not.toBeInTheDocument();
     expect(within(nav).getByRole("link", { name: "내 활동" })).toHaveAttribute("href", "/progress");
     expect(within(nav).getByRole("link", { name: "개인정보 관리" })).toHaveAttribute("href", "/settings/privacy");
@@ -97,6 +98,7 @@ describe("app shell navigation", () => {
     ["/issues/issue-1", "이슈 비교"],
     ["/articles", "기사 모음"],
     ["/articles/article-1", "기사 모음"],
+    ["/algo", "알고리즘"],
     ["/progress", "내 활동"],
     ["/share/new", "내 활동"],
     ["/efficacy", "내 활동"],
@@ -113,10 +115,11 @@ describe("app shell navigation", () => {
     renderShell("/");
 
     const nav = screen.getByRole("navigation", { name: "모바일 주요 메뉴" });
-    expect(within(nav).getAllByRole("link")).toHaveLength(4);
+    expect(within(nav).getAllByRole("link")).toHaveLength(5);
     expect(within(nav).getByRole("link", { name: "기사 모음" })).toHaveAttribute("href", "/articles");
     expect(within(nav).getByRole("link", { name: "홈" })).toHaveAttribute("aria-current", "page");
     expect(within(nav).getByRole("link", { name: "이슈 비교" })).toBeVisible();
+    expect(within(nav).getByRole("link", { name: "알고리즘" })).toBeVisible();
     expect(within(nav).getByRole("link", { name: "내 활동" })).toBeVisible();
   });
 
