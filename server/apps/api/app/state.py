@@ -64,6 +64,7 @@ class PlatformState:
     """
 
     lock: threading.RLock = field(default_factory=threading.RLock)
+    feedback: dict[str, dict[str, Any]] = field(default_factory=dict)
     default_users: dict[str, str] = field(default_factory=dict)
     users: dict[str, dict[str, Any]] = field(default_factory=dict)
     oauth_accounts: dict[tuple[str, str], str] = field(default_factory=dict)

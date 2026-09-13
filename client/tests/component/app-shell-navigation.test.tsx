@@ -100,6 +100,7 @@ describe("app shell navigation", () => {
     ["/articles/article-1", "기사 모음"],
     ["/algo", "알고리즘"],
     ["/progress", "내 활동"],
+    ["/feedback", "피드백"],
     ["/share/new", "내 활동"],
     ["/efficacy", "내 활동"],
   ])("marks the parent menu for %s as current", (pathname, label) => {
@@ -115,7 +116,8 @@ describe("app shell navigation", () => {
     renderShell("/");
 
     const nav = screen.getByRole("navigation", { name: "모바일 주요 메뉴" });
-    expect(within(nav).getAllByRole("link")).toHaveLength(5);
+    expect(within(nav).getAllByRole("link")).toHaveLength(6);
+    expect(within(nav).getByRole("link", { name: "피드백" })).toHaveAttribute("href", "/feedback");
     expect(within(nav).getByRole("link", { name: "기사 모음" })).toHaveAttribute("href", "/articles");
     expect(within(nav).getByRole("link", { name: "홈" })).toHaveAttribute("aria-current", "page");
     expect(within(nav).getByRole("link", { name: "이슈 비교" })).toBeVisible();

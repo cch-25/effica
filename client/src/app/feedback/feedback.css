@@ -1,0 +1,64 @@
+.feedback-page { --feedback-ink: #242420; --feedback-muted: #696961; color: var(--feedback-ink); max-width: 64rem; margin: 1.5rem auto 3rem; word-break: keep-all; overflow-wrap: anywhere; animation: feedback-enter .35s ease-out both; }
+.feedback-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 2rem; padding-bottom: 1.7rem; border-bottom: 1px solid #d4d4cd; }
+.feedback-kicker { color: var(--feedback-muted); font-size: .75rem; margin-bottom: .5rem; }
+.feedback-heading h1 { font-family: var(--font-newspaper), serif; font-size: 2rem; margin: 0 0 .6rem; }
+.feedback-heading p:last-child { font-size: .9rem; margin: 0; }
+.feedback-heading__note { font-family: var(--font-newspaper), serif; color: var(--feedback-muted); font-size: .85rem; line-height: 1.8; text-align: right; flex-shrink: 0; }
+.feedback-workspace { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: 4rem; padding-top: 2rem; }
+.feedback-workspace h2 { font-size: 1.05rem; margin: 0; letter-spacing: -.02em; }
+.feedback-compose { align-self: start; position: sticky; top: 1.5rem; }
+.feedback-compose h2 { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.7rem; }
+.feedback-field { margin-bottom: 1.3rem; }
+.feedback-field label { display: flex; align-items: baseline; gap: .75rem; font-size: .85rem; font-weight: 700; margin-bottom: .55rem; }
+.feedback-field label span { color: var(--feedback-muted); font-size: .75rem; font-weight: 400; }
+.feedback-field :is(input, textarea) { display: block; width: 100%; min-width: 0; border: 1px solid #d4d4cd; border-radius: 2px; padding: .8rem .9rem; background: #fafaf8; color: var(--feedback-ink); font-family: var(--font-body), sans-serif; font-size: .875rem; line-height: 1.75; box-shadow: none; transition: background .18s; }
+.feedback-field :is(input, textarea):focus { background: #fff; outline: 2px solid #777770; outline-offset: 2px; }
+.feedback-field :is(input, textarea)::placeholder { color: #77776f; }
+.feedback-field textarea { min-height: 11rem; resize: vertical; }
+.feedback-count { display: flex; justify-content: space-between; gap: .5rem; margin-top: .5rem; color: var(--feedback-muted); font-size: .72rem; font-variant-numeric: tabular-nums; }
+.feedback-count > :last-child { white-space: nowrap; }
+.feedback-count.is-over { color: #9c2828; }
+.feedback-count__limit { color: var(--feedback-muted); }
+.feedback-public { margin: 1.6rem 0 .7rem; color: var(--feedback-muted); font-size: .75rem; }
+.feedback-page .button.feedback-submit { width: 100%; display: flex; justify-content: space-between; align-items: center; min-height: 3rem; padding: .8rem 1rem; background: #282824; color: #fff; border: 0; border-radius: 2px; font-size: .85rem; font-weight: 700; cursor: pointer; transition: background .18s; }
+.feedback-page .button.feedback-submit svg { transition: transform .18s; }
+.feedback-page .button.feedback-submit:enabled:hover { background: #41413a; }
+.feedback-page .button.feedback-submit:enabled:hover svg { transform: translate(2px, -2px); }
+.feedback-page .button.feedback-submit:disabled { background: #e8e8e2; color: #72726b; cursor: default; }
+.feedback-message { display: flex; align-items: flex-start; gap: .4rem; font-size: .78rem; margin-top: .8rem; }
+.feedback-message svg { flex-shrink: 0; margin-top: .2rem; }
+.feedback-entries__heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-bottom: 1.2rem; border-bottom: 1px solid #d4d4cd; }
+.feedback-entries__heading > span { color: var(--feedback-muted); font-size: .72rem; }
+.feedback-list { margin: 0; padding: 0; list-style: none; }
+.feedback-entry { padding: 1.4rem 0 1.5rem; border-bottom: 1px solid #e5e5de; }
+.feedback-entry__meta { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: .7rem; }
+.feedback-entry__meta strong { font-size: .84rem; }
+.feedback-entry__meta time { flex-shrink: 0; font-size: .7rem; color: var(--feedback-muted); }
+.feedback-entry p { margin: 0; font-size: .9rem; line-height: 1.85; white-space: pre-wrap; }
+.feedback-entry.is-new { animation: feedback-enter .3s ease-out both; }
+.feedback-empty { padding: 3rem 1rem; text-align: center; color: var(--feedback-muted); font-size: .85rem; }
+.feedback-empty__mark { display: block; height: 3.5rem; font-family: Georgia, serif; font-size: 5rem; line-height: 1; color: #c5c5bb; }
+.feedback-empty h3 { margin: 1rem 0 .5rem; color: var(--feedback-ink); font-family: var(--font-newspaper), serif; font-size: 1.1rem; font-weight: 400; }
+.feedback-empty p { margin: 0; font-size: .8rem; }
+.feedback-page .button.feedback-more, .feedback-page .button.feedback-text-button { display: flex; align-items: center; justify-content: center; gap: .6rem; border: 0; background: transparent; color: var(--feedback-ink); padding: 1rem; margin: .5rem auto 0; font-size: .8rem; cursor: pointer; }
+.feedback-page .button.feedback-more:hover, .feedback-page .button.feedback-text-button:hover { background: #f2f2ed; }
+.feedback-spinner { animation: feedback-spin 1s linear infinite; }
+@keyframes feedback-enter { from { transform: translateY(6px); } to { transform: translateY(0); } }
+@keyframes feedback-spin { to { transform: rotate(360deg); } }
+@media (max-width: 760px) {
+  .feedback-page { margin: .8rem auto 2rem; }
+  .feedback-heading { padding-bottom: 1.2rem; }
+  .feedback-heading h1 { font-size: 1.65rem; }
+  .feedback-heading p:last-child { font-size: .82rem; }
+  .feedback-heading__note { display: none; }
+  .feedback-workspace { grid-template-columns: minmax(0, 1fr); gap: 2.5rem; padding-top: 1.4rem; }
+  .feedback-compose { position: static; }
+  .feedback-compose h2 { margin-bottom: 1.2rem; }
+  .feedback-field :is(input, textarea) { font-size: 1rem; }
+  .feedback-field textarea { min-height: 9rem; }
+  .feedback-empty { padding-block: 2rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .feedback-page, .feedback-entry.is-new, .feedback-spinner { animation: none; }
+  .feedback-page .button.feedback-submit, .feedback-page .button.feedback-submit svg, .feedback-field :is(input, textarea) { transition: none; }
+}

@@ -67,6 +67,16 @@ from ..utc import UTCDateTime, utc_now
 _HASH = BINARY(32)
 
 
+class FeedbackEntry(Base):
+    __tablename__ = "feedback_entries"
+
+    id: Mapped[str] = mapped_column(ULIDType(), primary_key=True, default=new_ulid)
+    submission_key: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(30), nullable=False)
+    content: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now, nullable=False)
+
+
 def _id() -> Mapped[str]:
     return mapped_column(ULIDType(), primary_key=True, default=new_ulid, nullable=False)
 

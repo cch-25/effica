@@ -13,6 +13,7 @@ import type { ConsentView, ErrorEnvelope, ReadResult, ShareCardView, VoteView } 
 import type { IssueComparison } from "@/lib/api/types";
 import { mockResponse } from "../openapi-contract";
 import politicalQuestionnaire from "../fixtures/questionnaire.json";
+import { feedbackHandlers } from "./feedback";
 
 const prefix = "/api/v1";
 
@@ -71,6 +72,7 @@ const apiIssues = issues.map((issue) => ({
 }));
 
 export const handlers = [
+  ...feedbackHandlers,
   http.get(`${prefix}/analysis-status`, () => HttpResponse.json({ status: "READY", reason: "CURRENT_EVENT_AVAILABLE", checked_at: new Date().toISOString(), next_eligible_at: null, refresh_interval_seconds: 86400 })),
   http.get(`${prefix}/articles/:articleId/analysis-status`, ({ params }) => HttpResponse.json({ status: "NOT_SCHEDULED", reason: "NOT_SELECTED_FOR_DAILY_ANALYSIS", article_id: params.articleId, checked_at: new Date().toISOString(), next_eligible_at: null })),
   http.get(`${prefix}/auth/providers`, () => HttpResponse.json(["google"])),

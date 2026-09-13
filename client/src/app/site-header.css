@@ -11,6 +11,7 @@
 .site-header .site-nav { border-bottom: 1px solid #777770; }
 .site-header :is(.site-nav__brand,.site-nav__link,.site-nav__account,.site-nav__logout) { min-height: 2.125rem; font-size: .75rem; }
 @media (max-width: 760px) {
+  .bottom-nav a { font-size: .6875rem; white-space: nowrap; }
   .site-header .newspaper-masthead__name { font-size: 2.75rem; }
   .site-header :is(.newspaper-masthead, .site-nav) { width: calc(100% - 2rem); }
   .site-header .newspaper-masthead__title { letter-spacing: .15em; padding-left: .15em; }

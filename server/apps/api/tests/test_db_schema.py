@@ -43,7 +43,8 @@ def test_migration_revision_ids_fit_the_version_table_column() -> None:
 
 
 def test_schema_preserves_initial_tables_and_adds_evidence_snapshot() -> None:
-    assert len(metadata.tables) == 45
+    assert len(metadata.tables) == 46
+    assert "feedback_entries" in metadata.tables
     assert "article_inventory_guard" in metadata.tables
     assert "article_retention_tombstones" in metadata.tables
     assert "weight_evidence_snapshots" in metadata.tables

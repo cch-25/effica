@@ -3,7 +3,7 @@
 import { Avatar } from "@base-ui/react/avatar";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { BarChart3, BookOpenText, Boxes, CircleGauge, Compass, FileText, Home, Landmark, Newspaper, Orbit, Power, SlidersHorizontal, Sparkles, UserRound } from "lucide-react";
+import { BarChart3, BookOpenText, Boxes, CircleGauge, Compass, FileText, Home, Landmark, MessageSquare, Newspaper, Orbit, Power, SlidersHorizontal, Sparkles, UserRound } from "lucide-react";
 import { useState, type ComponentType, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import type { UserView } from "@/lib/api/contracts";
@@ -23,6 +23,7 @@ const userNav: NavItem[] = [
   { href: "/issues", label: "이슈 비교", icon: Newspaper, paths: ["/issues"] },
   { href: "/algo", label: "알고리즘", icon: Orbit, paths: ["/algo"] },
   { href: "/progress", label: "내 활동", icon: CircleGauge, paths: ["/progress", "/share", "/efficacy"] },
+  { href: "/feedback", label: "피드백", icon: MessageSquare, paths: ["/feedback"] },
 ];
 
 const adminNav = [
