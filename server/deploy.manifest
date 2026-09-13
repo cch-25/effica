@@ -5,6 +5,7 @@ apps/api/app/api/__init__.py
 apps/api/app/api/v1/__init__.py
 apps/api/app/api/v1/analysis_status.py
 apps/api/app/api/v1/dependencies.py
+apps/api/app/api/v1/feedback.py
 apps/api/app/api/v1/routes.py
 apps/api/app/api/v1/schemas.py
 apps/api/app/core/__init__.py
@@ -91,6 +92,7 @@ apps/worker/worker/issue_discovery.py
 db/alembic/versions/0022_issue_discovery_budget.py
 db/alembic/versions/0023_article_images.py
 db/alembic/versions/0024_engagement_identity.py
+db/alembic/versions/0025_feedback.py
 apps/worker/worker/comparison_cohort.py
 apps/worker/worker/essential_analysis.py
 apps/worker/worker/handlers/__init__.py
