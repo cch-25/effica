@@ -129,7 +129,7 @@ export function HomeNewspaper({ fallbackIssues, fallbackArticles }: { fallbackIs
           {(groups.length > 1 || relatedIssues.length > 0) && <aside className="home-rail" aria-label="주요 이슈 안내">
             <nav className="home-index" aria-label="이 지면의 이슈"><h2>주요 이슈</h2><ol>{groups.map((group, index) => <li key={group.id}>
               <a href={`#home-issue-${group.id}`}><ContentTypeLine kind="issue" issueOrdinal={index}>{group.title}</ContentTypeLine></a>
-              {groups.length <= 2 && <p>{initialGroupIssue(group).summary}</p>}
+              <p>{initialGroupIssue(group).summary}</p>
               <small>{group.issues.length > 1 ? `관련 쟁점 ${group.issues.length}개` : `언론사 ${initialGroupIssue(group).sourceCount}곳의 보도`}</small>
             </li>)}</ol></nav>
             {relatedIssues.length > 0 && <section className="home-related" aria-labelledby="home-related-title"><h2 id="home-related-title">함께 읽을 쟁점</h2><ul>{relatedIssues.map((issue) => <li key={issue.id}><Link href={`/issues/${issue.id}`}><ContentTypeLine kind="issue" issueOrdinal={0}>{issue.title}</ContentTypeLine></Link><p>{issue.summary}</p></li>)}</ul></section>}
