@@ -1,22 +1,47 @@
-.page { padding: 38px 0 24px; color: var(--foreground); word-break: keep-all; }
-.heading { display: flex; justify-content: space-between; align-items: end; gap: 24px; margin-bottom: 28px; }
-.heading p { font: 600 10px/1.5 monospace; letter-spacing: .15em; color: #287c54; margin: 0 0 12px; }
-.heading h1 { font-size: clamp(24px, 3vw, 34px); font-weight: 650; letter-spacing: -.045em; line-height: 1.35; margin: 0; }
-.heading > span { font-size: 12px; color: #738074; padding-bottom: 5px; }
-.chapters { display: grid; grid-template-columns: repeat(5, 1fr); border-block: 1px solid #cbd2c9; }
-.chapters button { height: 58px; border-radius: 0; gap: 12px; font-size: 13px; color: #657568; }
-.chapters button span { font: 11px monospace; opacity: .65; }
-.chapters button[aria-pressed="true"], .chapters button[aria-pressed="true"]:hover { background: #24352e; color: #f8faf5; }
-.experimentHeading { display: flex; justify-content: space-between; align-items: start; gap: 20px; padding: 28px 0 22px; }
+.page { padding: 48px 0 24px; color: var(--foreground); word-break: keep-all; }
+.heading { padding: 10px 0 56px; }
+.heading > p:first-child { font: 600 10px/1.5 monospace; letter-spacing: .15em; color: #287c54; margin: 0 0 18px; }
+.heading h1 { font-size: clamp(28px, 3.3vw, 40px); font-weight: 650; letter-spacing: -.045em; line-height: 1.35; margin: 0; }
+.intro { color: #66736e; font-size: 15px; line-height: 1.9; margin: 18px 0 25px; }
+.journey { display: flex; flex-wrap: wrap; gap: 14px 30px; list-style: none; padding: 0; margin: 0 0 28px; }
+.journey li { display: flex; gap: 9px; align-items: center; font-size: 12px; color: #55635e; }
+.journey li span { font: 11px monospace; color: #397bea; }
+.journey li:nth-child(2) span { color: #9660de; }
+.journey li:nth-child(3) span { color: #d49a27; }
+.journey li:nth-child(4) span { color: #ec735f; }
+.journey li:nth-child(5) span { color: #229e88; }
+.startLink { font-size: 12px; color: #287c54; }
+.experiment { scroll-margin-top: 28px; padding-top: 32px; margin-bottom: 80px; border-top: 1px solid #d9dfd6; }
+.experimentHeading { display: flex; justify-content: space-between; align-items: start; gap: 20px; padding: 0 0 26px; }
+.chapterLabel { display: block; font: 600 11px/1.5 monospace; color: #287c54; margin-bottom: 13px; letter-spacing: .04em; }
 .experimentHeading h2 { margin: 0 0 9px; font-size: clamp(20px, 2.2vw, 26px); line-height: 1.4; letter-spacing: -.035em; font-weight: 600; }
 .experimentHeading p { margin: 0; color: #657568; font-size: 13px; line-height: 1.7; }
 .demoLabel { flex-shrink: 0; color: #738074; font-size: 10px; padding-top: 8px; }
+.formula { padding: 4px 0 30px; }
+.equation { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-family: "Cambria Math", "STIX Two Math", Georgia, serif; font-size: clamp(19px, 2.1vw, 25px); line-height: 1.8; color: #26382f; }
+.equation > span { max-width: 100%; }
+.equation i { font-style: italic; }
+.equation sub, .secondaryEquation sub { font-size: .62em; }
+.equation sup { font-size: .6em; }
+.fraction { display: inline-flex; vertical-align: middle; flex-direction: column; align-items: stretch; text-align: center; line-height: 1.35; margin: 0 .25em; font-size: .9em; }
+.fraction > span:first-child { border-bottom: 1px solid currentColor; padding: 0 .3em .1em; }
+.fraction > span:last-child { padding: .12em .3em 0; }
+.formula > p { display: flex; flex-wrap: wrap; gap: 6px 24px; font-size: 12px; line-height: 1.8; color: #6c7772; margin: 16px 0 0; }
+.substitution { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; margin-top: 20px; font-size: 14px; line-height: 1.7; font-variant-numeric: tabular-nums; color: #819089; }
+.substitution > span { white-space: nowrap; }
+.substitution strong { color: #167a68; }
+.secondaryEquation { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 16px; font-family: "Cambria Math", Georgia, serif; font-size: 16px; line-height: 1.9; color: #69726f; }
+.coordinateValue { color: #167a68; font-variant-numeric: tabular-nums; }
+.blue { color: #285fbd; }
+.coral { color: #b84a38; }
+.purple { color: #7946ba; }
+.amber { color: #956714; }
 .stage { position: relative; background: #f5f5f9; }
 .canvas { height: clamp(410px, 44vw, 530px); width: 100%; }
 .canvas canvas { display: block; width: 100%; height: 100%; }
 .stageTools { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 22px 0; min-height: 42px; }
 .stageTools > span { color: #78877b; font: 9px monospace; letter-spacing: .08em; }
-.stageTools > div { display: flex; gap: 4px; }
+.stageTools > div { display: flex; flex-wrap: wrap; gap: 4px; }
 .stageTools button { height: 28px; padding-inline: 9px; font-size: 10px; color: #54685a; border-radius: 0; }
 .stageTools button[aria-pressed="true"] { background: #d5e3d7; }
 .fallback { position: absolute; inset: 42px 0 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #f5f5f9; font-size: 13px; }
@@ -41,23 +66,32 @@
 .details { border-block: 1px solid #d9dfd6; padding: 15px 0; font-size: 12px; color: #657568; }
 .details summary { cursor: pointer; width: fit-content; }
 .details p { max-width: 850px; line-height: 1.9; margin: 16px 0 4px; overflow-wrap: anywhere; }
-.footer { display: flex; justify-content: space-between; gap: 20px; align-items: center; padding-top: 22px; font-size: 11px; color: #738074; }
+.footer { display: flex; justify-content: space-between; gap: 20px; align-items: center; padding: 5px 0 48px; font-size: 11px; color: #738074; }
+.footer h2 { font-size: 23px; line-height: 1.5; font-weight: 600; color: #26382f; margin: 0 0 15px; letter-spacing: -.035em; }
 .footer p { margin: 0; line-height: 1.8; }
 .footer a { flex-shrink: 0; color: #287c54; }
 @media (max-width: 640px) {
   .page { padding-top: 24px; }
-  .heading { margin-bottom: 22px; }
-  .heading > span { display: none; }
-  .heading h1 { font-size: 25px; }
-  .chapters button { flex-direction: column; gap: 5px; height: 61px; padding-inline: 2px; font-size: 11px; }
-  .chapters button span { font-size: 9px; }
-  .experimentHeading { padding: 22px 0 18px; display: block; }
+  .heading { padding-bottom: 36px; }
+  .heading h1 { font-size: 28px; }
+  .intro { font-size: 13px; }
+  .journey { gap: 12px 20px; }
+  .journey li { font-size: 11px; }
+  .experiment { padding-top: 26px; margin-bottom: 52px; }
+  .experimentHeading { padding: 0 0 22px; display: block; }
   .experimentHeading h2 { font-size: 21px; }
   .experimentHeading p { font-size: 12px; }
   .demoLabel { display: block; margin-top: 10px; font-size: 9px; }
+  .formula { padding-bottom: 24px; }
+  .equation { font-size: 18px; gap: 6px 9px; }
+  .formula > p { font-size: 11px; gap: 4px 16px; }
+  .substitution { font-size: 12px; gap: 4px 8px; }
+  .secondaryEquation { font-size: 13px; }
   .canvas { height: 380px; }
-  .stageTools { padding-inline: 10px; }
+  .stageTools { padding-inline: 10px; flex-wrap: wrap; }
   .stageTools > span { font-size: 8px; }
+  .stageTools > span { flex-basis: 100%; }
+  .fallback { inset-block-start: 78px; }
   .console { padding: 16px; gap: 14px; flex-wrap: wrap; }
   .action { flex-basis: 100%; }
   .action > button { width: 100%; }
@@ -69,5 +103,6 @@
   .caption { align-items: start; gap: 12px; }
   .caption p { font-size: 10px; }
   .footer { display: block; font-size: 10px; }
+  .footer h2 { font-size: 20px; }
   .footer a { display: inline-block; margin-top: 12px; }
 }

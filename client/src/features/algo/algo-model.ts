@@ -1,6 +1,16 @@
 export type AlgorithmMode = "fetch" | "evidence" | "weights" | "coordinates" | "ranking";
 export type AlgorithmState = { mode: AlgorithmMode; step: number; model: number; x: number; s: number; c: number; diverse: boolean };
 export const INITIAL_STATE: AlgorithmState = { mode: "fetch", step: 0, model: 30, x: 19, s: 35, c: 75, diverse: true };
+export const AUTO_INTERVAL_MS = 1500;
+export function advanceAlgorithm(state: AlgorithmState): AlgorithmState {
+  if (state.mode === "fetch") return { ...state, step: (state.step + 1) % 4 };
+  if (state.mode === "evidence") return { ...state, step: (state.step + 1) % 3 };
+  if (state.mode === "ranking") return { ...state, diverse: !state.diverse };
+  const step = (state.step + 1) % 5;
+  if (state.mode === "weights") return { ...state, step, model: [30, 76, -40, -100, 100][step] };
+  const [x, s, c] = [[19, 35, 75], [-65, 25, 90], [60, 80, 40], [-20, 60, 65], [80, 15, 95]][step];
+  return { ...state, step, x, s, c };
+}
 export const SIGNALS = [
   { label: "모델", value: 30, weight: .60 },
   { label: "상대 프레임", value: -10, weight: .20 },

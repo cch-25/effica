@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { rankingExample, weightedScore } from "@/features/algo/algo-model";
+import { AUTO_INTERVAL_MS, INITIAL_STATE, advanceAlgorithm, rankingExample, weightedScore } from "@/features/algo/algo-model";
 
 describe("interactive algorithm examples", () => {
+  it("automatically advances every type of scene and loops collection", () => {
+    expect(AUTO_INTERVAL_MS).toBe(1500);
+    let fetch = INITIAL_STATE;
+    for (let i = 0; i < 4; i++) fetch = advanceAlgorithm(fetch);
+    expect(fetch.step).toBe(0);
+    expect(advanceAlgorithm({ ...INITIAL_STATE, mode: "evidence", step: 2 }).step).toBe(0);
+    expect(advanceAlgorithm({ ...INITIAL_STATE, mode: "weights" }).model).toBe(76);
+    expect(advanceAlgorithm({ ...INITIAL_STATE, mode: "coordinates" }).x).toBe(-65);
+    expect(advanceAlgorithm({ ...INITIAL_STATE, mode: "ranking" }).diverse).toBe(false);
+  });
   it("adds actual weighted contributions and rounds both signs symmetrically", () => {
     expect(weightedScore(30)).toBe(19);
     expect(weightedScore(-100)).toBe(-59);
