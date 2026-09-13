@@ -15,6 +15,10 @@ vi.mock("@/lib/api/queries", () => ({
   useIssueComparisonQuery: mocks.useIssueComparisonQuery,
 }));
 
+vi.mock("@/features/issues/comparison/issue-perspective-map", () => ({
+  IssuePerspectiveMap: ({ articles }: { articles: Article[] }) => <section aria-label="기사 비교 3D 지도">{articles.map((item) => item.id).join(",")}</section>,
+}));
+
 function article(id: string, source: string): Article {
   return {
     id,
@@ -84,7 +88,10 @@ it("shows public article-level analysis while the cross-article review is pendin
   expect(screen.getByText(/최신 보도/)).toBeVisible();
   expect(screen.getByText("비교 준비 완료 기사 2개, 출처 2곳")).toBeVisible();
   expect(screen.getByRole("heading", { name: "기사별 AI 분석 비교" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "기사 비교 3D 지도" })).toHaveTextContent("a,b");
   expect(screen.getByText("공통 사실과 보도 프레임은 편집 검수 후 공개됩니다.")).toBeVisible();
+  expect(screen.getByRole("link", { name: "출처 A 기사" })).toHaveAttribute("href", "/articles/a");
+  expect(screen.getByRole("link", { name: "출처 B 기사" })).toHaveAttribute("href", "/articles/b");
   expect(screen.getAllByRole("button", { name: /편향성:/ })).toHaveLength(2);
   expect(screen.getAllByRole("link", { name: /기사 원문 보기, 새 창/ })).toHaveLength(2);
   expect(screen.queryByRole("heading", { name: "공통으로 확인된 사실" })).not.toBeInTheDocument();
@@ -133,6 +140,9 @@ it("keeps the comparison focused on shared facts, framing, and the two scores", 
 
   expect(screen.getByRole("heading", { name: "공통으로 확인된 사실" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "보도별 관점" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "기사 비교 3D 지도" })).toHaveTextContent("a,b");
+  expect(screen.getByRole("link", { name: "출처 A 기사" })).toHaveAttribute("href", "/articles/a");
+  expect(screen.getByRole("link", { name: "출처 B 기사" })).toHaveAttribute("href", "/articles/b");
   expect(screen.getAllByText("핵심 관점")).toHaveLength(2);
   expect(screen.getAllByRole("link", { name: /기사 원문 보기, 새 창/ })).toHaveLength(2);
   expect(screen.getAllByRole("button", { name: /편향성:/ })).toHaveLength(2);

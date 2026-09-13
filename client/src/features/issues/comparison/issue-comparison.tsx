@@ -20,6 +20,7 @@ import { isComparisonReadyArticle, parseComparisonSelection } from "./selection"
 import { IssueReadiness } from "../issue-readiness";
 import { DefinitionTooltip } from "@/components/ui/definition-tooltip";
 import { analysisTerms } from "@/lib/content/analysis-terms";
+import { IssuePerspectiveMap } from "./issue-perspective-map";
 
 function replaceArticleQuery(pathname: string, articleIds: string[]): string {
   const params = new URLSearchParams();
@@ -62,6 +63,7 @@ function PendingReviewComparison({ articles }: { articles: Article[] }) {
         </div>
         <p>공통 사실과 보도 프레임은 편집 검수 후 공개됩니다.</p>
       </div>
+      <IssuePerspectiveMap articles={articles} />
       <section className="comparison-grid" data-columns={articles.length} aria-label="선택한 기사별 공개 분석 비교">
         {articles.map((article) => {
           return (
@@ -70,7 +72,7 @@ function PendingReviewComparison({ articles }: { articles: Article[] }) {
                 <div className="comparison-column__source">
                   <span><strong>{article.source}</strong><time dateTime={article.publishedAt || undefined}>{formatPublishedDate(article.publishedAt)}</time></span>
                 </div>
-                <h3 id={`pending-article-${article.id}`}>{article.title}</h3>
+                <h3 id={`pending-article-${article.id}`}><Link className="comparison-column__title-link" href={`/articles/${article.id}`}>{article.title}</Link></h3>
               </header>
               <div className="comparison-column__frame">
                 <span>기사 요약</span>
@@ -269,6 +271,8 @@ export function IssueComparison({
               <p>편향성은 좌우 관점, 과장성은 표현 강도입니다.</p>
             </div>
 
+            <IssuePerspectiveMap articles={selectedArticles} />
+
             <section className="comparison-grid" data-columns={comparedArticles.length} aria-label="선택한 기사 비교">
               {comparedArticles.map(({ article, score, assessment, frame, vote_aggregate }) => (
                 <article className="comparison-column" key={article.id} aria-labelledby={`comparison-article-${article.id}`}>
@@ -276,7 +280,7 @@ export function IssueComparison({
                     <div className="comparison-column__source">
                       <span><strong>{article.source}</strong><time dateTime={article.published_at ?? undefined}>{formatPublishedDate(article.published_at ?? "")}</time></span>
                     </div>
-                    <h3 id={`comparison-article-${article.id}`}>{article.title}</h3>
+                    <h3 id={`comparison-article-${article.id}`}><Link className="comparison-column__title-link" href={`/articles/${article.id}`}>{article.title}</Link></h3>
                   </header>
 
                   <div className="comparison-column__frame">

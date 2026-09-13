@@ -298,6 +298,27 @@
   line-height: 1.45;
 }
 
+.comparison-column__title-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: #aeb7c2;
+  text-decoration-thickness: 1px;
+  text-underline-offset: .2em;
+  transition: color var(--peer-duration-fast), text-decoration-color var(--peer-duration-fast);
+}
+
+.comparison-column__title-link:focus-visible {
+  outline: var(--peer-focus-ring);
+  outline-offset: 4px;
+}
+
+@media (hover: hover) {
+  .comparison-column__title-link:hover {
+    color: var(--peer-color-accent);
+    text-decoration-color: currentColor;
+  }
+}
+
 .comparison-column__frame {
   display: grid;
   min-height: 9rem;
@@ -545,6 +566,9 @@
 .perspective-workspace { color: var(--peer-color-ink); }
 .article-perspective-map { margin-block: 2rem; padding-top: 1.25rem; border-top: 1px solid var(--peer-color-line); scroll-margin-top: 1rem; }
 .article-perspective-map__heading h2 { margin: 0; font-size: 1.25rem; line-height: 1.5; }
+.issue-perspective-map { margin: 1rem 0 2rem; }
+.issue-perspective-map .article-perspective-map__heading h3 { margin: 0; font-size: 1.125rem; line-height: 1.5; }
+.issue-perspective-map .article-map-legend h4 { margin: 0; font-size: 1rem; line-height: 1.5; }
 .article-perspective-map__heading p, .article-perspective-map__status { margin: .5rem 0 1rem; color: var(--peer-color-ink-muted); font-size: .875rem; line-height: 1.7; word-break: keep-all; overflow-wrap: break-word; }
 .article-perspective-map__context { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .5rem; min-height: 3rem; margin-bottom: 1rem; padding-block: .5rem; border-block: 1px solid var(--peer-color-line); }
 .article-perspective-map__context > span { color: var(--peer-color-ink-muted); font-size: .75rem; line-height: 1.7; word-break: keep-all; }
