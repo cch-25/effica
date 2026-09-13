@@ -34,4 +34,10 @@ describe("Peer Design system", () => {
     expect(runtimeSource).not.toMatch(/background(?:-color|Color)?\s*[:=]\s*["']?var\(--(?:red|blue)\)/i);
     expect(runtimeSource).not.toMatch(/<button\b/);
   });
+
+  it("does not use text underlines as an interaction or status treatment", () => {
+    const runtimeSource = files(sourceRoot).map((path) => readFileSync(path, "utf8")).join("\n");
+    expect(runtimeSource).not.toMatch(/text-decoration(?:-line)?\s*:\s*[^;}]*\bunderline\b/i);
+    expect(runtimeSource).not.toMatch(/textDecoration(?:Line)?\s*[:=]\s*["']underline\b/i);
+  });
 });

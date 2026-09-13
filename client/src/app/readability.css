@@ -127,7 +127,7 @@ h1, h2, h3, h4 { letter-spacing: -.025em; }
 
 @media (hover: hover) {
   .site-nav__link:hover, .issue-rank-row:hover, .topic-issue-row:hover { background: #f2f6fc; text-decoration: none; }
-  .issue-rank-row:hover strong, .topic-issue-row:hover strong { color: var(--accent); text-decoration: underline; text-underline-offset: .2em; }
+  .issue-rank-row:hover strong, .topic-issue-row:hover strong { color: var(--accent); }
   .button--primary:hover:not([data-disabled]):not(:disabled) { background: var(--peer-color-accent-hover); color: #fff; text-decoration: none; }
   .button.choice-button[data-selected]:hover:not(:disabled) { background: var(--peer-color-accent-hover); color: #fff; }
   .button--danger:hover:not([data-disabled]):not(:disabled) { background: #ffe0dc; color: var(--danger); text-decoration: none; }

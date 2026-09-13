@@ -190,7 +190,7 @@
 }
 
 @media (hover: hover) {
-  .definition-tooltip__trigger:hover span { text-decoration: underline; text-underline-offset: .2em; }
+  .definition-tooltip__trigger:hover span { color: var(--peer-color-accent); }
 }
 
 .definition-tooltip__trigger:focus-visible {
@@ -623,10 +623,8 @@
 }
 
 .admin-login__user-link a {
-  color: var(--peer-color-ink);
+  color: var(--peer-color-accent);
   font-weight: var(--peer-weight-bold);
-  text-decoration: underline;
-  text-underline-offset: .18em;
 }
 
 .field {
@@ -1183,8 +1181,7 @@
   .news-card h3 a:hover,
   .issue-card h2 a:hover,
   .external-link:hover {
-    text-decoration: underline;
-    text-underline-offset: .2em;
+    color: var(--peer-color-accent-hover);
   }
 }
 

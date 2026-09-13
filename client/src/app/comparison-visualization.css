@@ -40,8 +40,6 @@
   color: var(--peer-color-accent);
   font-size: var(--peer-text-sm);
   font-weight: 700;
-  text-decoration: underline;
-  text-underline-offset: .2em;
 }
 
 .available-articles {
@@ -75,8 +73,6 @@
 .available-articles li a {
   color: var(--peer-color-accent);
   font-weight: var(--peer-weight-bold);
-  text-decoration: underline;
-  text-underline-offset: .2em;
 }
 
 @media (max-width: 560px) {
@@ -157,8 +153,6 @@
   color: var(--peer-color-accent);
   font-size: var(--peer-text-xs);
   font-weight: var(--peer-weight-bold);
-  text-decoration: underline;
-  text-underline-offset: .2em;
 }
 
 .button.comparison-selector__item[data-selected] {
@@ -300,11 +294,7 @@
 
 .comparison-column__title-link {
   color: inherit;
-  text-decoration: underline;
-  text-decoration-color: #aeb7c2;
-  text-decoration-thickness: 1px;
-  text-underline-offset: .2em;
-  transition: color var(--peer-duration-fast), text-decoration-color var(--peer-duration-fast);
+  transition: color var(--peer-duration-fast);
 }
 
 .comparison-column__title-link:focus-visible {
@@ -315,7 +305,6 @@
 @media (hover: hover) {
   .comparison-column__title-link:hover {
     color: var(--peer-color-accent);
-    text-decoration-color: currentColor;
   }
 }
 
@@ -468,8 +457,6 @@
   color: var(--peer-color-accent);
   font-size: var(--peer-text-xs);
   font-weight: var(--peer-weight-bold);
-  text-decoration: underline;
-  text-underline-offset: .2em;
 }
 
 .comparison-results__note {
@@ -667,7 +654,7 @@
 .space-inspector__personal strong { font-weight: 400; }
 .space-inspector .form-actions { display: flex; justify-content: flex-start; gap: .5rem; margin-top: 1rem; }
 .space-inspector .form-actions .button { font-size: .6875rem; }
-.space-inspector .form-actions .button--secondary { border: 0; padding: 0; background: transparent; text-decoration: underline; text-underline-offset: .25rem; }
+.space-inspector .form-actions .button--secondary { border: 0; padding: 0; background: transparent; color: var(--peer-color-accent); font-weight: 700; }
 
 .space-distributions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 1.5rem; padding: 1rem 0; border-block: 1px solid var(--peer-color-ink); }
 .space-distributions__chart { min-width: 0; padding: 0 1.25rem; border-left: 1px solid var(--peer-color-line); }

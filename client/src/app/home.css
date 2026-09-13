@@ -2,7 +2,7 @@
 .home-page { --home-muted: #596370; --home-rule: #d2d8df; }
 .home-page :is(h1,h2,h3,h4,p,strong,button,a) { word-break: keep-all; overflow-wrap: anywhere; }
 .home-page button { font: inherit; cursor: pointer; }
-.home-page a { text-decoration-skip-ink: none; text-decoration-thickness: 1px; text-underline-offset: .22em; }
+.home-page a { transition: color var(--peer-duration-fast) var(--peer-ease-out); }
 .home-title-word { display: inline-block; max-width: 100%; vertical-align: top; }
 .home-edition-intro { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding: .45rem 0 .9rem; font-size: .8125rem; }
 .home-edition-intro p { margin: 0; }
@@ -86,11 +86,11 @@
 .home-expand { display: flex; align-items: center; justify-content: center; gap: 1rem; padding: .8rem; width: 100%; min-height: 44px; border: 0; border-top: 1px solid var(--home-rule); background: transparent; color: var(--ink); font-size: .8125rem; }
 .home-load-message { padding: 1rem 0; font-size: .875rem; color: var(--home-muted); }
 .home-load-message p { margin: 0 0 .5rem; }
-.home-load-message button { background: transparent; border: 0; padding: .5rem 0; color: var(--ink); text-decoration: underline; }
+.home-load-message button { background: transparent; border: 0; padding: .5rem 0; color: var(--accent); font-weight: 650; }
 .home-reading-guide { display: grid; grid-template-columns: minmax(0,1fr) minmax(10rem,.45fr); align-items: start; gap: 1rem 3rem; border-block: 1px solid var(--home-rule); margin-top: 2rem; padding: 1.1rem 0; color: var(--home-muted); font-size: .8125rem; }
 .home-reading-guide strong { color: var(--ink); font-weight: 650; }
 .home-reading-guide p { margin: .3rem 0 0; }
-.home-selection-rule summary { cursor: pointer; width: fit-content; padding-block: .25rem; text-decoration: underline; text-underline-offset: .25em; }
+.home-selection-rule summary { cursor: pointer; width: fit-content; padding-block: .25rem; color: var(--accent); font-weight: 650; }
 .home-selection-rule p { margin-top: .6rem; }
 .home-empty { padding: 2rem 0; }
 .home-empty h1 { font-size: 1.4rem; }

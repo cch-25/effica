@@ -1,6 +1,6 @@
 .articles-page { max-width: 70rem; margin-inline: auto; }
 .articles-page :is(h1,h2,p,a,button) { word-break: keep-all; overflow-wrap: anywhere; }
-.articles-page a { text-underline-offset: .22em; text-decoration-skip-ink: none; text-decoration-thickness: 1px; }
+.articles-page a { transition: color var(--peer-duration-fast) var(--peer-ease-out); }
 .articles-page :is(a,button,input,select):focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
 .article-directory-tools { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; padding-block: 1.25rem; }
 .article-directory-tools form { display: flex; flex: 1 1 18rem; max-width: 34rem; gap: .5rem; }
