@@ -54,4 +54,39 @@ describe("progress credit pagination", () => {
     expect(screen.queryByText("COMPARE")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "이전 기록 더 보기" })).not.toBeInTheDocument();
   });
+
+  it.each([
+    [-24, "left"],
+    [24, "right"],
+    [0, "default"],
+  ])("applies the %s ideology result as the %s page highlight", async (x, tone) => {
+    mocks.apiRequest.mockImplementation(async (path: string) => {
+      if (path === "/me/progress") {
+        return {
+          credit_total: 30,
+          level: 1,
+          tier: "STARTER",
+          policy_version: "v1",
+          read_article_count: 1,
+          compared_issue_count: 1,
+          source_diversity_count: 1,
+          diversity_score: 50,
+          diversity_article_count: 1,
+          ideology: { completed: true, x, y: 0, z: 0 },
+        };
+      }
+      if (path === "/me/credits") return { items: [], next_cursor: null };
+      throw new Error(`unexpected request: ${path}`);
+    });
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ProgressPage />
+      </QueryClientProvider>,
+    );
+
+    const heading = await screen.findByRole("heading", { name: "읽고 비교한 기록" });
+    expect(heading.closest(".progress-page")).toHaveAttribute("data-highlight-tone", tone);
+  });
 });

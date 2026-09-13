@@ -7,7 +7,9 @@
 .article-directory-tools input { width: 100%; min-width: 0; border: 1px solid var(--line); padding: .65rem .75rem; background: #fff; color: var(--ink); font: inherit; font-size: .875rem; border-radius: 0; }
 .article-directory-tools button { flex-shrink: 0; }
 .article-source-filter { display: flex; align-items: center; gap: .75rem; font-size: .8125rem; }
-.article-source-filter select { max-width: 14rem; min-height: 44px; padding: .5rem 1.75rem .5rem .65rem; color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 0; font: inherit; }
+.article-source-filter__select { position: relative; display: inline-flex; align-items: center; }
+.article-source-filter select { appearance: none; max-width: 14rem; min-height: 44px; padding: .5rem 3.25rem .5rem .65rem; color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 0; font: inherit; }
+.article-source-filter__select svg { position: absolute; right: 1.25rem; pointer-events: none; }
 .article-directory-status { display: flex; flex-wrap: wrap; gap: .5rem 1rem; border-bottom: 1px solid var(--ink); padding-bottom: .75rem; font-size: .8125rem; color: var(--muted); }
 .article-directory-status > :first-child { margin-right: auto; color: var(--ink); }
 .article-directory-list { list-style: none; padding: 0; margin: 0; }

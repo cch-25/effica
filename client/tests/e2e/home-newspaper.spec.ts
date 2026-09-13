@@ -53,9 +53,18 @@ for (const width of [1440, 1024, 768, 390, 320]) {
     const menu = page.getByRole("navigation", { name: "이 지면의 이슈" });
     const lead = page.locator(".home-spread--lead");
     await expect(menu.getByRole("link")).toHaveCount(2);
+    await expect(menu.locator('[data-content-type="issue"]')).toHaveText(["이슈 A", "이슈 B"]);
+    const labelsAligned = await page.locator(".home-index [data-content-type-line], .home-related [data-content-type-line]").evaluateAll((lines) => lines.every((line) => {
+      const badge = line.querySelector<HTMLElement>('[data-content-type="issue"]')?.getBoundingClientRect();
+      const copy = line.querySelector<HTMLElement>("[data-content-type-copy]")?.getBoundingClientRect();
+      return Boolean(badge && copy && Math.abs(badge.top - copy.top) <= 2 && copy.left > badge.right);
+    }));
+    expect(labelsAligned).toBe(true);
     await expect(page.locator(".home-spread")).toHaveCount(2);
     await expect(lead.locator(".home-reading")).toHaveAttribute("data-issue-id", "kim");
+    await expect(lead.locator(".home-selected-context")).toContainText("이슈 A");
     await expect(lead.locator(".home-article-list > li")).toHaveCount(3);
+    await expect(lead.locator(".home-article").first().locator('[data-content-type="article"]')).toHaveText("기사");
     await expect(lead.locator(".home-coverage")).toContainText("발행 시각순");
     await expect(lead.locator(".home-article").first()).toContainText("12:00 발행");
     await expect(lead.getByRole("link", { name: "이 쟁점의 보도 비교하기" })).toHaveAttribute("href", "/issues/kim");
@@ -68,6 +77,7 @@ for (const width of [1440, 1024, 768, 390, 320]) {
     await page.locator(".home-angle-picker summary").click();
     await page.getByRole("button", { name: new RegExp(titles[1]) }).click();
     await expect(lead.locator("h1")).toHaveText(titles[1]);
+    await expect(lead.locator(".home-selected-context")).toContainText("이슈 A");
     await expect(lead.locator(".home-reading")).toHaveAttribute("data-issue-id", "yong");
     await expect(lead.locator(".home-article").first()).toContainText(titles[1]);
     await expect(lead.locator(".home-article-list")).not.toContainText(titles[0]);
@@ -77,6 +87,7 @@ for (const width of [1440, 1024, 768, 390, 320]) {
     const other = page.locator("#home-issue-hormuz");
     await expect(other).toBeInViewport();
     await expect(other.locator("h2")).toHaveText(titles[3]);
+    await expect(other.locator(".home-selected-context")).toContainText("이슈 B");
     await expect(other.locator(".home-reading")).toHaveAttribute("data-issue-id", "hormuz");
     await expect(other.locator(".home-angle-picker")).toHaveCount(0);
     await expect(other.locator(".home-article-list > li")).toHaveCount(3);
@@ -115,6 +126,7 @@ test("five issue groups form newspaper columns and reflow on mobile", async ({ p
   await installFixture(page, false, true);
   await page.goto("/");
   await expect(page.locator(".home-spread")).toHaveCount(5);
+  await expect(page.locator('.home-spread .home-selected-context [data-content-type="issue"]')).toHaveText(["이슈 A", "이슈 B", "이슈 C", "이슈 D", "이슈 E"]);
   const directory = path.resolve("../output/playwright/home-newspaper-fixtures");
   await mkdir(directory, { recursive: true });
   for (const width of [1440, 768, 390]) {

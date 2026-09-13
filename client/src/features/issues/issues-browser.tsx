@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
+import { ContentTypeIndicator, ContentTypeLine } from "@/components/ui/content-type-indicator";
 import { Drawer } from "@/components/ui/drawer";
 import { CheckboxField, SelectField } from "@/components/ui/form-controls";
 import { useIssueArticleCollectionsQuery, useIssuesQuery } from "@/lib/api/queries";
@@ -57,6 +58,7 @@ function TopicSection({
   topic,
   issues,
   collectionIssueIds,
+  issueOrdinals,
   expanded,
   onToggle,
 }: {
@@ -64,6 +66,7 @@ function TopicSection({
   topic: string;
   issues: Issue[];
   collectionIssueIds: string[];
+  issueOrdinals: ReadonlyMap<string, number>;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -86,7 +89,7 @@ function TopicSection({
             {row.kind === "issue" ? (
               <Link className="topic-issue-row" href={`/issues/${row.issue.id}`}>
                 <span className="topic-issue-row__copy">
-                  <small>{isSubstantiveEventIssue(row.issue) ? "비교 가능" : "분석 준비 중"}</small>
+                  <small><ContentTypeLine kind="issue" issueOrdinal={issueOrdinals.get(row.issue.id)}>{isSubstantiveEventIssue(row.issue) ? "비교 가능" : "분석 준비 중"}</ContentTypeLine></small>
                   <strong>{row.issue.title}</strong>
                 </span>
                 <IssueCounts issue={row.issue} />
@@ -94,7 +97,7 @@ function TopicSection({
             ) : (
               <Link className="topic-issue-row topic-article-row" href={`/articles/${row.article.id}`}>
                 <span className="topic-issue-row__copy">
-                  <small>기사</small>
+                  <small><ContentTypeIndicator kind="article" /></small>
                   <strong>{row.article.title}</strong>
                   {row.article.dek ? <span>{row.article.dek}</span> : null}
                 </span>
@@ -166,6 +169,11 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
         collectionIssueIds: groupedIssues.filter((issue) => issue.kind === "TOPIC").map((issue) => issue.id),
       }));
   }, [visibleIssues]);
+  const issueOrdinals = useMemo(() => {
+    const orderedIds = [...featuredIssues, ...topicGroups.flatMap((group) => group.issues)].map((issue) => issue.id);
+    const uniqueIds = [...new Set(orderedIds)];
+    return new Map(uniqueIds.map((id, index) => [id, index]));
+  }, [featuredIssues, topicGroups]);
   const resetFilters = () => {
     setTopics([]);
     setPeriod("all");
@@ -212,7 +220,7 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
                   <li key={issue.id}>
                     <Link className="issue-rank-row" href={`/issues/${issue.id}`}>
                       <span className="issue-rank-row__copy">
-                        <small>{issue.topic}</small>
+                        <small><ContentTypeLine kind="issue" issueOrdinal={issueOrdinals.get(issue.id)}>{issue.topic}</ContentTypeLine></small>
                         <strong>{issue.title}</strong>
                         {issue.summary ? <span>{issue.summary}</span> : null}
                       </span>
@@ -245,6 +253,7 @@ export function IssuesBrowser({ fallback }: { fallback: Issue[] }) {
                       topic={group.topic}
                       issues={group.issues}
                       collectionIssueIds={group.collectionIssueIds}
+                      issueOrdinals={issueOrdinals}
                       expanded={expanded}
                       onToggle={() => toggleTopic(group.topic)}
                     />

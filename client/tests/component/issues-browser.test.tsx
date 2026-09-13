@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { IssuesBrowser } from "@/features/issues/issues-browser";
 import { articles, issues } from "@/mocks/fixtures/content";
@@ -40,6 +40,8 @@ it("주제 필터를 열고 선택한 주제의 이슈만 표시한다", () => {
   expect(screen.getByRole("heading", { name: "정치" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "사회" })).toBeVisible();
   expect(screen.getAllByText("도심 주택 공급 대책")).toHaveLength(2);
+  expect(screen.getAllByText("이슈 A")).toHaveLength(2);
+  expect(screen.getByText("기사")).toBeVisible();
 
   const filterButton = screen.getByRole("button", { name: "주제와 기간" });
   fireEvent.click(filterButton);
@@ -66,6 +68,8 @@ it("비교 준비가 끝난 이슈와 주제별 목록에 선정된 모든 이�
 
   expect(ranking?.querySelectorAll(":scope > li")).toHaveLength(12);
   expect(ranking?.querySelector("li:first-child")).toHaveTextContent("이슈 01");
+  expect(within(ranking!.querySelector<HTMLElement>("li:first-child")!).getByText("이슈 A")).toBeVisible();
+  expect(within(ranking!.querySelectorAll<HTMLElement>(":scope > li")[1]).getByText("이슈 B")).toBeVisible();
   expect(ranking).toHaveTextContent("이슈 12");
   expect(ranking).not.toHaveTextContent("01위");
   expect(screen.getByRole("heading", { name: "정치" })).toBeVisible();

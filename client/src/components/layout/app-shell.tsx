@@ -2,10 +2,12 @@
 
 import { Avatar } from "@base-ui/react/avatar";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { BarChart3, BookOpenText, Boxes, CircleGauge, Compass, FileText, Home, Landmark, Newspaper, Power, SlidersHorizontal, Sparkles, UserRound } from "lucide-react";
-import type { ComponentType, ReactNode } from "react";
+import { useState, type ComponentType, type ReactNode } from "react";
+import { Button } from "@/components/ui/button";
 import type { UserView } from "@/lib/api/contracts";
+import { apiRequest } from "@/lib/api/client";
 import { HeadlineBand } from "./headline-band";
 import { NewspaperMasthead } from "./newspaper-masthead";
 
@@ -50,8 +52,19 @@ function userNavHref(item: NavItem, user: UserView | null) {
 
 export function AppShell({ children, user, editionDate = "" }: { children: ReactNode; user: UserView | null; editionDate?: string }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [logoutState, setLogoutState] = useState<"idle" | "pending" | "error">("idle");
   const admin = pathname.startsWith("/admin");
   const minimal = pathname === "/login" || pathname === "/admin" || pathname.startsWith("/onboarding");
+  const logout = async () => {
+    setLogoutState("pending");
+    try {
+      await apiRequest<void>("/auth/logout", { method: "POST", authFailureMode: "return-error" });
+      router.replace("/");
+    } catch {
+      setLogoutState("error");
+    }
+  };
 
   if (minimal) return <div className={`newspaper-account${pathname === "/login" ? " newspaper-account--login" : ""}`}><a className="skip-link" href="#main-content">본문으로 건너뛰기</a><NewspaperMasthead date={editionDate} section={admin ? "관리자" : "독자"} compact /><main id="main-content" className="minimal-shell" tabIndex={-1}>{children}</main></div>;
 
@@ -88,7 +101,11 @@ export function AppShell({ children, user, editionDate = "" }: { children: React
                 return <Link key={href} href={userNavHref(item, user)} className={active ? "site-nav__link is-active" : "site-nav__link"} aria-current={active ? "page" : undefined}><Icon size={17} aria-hidden={true} /><span>{label}</span></Link>;
               })}
             </div>
-            <Link href={user ? "/settings/privacy" : "/login"} className="site-nav__account" aria-current={user && pathMatches(pathname, "/settings/privacy") ? "page" : undefined}><UserRound size={17} aria-hidden="true" /><span>{user ? "개인정보 관리" : "로그인"}</span></Link>
+            <div className="site-nav__account-actions">
+              <Link href={user ? "/settings/privacy" : "/login"} className="site-nav__account" aria-current={user && pathMatches(pathname, "/settings/privacy") ? "page" : undefined}><UserRound size={17} aria-hidden="true" /><span>{user ? "개인정보 관리" : "로그인"}</span></Link>
+              {user && <Button type="button" variant="ghost" className="site-nav__logout" disabled={logoutState === "pending"} onClick={() => void logout()}>{logoutState === "pending" ? "처리 중" : logoutState === "error" ? "다시 시도" : "로그아웃"}</Button>}
+              {logoutState === "error" && <span className="sr-only" role="alert">로그아웃하지 못했습니다. 다시 시도해 주세요.</span>}
+            </div>
           </nav>
           {pathname !== "/" && <HeadlineBand />}
         </>

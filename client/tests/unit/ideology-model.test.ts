@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { graphPosition } from "@/components/graphs/graph-model";
-import { ideologyAxes, interpretIdeology } from "@/features/share-cards/ideology-model";
+import { ideologyAxes, ideologyHighlightTone, interpretIdeology } from "@/features/share-cards/ideology-model";
 
 const result = (x: number, y: number, z = 0) => interpretIdeology({ completed: true, x, y, z });
 
@@ -30,5 +30,15 @@ describe("questionnaire ideology map", () => {
   it("does not call an unmeasured or invalid result centrist", () => {
     expect(interpretIdeology({ completed: false, x: 0, y: 0, z: 0 })).toBeNull();
     expect(result(NaN, 30)).toBeNull();
+  });
+
+  it.each([
+    [-11, true, "left"],
+    [11, true, "right"],
+    [-10, true, "default"],
+    [10, true, "default"],
+    [-80, false, "default"],
+  ])("maps x=%s and completed=%s to the %s activity highlight", (x, completed, tone) => {
+    expect(ideologyHighlightTone({ completed, x: Number(x), y: 0, z: 0 })).toBe(tone);
   });
 });

@@ -1,0 +1,41 @@
+.indicator {
+  display: inline-flex;
+  width: fit-content;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: .12rem .4rem;
+  font-family: var(--font-ui);
+  font-size: .6875rem;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.indicator.issue {
+  background: var(--ink);
+  color: var(--white);
+}
+
+.indicator.article {
+  background: #e9edf2;
+  color: #354254;
+}
+
+.line {
+  display: inline-grid;
+  max-width: 100%;
+  min-width: 0;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: start;
+  gap: .5rem;
+  vertical-align: top;
+}
+
+.line > .indicator {
+  margin-top: .125em;
+}
+
+.copy {
+  min-width: 0;
+}

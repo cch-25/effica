@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
+import { ChevronDown } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { StatePanel } from "@/components/ui/state-panel";
@@ -75,11 +76,14 @@ export function ArticlesBrowser({ filters }: { filters: ArticleFilters }) {
         <input id="article-search" name="q" type="search" defaultValue={filters.q} placeholder="기사 제목 또는 검색어" />
         <Button type="submit" variant="secondary">검색</Button>
       </form>
-      <label className="article-source-filter">언론사<select aria-label="언론사" value={filters.source} onChange={(event) => router.push(directoryHref({ ...filters, source: event.target.value }), { scroll: false })}>
-        <option value="">전체 언론사</option>
-        {filters.source && !sources.includes(filters.source) && <option value={filters.source}>{filters.source}</option>}
-        {sources.map((source) => <option key={source} value={source}>{source}</option>)}
-      </select></label>
+      <label className="article-source-filter">언론사<span className="article-source-filter__select">
+        <select aria-label="언론사" value={filters.source} onChange={(event) => router.push(directoryHref({ ...filters, source: event.target.value }), { scroll: false })}>
+          <option value="">전체 언론사</option>
+          {filters.source && !sources.includes(filters.source) && <option value={filters.source}>{filters.source}</option>}
+          {sources.map((source) => <option key={source} value={source}>{source}</option>)}
+        </select>
+        <ChevronDown size={18} strokeWidth={1.75} aria-hidden="true" />
+      </span></label>
     </div>
     <div className="article-directory-status" role="status">
       <span>{pending ? "기사를 불러오는 중입니다." : error ? "기사 목록을 불러오지 못했습니다." : `전체 기사 ${matches.length}개${failedCount ? " (일부 목록)" : ""}`}</span>

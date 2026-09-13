@@ -9,9 +9,9 @@ import { StatePanel } from "@/components/ui/state-panel";
 import { apiRequest } from "@/lib/api/client";
 import { formatTierLabel } from "@/lib/api/formatters";
 import { PerspectivePreview } from "@/features/share-cards/perspective-preview";
-import { consumptionSnapshot } from "@/features/share-cards/consumption";
+import { consumptionSnapshot, type Ideology } from "@/features/share-cards/consumption";
+import { ideologyHighlightTone } from "@/features/share-cards/ideology-model";
 
-type Coordinate = { x: number; y: number; z: number; sensationalism: number | null; confidence: number };
 type ProgressView = {
   [key: string]: unknown;
   credit_total: number;
@@ -21,8 +21,9 @@ type ProgressView = {
   read_article_count: number;
   compared_issue_count: number;
   source_diversity_count: number;
-  self_reported_profile: Coordinate | null;
-  behavioral_profile: Coordinate | null;
+  diversity_score: number;
+  diversity_article_count: number;
+  ideology: Ideology;
 };
 type CreditPage = {
   items: Array<{ event_type: string; created_at: string; delta: number; policy_version: string }>;
@@ -51,7 +52,7 @@ export default function ProgressPage() {
   const snapshot = progress.data;
   const rows = credits.data?.pages.flatMap((page) => page.items) ?? [];
   return (
-    <div className="progress-page">
+    <div className="progress-page" data-highlight-tone={ideologyHighlightTone(snapshot.ideology)}>
       <PageHeader eyebrow="내 활동 기록" title="읽고 비교한 기록" description="활동 크레딧은 확인된 읽기와 비교 활동의 기록이며 정치적 정답이나 우열을 뜻하지 않습니다." actions={<><ButtonLink variant="secondary" href="/share/new"><Share2 size={15} aria-hidden="true" /> 공유 카드 만들기</ButtonLink><ButtonLink variant="secondary" href="/settings/privacy"><ShieldCheck size={15} aria-hidden="true" /> 개인정보 관리</ButtonLink><ButtonLink variant="secondary" href="/efficacy">정치 이슈 이해 자신감 변화 <ArrowUpRight size={15} aria-hidden="true" /></ButtonLink></>} />
       <div className="grid grid--4 progress-metrics">
         <section className="card metric"><small>읽은 기사</small><strong>{snapshot.read_article_count}</strong><span className="metric__delta">복귀 자격 확인 기준</span></section>

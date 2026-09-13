@@ -36,6 +36,7 @@
 .home-secondary__columns > .home-spread:nth-child(n + 3) { border-top: 1px solid var(--home-rule); padding-top: 1.25rem; }
 .home-spread { scroll-margin-top: 1.5rem; }
 .home-selected-context { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; font-size: .8125rem; font-weight: 600; margin-bottom: .8rem; }
+.home-selected-context > [data-content-type-line] { flex: 1 1 auto; }
 .home-selected-context > :last-child:not(:first-child) { color: var(--home-muted); font-weight: 400; white-space: nowrap; }
 .home-reading { animation: home-reading-enter 170ms ease-out; }
 .home-issue-opening { display: grid; gap: .9rem 1.25rem; margin-bottom: 1rem; }
@@ -64,6 +65,7 @@
 .home-angle-picker[open] summary > span { transform: rotate(45deg); }
 .home-angle-picker > p { color: var(--home-muted); font-size: .8125rem; margin: 0 0 .75rem; }
 .home-angle-picker button { display: flex; justify-content: space-between; align-items: center; gap: 1rem; width: 100%; padding: .8rem .6rem; border: 0; border-top: 1px solid var(--home-rule); background: transparent; color: var(--ink); text-align: left; font-size: .9375rem; }
+.home-angle-picker button > [data-content-type-line] { flex: 1 1 auto; }
 .home-angle-picker button[aria-pressed="true"] { background: #f3f5f4; }
 .home-angle-picker small { flex-shrink: 0; font-size: .75rem; color: var(--home-muted); }
 .home-coverage { border-top: 1px solid var(--home-rule); }
@@ -139,7 +141,7 @@
   .home-secondary__heading { flex-wrap: wrap; padding: .85rem 0; }
   .home-secondary__columns > .home-spread:nth-child(n) { border-left: 0; padding-left: 0; }
   .home-secondary__columns > .home-spread + .home-spread { border-top: 1px solid var(--home-rule); padding-top: 1rem; }
-  .home-selected-context { font-size: .75rem; flex-wrap: wrap; gap: .35rem; }
+  .home-selected-context { font-size: .75rem; flex-wrap: wrap; gap: .35rem .75rem; }
   .home-issue-opening--photo { grid-template-columns: minmax(0,1fr); gap: .7rem; }
   .home-spread--lead .home-issue-opening h1 { font-size: 1.375rem; text-wrap: balance; }
   .home-issue-opening h2 { font-size: 1.375rem; }

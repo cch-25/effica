@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppShell } from "@/components/layout/app-shell";
 import { HeadlineBand } from "@/components/layout/headline-band";
 import type { UserView } from "@/lib/api/contracts";
 
-const navigation = vi.hoisted(() => ({ pathname: "/" }));
+const navigation = vi.hoisted(() => ({ pathname: "/", replace: vi.fn() }));
 const api = vi.hoisted(() => ({ request: vi.fn() }));
 const originalApiMode = process.env.NEXT_PUBLIC_API_MODE;
 const originalMatchMedia = window.matchMedia;
@@ -15,6 +15,7 @@ vi.mock("@/lib/api/client", () => ({ apiRequest: api.request }));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => navigation.pathname,
+  useRouter: () => ({ replace: navigation.replace }),
 }));
 
 const member: UserView = {
@@ -40,6 +41,7 @@ afterAll(() => {
 afterEach(() => {
   cleanup();
   api.request.mockReset();
+  navigation.replace.mockReset();
   navigation.pathname = "/";
   process.env.NEXT_PUBLIC_API_MODE = "mock";
 });
@@ -67,6 +69,7 @@ describe("app shell navigation", () => {
     expect(screen.queryByRole("link", { name: "기사 관점 지도" })).not.toBeInTheDocument();
     expect(within(nav).getByRole("link", { name: "내 활동" })).toHaveAttribute("href", "/progress");
     expect(within(nav).getByRole("link", { name: "개인정보 관리" })).toHaveAttribute("href", "/settings/privacy");
+    expect(within(nav).getByRole("button", { name: "로그아웃" })).toBeVisible();
   });
 
   it("shows a clear login link when there is no member", () => {
@@ -75,8 +78,19 @@ describe("app shell navigation", () => {
     const desktop = screen.getByRole("navigation", { name: "주요 메뉴" });
     const mobile = screen.getByRole("navigation", { name: "모바일 주요 메뉴" });
     expect(within(desktop).getByRole("link", { name: "로그인" })).toHaveAttribute("href", "/login");
+    expect(within(desktop).queryByRole("button", { name: "로그아웃" })).not.toBeInTheDocument();
     expect(within(desktop).getByRole("link", { name: "내 활동" })).toHaveAttribute("href", "/login?returnTo=%2Fprogress");
     expect(within(mobile).getByRole("link", { name: "내 활동" })).toHaveAttribute("href", "/login?returnTo=%2Fprogress");
+  });
+
+  it("logs the member out and returns to the public home", async () => {
+    api.request.mockResolvedValue(undefined);
+    renderShell("/");
+
+    fireEvent.click(screen.getByRole("button", { name: "로그아웃" }));
+
+    await waitFor(() => expect(api.request).toHaveBeenCalledWith("/auth/logout", { method: "POST", authFailureMode: "return-error" }));
+    expect(navigation.replace).toHaveBeenCalledWith("/");
   });
 
   it.each([

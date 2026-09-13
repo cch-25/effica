@@ -19,6 +19,14 @@ export const ideologyRegions: GraphRegion[] = [
 export const IDEOLOGY_CENTER_BAND = 10;
 const band = (value: number, negative: string, neutral: string, positive: string) => value < -IDEOLOGY_CENTER_BAND ? negative : value > IDEOLOGY_CENTER_BAND ? positive : neutral;
 
+export type IdeologyHighlightTone = "default" | "left" | "right";
+
+export function ideologyHighlightTone(ideology: Ideology | null | undefined): IdeologyHighlightTone {
+  if (!ideology) return "default";
+  const economic = interpretIdeology(ideology)?.economic;
+  return economic === "좌파" ? "left" : economic === "우파" ? "right" : "default";
+}
+
 export function interpretIdeology(ideology: Ideology) {
   if (!ideology.completed || ![ideology.x, ideology.y, ideology.z].every(Number.isFinite)) return null;
   const [x, y, z] = [ideology.x, ideology.y, ideology.z].map(value => Math.round(Math.max(-100, Math.min(100, value))));

@@ -22,7 +22,9 @@ h1, h2, h3, h4 { letter-spacing: -.025em; }
 .newspaper-masthead__note strong { color: var(--ink); font-size: .8125rem; }
 .newspaper-masthead__edition { font-size: .75rem; color: var(--muted); border-bottom-color: var(--line); padding-block: .4rem; }
 .site-nav { border-bottom-color: var(--line); }
-.site-nav__brand, .site-nav__link, .site-nav__account { min-height: 2.875rem; font-size: .875rem; }
+.site-nav__brand, .site-nav__link, .site-nav__account, .site-nav__logout { min-height: 2.875rem; }
+.site-nav__brand, .site-nav__link, .site-nav__account { font-size: .875rem; }
+.site-nav__logout { font-size: .75rem; }
 .site-nav__link { font-weight: 600; padding-inline: 1.125rem; transition: background-color 150ms, color 150ms; }
 .site-nav__link.is-active, .site-nav__account[aria-current="page"],
 .nav-link[aria-current="page"], .bottom-nav a[aria-current="page"] {
