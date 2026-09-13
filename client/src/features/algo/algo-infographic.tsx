@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { AUTO_INTERVAL_MS, INITIAL_STATE, advanceAlgorithm, rankingExample, weightedScore, type AlgorithmMode, type AlgorithmState } from "./algo-model";
+import { AUTO_INTERVAL_MS, SLIDER_TRANSITION_MS, INITIAL_STATE, advanceAlgorithm, interpolateAlgorithm, rankingExample, weightedScore, type AlgorithmMode, type AlgorithmState } from "./algo-model";
 import type { createAlgorithmScene } from "./algo-scene";
 import styles from "./algo-infographic.module.css";
 
@@ -38,7 +38,12 @@ function AlgorithmChapter({ chapter, index }: { chapter: typeof CHAPTERS[number]
   const host = useRef<HTMLDivElement>(null);
   const runtime = useRef<ReturnType<typeof createAlgorithmScene> | null>(null);
   const latest = useRef(state);
-  const interact = (update: (current: AlgorithmState) => AlgorithmState) => { setAutoplay(false); setState(update); };
+  const animation = useRef<number | null>(null);
+  const interact = (update: (current: AlgorithmState) => AlgorithmState) => {
+    if (animation.current !== null) cancelAnimationFrame(animation.current);
+    animation.current = null;
+    setAutoplay(false); setState(update);
+  };
   useEffect(() => {
     const node = host.current;
     if (!node) return;
@@ -48,8 +53,28 @@ function AlgorithmChapter({ chapter, index }: { chapter: typeof CHAPTERS[number]
   }, []);
   useEffect(() => {
     if (!autoplay || !inView || status !== "ready") return;
-    const interval = window.setInterval(() => { if (!document.hidden) setState(advanceAlgorithm); }, AUTO_INTERVAL_MS);
-    return () => window.clearInterval(interval);
+    const interval = window.setInterval(() => {
+      if (document.hidden) return;
+      const from = latest.current;
+      const to = advanceAlgorithm(from);
+      if ((from.mode !== "weights" && from.mode !== "coordinates") || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        setState(to); return;
+      }
+      if (animation.current !== null) cancelAnimationFrame(animation.current);
+      const started = performance.now();
+      const tick = (now: number) => {
+        if (document.hidden) { animation.current = null; return; }
+        const progress = Math.min((now - started) / SLIDER_TRANSITION_MS, 1);
+        setState(interpolateAlgorithm(from, to, progress));
+        animation.current = progress < 1 ? requestAnimationFrame(tick) : null;
+      };
+      animation.current = requestAnimationFrame(tick);
+    }, AUTO_INTERVAL_MS);
+    return () => {
+      window.clearInterval(interval);
+      if (animation.current !== null) cancelAnimationFrame(animation.current);
+      animation.current = null;
+    };
   }, [autoplay, inView, status]);
   useEffect(() => { latest.current = state; runtime.current?.update(state); }, [state]);
   useEffect(() => {

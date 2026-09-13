@@ -1,7 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { AUTO_INTERVAL_MS, INITIAL_STATE, advanceAlgorithm, rankingExample, weightedScore } from "@/features/algo/algo-model";
+import { AUTO_INTERVAL_MS, SLIDER_TRANSITION_MS, INITIAL_STATE, advanceAlgorithm, interpolateAlgorithm, rankingExample, weightedScore } from "@/features/algo/algo-model";
 
 describe("interactive algorithm examples", () => {
+  it("smoothly interpolates slider inputs without changing the target or exceeding its bounds", () => {
+    const from = { ...INITIAL_STATE, mode: "weights" as const };
+    const to = advanceAlgorithm(from);
+    expect(SLIDER_TRANSITION_MS).toBeLessThan(AUTO_INTERVAL_MS);
+    expect(interpolateAlgorithm(from, to, 0).model).toBe(30);
+    expect(interpolateAlgorithm(from, to, .5).model).toBe(53);
+    expect(interpolateAlgorithm(from, to, 1)).toEqual(to);
+    expect(interpolateAlgorithm(from, to, 2)).toEqual(to);
+    const values = Array.from({ length: 21 }, (_, i) => interpolateAlgorithm(from, to, i / 20).model);
+    expect(values).toEqual([...values].sort((a, b) => a - b));
+  });
+  it("interpolates all three coordinates with the same easing", () => {
+    const from = { ...INITIAL_STATE, mode: "coordinates" as const };
+    const to = advanceAlgorithm(from);
+    const middle = interpolateAlgorithm(from, to, .5);
+    expect([middle.x, middle.s, middle.c]).toEqual([-23, 30, 83]);
+    expect(interpolateAlgorithm(from, to, 1)).toEqual(to);
+  });
   it("automatically advances every type of scene and loops collection", () => {
     expect(AUTO_INTERVAL_MS).toBe(1500);
     let fetch = INITIAL_STATE;

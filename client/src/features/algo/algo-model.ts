@@ -2,6 +2,13 @@ export type AlgorithmMode = "fetch" | "evidence" | "weights" | "coordinates" | "
 export type AlgorithmState = { mode: AlgorithmMode; step: number; model: number; x: number; s: number; c: number; diverse: boolean };
 export const INITIAL_STATE: AlgorithmState = { mode: "fetch", step: 0, model: 30, x: 19, s: 35, c: 75, diverse: true };
 export const AUTO_INTERVAL_MS = 1500;
+export const SLIDER_TRANSITION_MS = 900;
+export function interpolateAlgorithm(from: AlgorithmState, to: AlgorithmState, progress: number): AlgorithmState {
+  const t = Math.min(1, Math.max(0, progress));
+  const eased = t * t * (3 - 2 * t);
+  const interpolate = (a: number, b: number) => Math.round(a + (b - a) * eased);
+  return { ...to, model: interpolate(from.model, to.model), x: interpolate(from.x, to.x), s: interpolate(from.s, to.s), c: interpolate(from.c, to.c) };
+}
 export function advanceAlgorithm(state: AlgorithmState): AlgorithmState {
   if (state.mode === "fetch") return { ...state, step: (state.step + 1) % 4 };
   if (state.mode === "evidence") return { ...state, step: (state.step + 1) % 3 };
