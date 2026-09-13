@@ -235,6 +235,8 @@ class ProductRepositoryMixin:
         freshness_cutoff = now - _PUBLIC_CONTENT_MAX_AGE
         public_members = await self._public_issue_memberships()
         issue_id = next((key for key, ids in public_members.items() if article_id in ids), None)
+        if issue_id is None:
+            return None
         row = (await self.session.execute(
             select(Article, Source)
             .join(Source, Article.source_id == Source.id)
@@ -252,14 +254,23 @@ class ProductRepositoryMixin:
         return None if row is None else (row[0], row[1], issue_id)
 
     async def article_rows(self) -> list[dict[str, Any]]:
-        """Return every current approved article, including non-issue news."""
+        """Publish only articles selected for eligible editorial debate issues."""
 
+        public_members = await self._public_issue_memberships()
+        issue_by_article = {
+            article_id: issue_id
+            for issue_id in sorted(public_members)
+            for article_id in public_members[issue_id]
+        }
+        if not issue_by_article:
+            return []
         now = utc_now()
         freshness_cutoff = now - _PUBLIC_CONTENT_MAX_AGE
         rows = list((await self.session.execute(
             select(Article, Source)
             .join(Source, Article.source_id == Source.id)
             .where(
+                Article.id.in_(issue_by_article),
                 Article.current_version_id.is_not(None),
                 Article.status == ArticleStatus.ACTIVE,
                 Article.published_at.is_not(None),
@@ -270,12 +281,6 @@ class ProductRepositoryMixin:
             )
             .order_by(Article.published_at.desc(), Article.id.desc())
         )).all())
-        public_members = await self._public_issue_memberships()
-        issue_by_article = {
-            article_id: issue_id
-            for issue_id in sorted(public_members)
-            for article_id in public_members[issue_id]
-        }
         analysis = await self._analysis_context()
         output: list[dict[str, Any]] = []
         for article, source in rows:
@@ -291,7 +296,7 @@ class ProductRepositoryMixin:
             item = self._article_view(
                 article,
                 source,
-                issue_by_article.get(article.id),
+                issue_by_article[article.id],
                 analysis_status=analysis_status,
                 analysis_provider=score_analysis_provider(score),
                 summary=summary,

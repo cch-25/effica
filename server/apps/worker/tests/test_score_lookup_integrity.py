@@ -39,7 +39,7 @@ class LookupFixture(MariaDBWorkerLookups):
 
 
 @pytest.mark.asyncio
-async def test_article_analysis_visibility_does_not_require_issue_membership() -> None:
+async def test_article_analysis_visibility_requires_curated_issue_membership() -> None:
     class VisibilityLookup(MariaDBWorkerLookups):
         def __init__(self) -> None:
             super().__init__(lambda: None, encryption_secret="unit-test-secret")
@@ -64,7 +64,9 @@ async def test_article_analysis_visibility_does_not_require_issue_membership() -
 
     assert row is not None and row["publicly_available"] == 1
     assert row["text"] == "article body"
-    assert "issue_memberships" not in lookup.statement
+    assert "issue_memberships" in lookup.statement
+    assert "i.editorial_key LIKE 'daily-issue:%'" in lookup.statement
+    assert "i.topic IN ('정치', '경제', '사회')" in lookup.statement
     assert "a.status = 'active'" in lookup.statement
     assert "s.policy_status = 'approved'" in lookup.statement
 

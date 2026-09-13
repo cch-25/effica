@@ -37,6 +37,37 @@ def test_analysis_eligibility_rejects_noise_before_paid_work() -> None:
     assert public_affairs.eligible is True
 
 
+@pytest.mark.asyncio
+async def test_unselected_article_skips_paid_analysis_even_with_sufficient_body() -> None:
+    calls = []
+
+    def unexpected_request(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        raise AssertionError("Unselected articles must not reach the model")
+
+    provider = HttpLLMProvider(ProviderConfig(
+        "openai-default", "gpt-5.6-luna", endpoint="https://api.openai.com/v1/responses",
+    ), transport=httpx.MockTransport(unexpected_request))
+    db = _Database()
+    context = HandlerContext(services={
+        "article_versions": {"version-1": {
+            "article_version_id": "version-1", "current_version_id": "version-1",
+            "title": "토트넘 감독, 개막 4경기 무득점 사과",
+            "text": "축구 경기 결과와 감독의 소감을 전달합니다. " * 100,
+            "publicly_available": False,
+        }},
+        "analysis_providers": [provider], "llm_budget": MariaDBLLMBudget(_SessionFactory(db)),
+    })
+    try:
+        result = await handle({"article_version_id": "version-1"}, context)
+        assert result.value["status"] == "SKIPPED"
+        assert result.value["skip_reason"] == "ARTICLE_NO_LONGER_PUBLIC"
+        assert calls == []
+        assert db.days == {}
+    finally:
+        provider.close()
+
+
 def test_luna_request_has_hard_output_cap_and_conservative_price() -> None:
     provider = HttpLLMProvider(
         ProviderConfig(

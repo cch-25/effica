@@ -99,7 +99,16 @@ class MariaDBWorkerLookups:
                    a.title, a.author,
                    (a.status = 'active' AND s.active = 1 AND s.policy_status = 'approved'
                     AND a.published_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 7 DAY)
-                    AND a.published_at <= UTC_TIMESTAMP()) AS publicly_available,
+                    AND a.published_at <= UTC_TIMESTAMP()
+                    AND EXISTS (
+                        SELECT 1 FROM issue_memberships im
+                        JOIN issues i ON i.id = im.issue_id
+                        WHERE im.article_id = a.id AND i.status = 'active'
+                          AND i.issue_kind = 'EVENT'
+                          AND i.editorial_key LIKE 'daily-issue:%'
+                          AND i.topic IN ('정치', '경제', '사회')
+                          AND LENGTH(TRIM(i.summary)) > 0
+                    )) AS publicly_available,
                    a.canonical_url AS source_url, s.name AS source_name,
                    b.payload AS normalized_payload
             FROM article_versions av

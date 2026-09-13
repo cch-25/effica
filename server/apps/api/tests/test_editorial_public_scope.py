@@ -1,7 +1,8 @@
-"""Issue reads fail closed while approved standalone articles remain public."""
+"""All public article and issue reads require eligible editorial debate membership."""
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
 from datetime import timedelta
 
 import pytest
@@ -57,6 +58,35 @@ def test_publisher_identity_and_publication_bounds() -> None:
     assert not is_current_article((now + timedelta(days=1)).isoformat(), now)
 
 
+@pytest.mark.parametrize("title", [
+    '[오피셜] 또 이기지 못해 죄송합니다 개막 4경기 2무2패 무득점 충격! 토트넘 감독의 사과',
+    '최휘영, 베니스 심사위원대상 이창동에 “영화사 위대한 이정표”',
+    '정부, 추석 연휴 민원실 운영 시간 안내',
+    '오늘의 금리와 환율 시세 안내',
+])
+def test_unselected_articles_stay_hidden_even_after_analysis(title: str) -> None:
+    state = PlatformState()
+    selected_id = next(iter(state.articles))
+    article_id = new_ulid()
+    state.articles[article_id] = {
+        **deepcopy(state.articles[selected_id]), "id": article_id, "title": title,
+        "issue_id": None,
+    }
+    state.scores[article_id] = deepcopy(state.scores[selected_id])
+    state.assessments[article_id] = deepcopy(state.assessments[selected_id])
+    client = _client(state)
+    listed = {row["id"] for row in client.get("/api/v1/articles?limit=1").json()["items"]}
+    assert listed and article_id not in listed
+    all_rows = client.get("/api/v1/articles?limit=250").json()["items"]
+    assert {row["id"] for row in all_rows} == set(state.articles) - {article_id}
+    for suffix in ("", "/score", "/assessments", "/score-history"):
+        assert client.get(f"/api/v1/articles/{article_id}{suffix}").status_code == 404
+    response = client.get("/api/v1/compare", params=[
+        ("article_ids", selected_id), ("article_ids", article_id),
+    ])
+    assert response.status_code == 404
+
+
 @pytest.mark.parametrize("violation", ["legacy", "sports", "two_sources", "same_publisher", "expired", "future", "undated", "blocked_source", "unfetched"])
 def test_memory_public_surfaces_fail_closed_together(violation: str) -> None:
     state = PlatformState()
@@ -90,9 +120,9 @@ def test_memory_public_surfaces_fail_closed_together(violation: str) -> None:
         assert response.json()["items"] == []
     for path in (f"/issues/{issue['id']}", f"/issues/{issue['id']}/articles"):
         assert client.get("/api/v1" + path).status_code == 404
-    assert client.get("/api/v1/articles").json()["items"]
+    assert client.get("/api/v1/articles").json()["items"] == []
     for path in (f"/articles/{article_id}", f"/articles/{article_id}/score", f"/articles/{article_id}/assessments", f"/articles/{article_id}/score-history"):
-        assert client.get("/api/v1" + path).status_code == 200
+        assert client.get("/api/v1" + path).status_code == 404
     response = client.get(f"/api/v1/issues/{issue['id']}/comparison", params=[("article_ids", item["id"]) for item in articles[:2]])
     assert response.status_code == 404
     assert client.get("/api/v1/visualization/timeline", params={"entity_type": "article", "entity_id": article_id}).json()["snapshots"] == []
@@ -137,6 +167,7 @@ async def test_repository_rechecks_real_membership_coverage(violation: str) -> N
         assert rows[0]["data_as_of"] == now - timedelta(days=6)
         assert len((await repo.issue_article_rows(issue.id)) or []) == 3
         assert await repo.article_view(articles[0].id) is not None
+        assert {row["id"] for row in await repo.article_rows()} == {article.id for article in articles}
         with pytest.raises(ProductComparisonError, match="COMPARISON_NOT_READY"):
             await repo.issue_comparison_view(issue_id=issue.id, article_ids=[article.id for article in articles[:2]])
         if violation == "legacy":
@@ -160,9 +191,10 @@ async def test_repository_rechecks_real_membership_coverage(violation: str) -> N
         assert await repo.list_issue_rows() == []
         assert await repo.issue_view(issue.id) is None
         assert await repo.issue_article_rows(issue.id) is None
-        assert await repo.article_view(articles[0].id) is not None
-        assert (await repo.assessment_view(articles[0].id) or {})["assessments"] == []
-        assert await repo.score_history(articles[0].id) == []
+        assert await repo.article_rows() == []
+        assert await repo.article_view(articles[0].id) is None
+        assert await repo.assessment_view(articles[0].id) is None
+        assert await repo.score_history(articles[0].id) is None
         assert await repo.current_score(articles[0].id) is None
         assert await repo.issue_comparison_view(issue_id=issue.id, article_ids=[article.id for article in articles[:2]]) is None
         assert await repo.feed_items(user_id=None, personalized_requested=False) == ([], False)

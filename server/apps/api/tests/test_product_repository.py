@@ -250,7 +250,13 @@ async def test_public_issues_and_comparisons_enforce_rolling_seven_day_window(
 
 
 @pytest.mark.asyncio
-async def test_public_article_directory_includes_approved_news_without_issue_membership() -> None:
+@pytest.mark.parametrize("title", [
+    '[오피셜] 또 이기지 못해 죄송합니다 개막 4경기 2무2패 무득점 충격! 토트넘 감독의 사과',
+    '최휘영, 베니스 심사위원대상 이창동에 “영화사 위대한 이정표”',
+    '정부, 추석 연휴 민원실 운영 시간 안내',
+    '오늘의 금리와 환율 시세 안내',
+])
+async def test_public_article_directory_excludes_unselected_news(title: str) -> None:
     now = utc_now()
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
@@ -274,7 +280,7 @@ async def test_public_article_directory_includes_approved_news_without_issue_mem
             source_id=source_id,
             canonical_url=url,
             canonical_url_hash=hashlib.sha256(url.encode()).digest(),
-            title="이슈에 속하지 않은 최신 기사",
+            title=title,
             published_at=now,
             status=ArticleStatus.ACTIVE,
             created_at=now,
@@ -295,11 +301,11 @@ async def test_public_article_directory_includes_approved_news_without_issue_mem
 
         repository = MariaDBPlatformRepository(session, encryption_secret="x" * 40)
         rows = await repository.article_rows()
-        assert [row["id"] for row in rows] == [article_id]
-        assert rows[0]["issue_id"] is None
-        assert rows[0]["analysis_status"] == "PROCESSING"
-        assert rows[0]["coordinate"] is None
-        assert await repository.article_view(article_id) is not None
+        assert rows == []
+        assert await repository.article_view(article_id) is None
+        assert await repository.assessment_view(article_id) is None
+        assert await repository.current_score(article_id) is None
+        assert await repository.score_history(article_id) is None
 
     await engine.dispose()
 
