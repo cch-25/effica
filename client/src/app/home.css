@@ -61,7 +61,7 @@
 .home-issue-photo__link { display: block; }
 .home-issue-photo { margin: 0; min-width: 0; grid-column: 2; grid-row: 2; }
 .home-issue-opening--photo .home-issue-story { grid-column: 1; grid-row: 2; }
-.home-issue-photo img { display: block; width: 100%; height: auto; aspect-ratio: 1.5; object-fit: cover; filter: saturate(.72) contrast(1.03); }
+.home-issue-photo img { display: block; width: 100%; height: auto; object-fit: contain; filter: saturate(.72) contrast(1.03); }
 .home-issue-photo figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .3rem .75rem; font-size: .6875rem; line-height: 1.5; color: var(--home-muted); margin-top: .3rem; }
 .home-issue-photo figcaption > a:first-child { flex: 1 1 70%; }
 .home-issue-photo figcaption > a[target] { flex-shrink: 0; }
@@ -147,7 +147,6 @@
   .home-spread--lead .home-issue-opening h1 { font-size: 1.65rem; }
   .home-issue-summary { font-size: .9375rem; }
   .home-article :is(h3,h4) { font-size: 1.0625rem; }
-  .home-issue-photo img { aspect-ratio: 1.75; }
 }
 @media (max-width: 760px) {
   .home-latest__list { grid-template-columns: minmax(0,1fr); }
@@ -177,7 +176,6 @@
   .home-issue-opening h2 { font-size: 1.375rem; }
   .home-issue-summary { font-size: .9375rem; line-height: 1.8; }
   .home-issue-meta { font-size: .75rem; }
-  .home-issue-photo img { max-height: 260px; aspect-ratio: 1.65; }
   .home-issue-photo figcaption { font-size: .6875rem; }
   .home-article-list { grid-template-columns: minmax(0,1fr); gap: 0; }
   .home-article { display: block; padding: .65rem 0; }
