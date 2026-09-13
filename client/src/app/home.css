@@ -1,16 +1,7 @@
 /* The front page uses compact newspaper columns. Scope shell changes to this
    route because Next.js retains visited routes' global stylesheets. */
-.shell--frontpage { --ink: #171715; --peer-color-ink: #171715; --accent: #30302c; --muted: #555550; --line: #b6b6af; --edition-width: 74rem; background: #fdfcf9; }
+.shell--frontpage { --ink: #171715; --peer-color-ink: #171715; --accent: #30302c; --muted: #555550; --line: #b6b6af; --edition-width: 74rem; background: #fff; }
 .shell--frontpage .main-content { padding-top: .25rem; padding-bottom: 1rem; }
-.shell--frontpage .newspaper-masthead { padding-top: .8rem; }
-.shell--frontpage .newspaper-masthead__identity { padding-bottom: .75rem; }
-.shell--frontpage .newspaper-masthead__name { font-size: 4.25rem; color: var(--ink); }
-.shell--frontpage .newspaper-masthead__title { letter-spacing: .3em; padding-left: .3em; }
-.shell--frontpage .newspaper-masthead__note { color: var(--ink); font-family: var(--font-newspaper), serif; }
-.shell--frontpage .newspaper-masthead__note strong { font-size: .875rem; }
-.shell--frontpage .newspaper-masthead__edition { padding-block: .2rem; font-size: .6875rem; border-block: 1px solid #777770; }
-.shell--frontpage .site-nav { border-bottom: 1px solid #777770; }
-.shell--frontpage :is(.site-nav__brand,.site-nav__link,.site-nav__account,.site-nav__logout) { min-height: 2.125rem; font-size: .75rem; }
 .shell--frontpage .newspaper-footer { padding-block: .8rem; }
 
 .home-page { --home-muted: #555550; --home-rule: #b6b6af; color: var(--ink); }
@@ -107,6 +98,18 @@
 .home-load-message button { background: transparent; border: 0; padding: .5rem 0; color: var(--accent); font-weight: 650; }
 .home-reading-guide { display: grid; grid-template-columns: minmax(0,1fr) minmax(10rem,.45fr); align-items: start; gap: .75rem 2rem; border-block: 1px solid var(--home-rule); margin-top: 1rem; padding: .5rem 0; color: var(--home-muted); font-size: .8125rem; }
 .home-reading-guide strong { color: var(--ink); font-weight: 650; }
+.home-latest { border-top: 1px solid var(--home-rule); margin-top: 1.5rem; }
+.home-latest__heading { display: flex; align-items: baseline; gap: .75rem; padding-block: .65rem; }
+.home-latest__heading h2 { margin: 0; font-size: 1rem; }
+.home-latest__heading > span { color: var(--home-muted); font-size: .6875rem; }
+.home-latest__heading > a { margin-left: auto; font-size: .75rem; }
+.home-latest__list { grid-template-columns: repeat(2,minmax(0,1fr)); row-gap: 0; }
+.home-latest__list .home-article { display: block; padding: .85rem 0; border-top: 1px solid var(--home-rule); }
+.home-latest__list .home-article:nth-child(n) { border-left: 0; padding-left: 0; }
+.home-latest__list .home-article:nth-child(even) { border-left: 1px solid var(--home-rule); padding-left: .85rem; }
+.home-latest__list .home-article h3 { margin-block: .35rem; }
+.home-latest__list .home-article__summary { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.home-latest__list .home-article__links { margin-top: .2rem; }
 .home-reading-guide p { margin: .3rem 0 0; }
 .home-selection-rule summary { cursor: pointer; width: fit-content; padding-block: .25rem; color: var(--accent); font-weight: 650; }
 .home-selection-rule p { margin-top: .6rem; }
@@ -147,11 +150,8 @@
   .home-issue-photo img { aspect-ratio: 1.75; }
 }
 @media (max-width: 760px) {
-  .shell--frontpage .newspaper-masthead__name { font-size: 2.75rem; }
-  .shell--frontpage .newspaper-masthead__title { letter-spacing: .15em; padding-left: .15em; }
-  .shell--frontpage .newspaper-masthead__note strong { font-size: .625rem; }
-  .shell--frontpage .newspaper-masthead__edition { font-size: .625rem; }
-  .shell--frontpage :is(.site-nav__brand,.site-nav__account,.site-nav__logout) { min-height: 44px; font-size: .6875rem; }
+  .home-latest__list { grid-template-columns: minmax(0,1fr); }
+  .home-latest__list .home-article:nth-child(n) { border-left: 0; padding-left: 0; }
   .home-spread--lead .home-issue-opening:not(.home-issue-opening--photo) .home-issue-summary { columns: auto; }
   .home-reading-actions :is(a), .home-expand, .home-angle-picker summary { min-height: 44px; }
   .home-angle-picker summary { align-items: center; }

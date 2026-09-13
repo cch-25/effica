@@ -1,0 +1,20 @@
+/* One nameplate and navigation geometry for every route. */
+.site-header { --ink: #171715; --accent: #30302c; --muted: #555550; background: #fff; }
+.site-header :is(.newspaper-masthead, .site-nav) { width: min(calc(100% - 3rem), 74rem); }
+.site-header .newspaper-masthead { padding-top: .8rem; }
+.site-header .newspaper-masthead__identity { padding-bottom: .75rem; }
+.site-header .newspaper-masthead__name { font-size: 4.25rem; color: var(--ink); }
+.site-header .newspaper-masthead__title { letter-spacing: .3em; padding-left: .3em; }
+.site-header .newspaper-masthead__note { color: var(--ink); font-family: var(--font-newspaper), serif; }
+.site-header .newspaper-masthead__note strong { font-size: .875rem; }
+.site-header .newspaper-masthead__edition { padding-block: .2rem; font-size: .6875rem; border-block: 1px solid #777770; }
+.site-header .site-nav { border-bottom: 1px solid #777770; }
+.site-header :is(.site-nav__brand,.site-nav__link,.site-nav__account,.site-nav__logout) { min-height: 2.125rem; font-size: .75rem; }
+@media (max-width: 760px) {
+  .site-header .newspaper-masthead__name { font-size: 2.75rem; }
+  .site-header :is(.newspaper-masthead, .site-nav) { width: calc(100% - 2rem); }
+  .site-header .newspaper-masthead__title { letter-spacing: .15em; padding-left: .15em; }
+  .site-header .newspaper-masthead__note strong { font-size: .625rem; }
+  .site-header .newspaper-masthead__edition { font-size: .625rem; }
+  .site-header :is(.site-nav__brand,.site-nav__account,.site-nav__logout) { min-height: 44px; font-size: .6875rem; }
+}

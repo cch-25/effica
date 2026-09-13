@@ -227,12 +227,7 @@ button, input, select, textarea { letter-spacing: -.02em; }
 /* Reader applications and management records share the same white printed form. */
 .newspaper-account { padding-bottom: 1.5rem; }
 .minimal-shell { display: block; min-height: 0; padding: 1rem 1.5rem; background: #fff; }
-.newspaper-account--login { min-height: 100svh; padding-top: clamp(3rem, 10vh, 6rem); background: var(--peer-color-canvas); }
-.newspaper-account--login .newspaper-masthead { padding: 0; }
-.newspaper-account--login .newspaper-masthead__identity { display: flex; justify-content: center; padding: 0; }
-.newspaper-account--login .newspaper-masthead__note,
-.newspaper-account--login .newspaper-masthead__edition { display: none; }
-.newspaper-account--login .newspaper-masthead__name { font-size: 2.75rem; }
+.newspaper-account--login { min-height: 100svh; background: #fff; }
 .newspaper-account--login .minimal-shell { padding: 2.75rem 1.5rem 4rem; background: transparent; }
 .login-page { width: min(100%, 24rem); margin-inline: auto; text-align: center; }
 .login-page__heading h1 { margin: 0 0 .75rem; font-size: 1.5rem; line-height: 1.4; }

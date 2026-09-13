@@ -208,6 +208,16 @@ export const handlers = [
     const body: IssueDetailDto | undefined = issue ? { ...issue, distribution: { minimum_x: null, maximum_x: null, count: issue.article_ids.length } } : undefined;
     return body ? HttpResponse.json(mockResponse("IssueDetailView", body)) : HttpResponse.json(errorEnvelope("NOT_FOUND", "이슈를 찾을 수 없습니다."), { status: 404 });
   }),
+  http.get(`${prefix}/articles`, ({ request }) => {
+    const params = new URL(request.url).searchParams;
+    const offset = Math.max(0, Number(params.get("cursor")) || 0);
+    const limit = Math.max(1, Math.min(250, Number(params.get("limit")) || 20));
+    const sorted = [...apiArticles].sort((a, b) => (b.published_at ?? "").localeCompare(a.published_at ?? "") || b.id.localeCompare(a.id));
+    return HttpResponse.json(mockResponse("ArticlePage", {
+      items: sorted.slice(offset, offset + limit),
+      next_cursor: offset + limit < sorted.length ? String(offset + limit) : null,
+    } satisfies ArticlePageDto));
+  }),
   http.get(`${prefix}/articles/:articleId`, ({ params }) => {
     const article = apiArticles.find((item) => item.id === params.articleId);
     return article ? HttpResponse.json(mockResponse("ArticleView", article)) : HttpResponse.json(errorEnvelope("NOT_FOUND", "기사를 찾을 수 없습니다."), { status: 404 });

@@ -3,10 +3,13 @@
 import Image from "next/image";
 import Link from "next/link";
 import { Button } from "@base-ui/react/button";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { useRef, useState, type ReactNode } from "react";
 import { useIssueArticlesQuery, useIssuesQuery } from "@/lib/api/queries";
 import { isMockMode } from "@/lib/api/mode";
 import { formatPublishedDate } from "@/lib/api/formatters";
+import { apiRequest } from "@/lib/api/client";
+import { mapArticlePage, type ArticlePageDto } from "@/lib/api/mappers";
 import type { Article, Issue } from "@/lib/api/types";
 import { ContentTypeIndicator, ContentTypeLine } from "@/components/ui/content-type-indicator";
 import { StatePanel } from "@/components/ui/state-panel";
@@ -114,6 +117,32 @@ function IssueSpread({ group, issueOrdinal, primary, fallbackArticles }: { group
   </section>;
 }
 
+function LatestArticles() {
+  const query = useInfiniteQuery({
+    queryKey: ["home", "latest-articles"],
+    queryFn: async ({ pageParam, signal }) => {
+      const params = new URLSearchParams({ limit: "12" });
+      if (pageParam) params.set("cursor", pageParam);
+      return mapArticlePage(await apiRequest<ArticlePageDto>(`/articles?${params}`, { signal }));
+    },
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
+    staleTime: 60_000,
+  });
+  const articles = [...new Map(query.data?.pages.flatMap((page) => page.items).map((article) => [article.id, article])).values()];
+  return <section className="home-latest" aria-labelledby="home-latest-title">
+    <div className="home-latest__heading"><h2 id="home-latest-title">최신 기사</h2><span>최신 발행순</span><Link href="/articles">전체 기사 보기 →</Link></div>
+    {query.isPending ? <p className="home-load-message" role="status">최신 기사를 불러오는 중입니다.</p>
+      : query.isError && !articles.length ? <div className="home-load-message" role="status"><p>최신 기사를 불러오지 못했습니다.</p><Button onClick={() => void query.refetch()}>다시 불러오기</Button></div>
+        : !articles.length && <p className="home-load-message" role="status">아직 공개된 기사가 없습니다.</p>}
+    <ul className="home-article-list home-latest__list">{articles.map((article) => <ArticleColumn key={article.id} article={article} primary />)}</ul>
+    {query.isFetchNextPageError && <p className="home-load-message" role="status">다음 기사를 불러오지 못했습니다. 다시 시도해 주세요.</p>}
+    {query.hasNextPage && <Button className="home-expand" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
+      {query.isFetchingNextPage ? "기사를 불러오는 중" : query.isFetchNextPageError ? "다음 기사 다시 불러오기" : "기사 더 보기"}
+    </Button>}
+  </section>;
+}
+
 export function HomeNewspaper({ fallbackIssues, fallbackArticles }: { fallbackIssues: Issue[]; fallbackArticles: Article[] }) {
   const query = useIssuesQuery(250);
   const issues = query.data?.items ?? (isMockMode() ? fallbackIssues : []);
@@ -140,6 +169,7 @@ export function HomeNewspaper({ fallbackIssues, fallbackArticles }: { fallbackIs
           <div className="home-secondary__columns">{groups.slice(1).map((group, index) => <IssueSpread key={group.id} group={group} issueOrdinal={index + 1} primary={false} fallbackArticles={fallbackArticles} />)}</div>
         </div>}
       </div>}
+    <LatestArticles />
     <aside className="home-reading-guide" aria-label="독자 안내"><div><strong>기사 분석은 어떻게 읽나요?</strong><p>기사에서 강조한 내용과 그 근거를 살펴보세요. 편향성과 과장성 점수는 사실 여부나 기사 품질의 판정이 아닙니다.</p></div>
       <details className="home-selection-rule"><summary>지면 구성 기준</summary><p>최근 기사가 3개 이상이고 언론사 3곳 이상을 확보한 이슈를 보여드립니다. 관련 쟁점은 한 묶음으로 모읍니다.</p><p>편집 우선순위가 높은 묶음부터 최대 5개를 표시합니다. 우선순위가 같으면 언론사 수와 기사 수, 최근 갱신 시각을 차례로 봅니다.</p><p>날짜와 발행 시각은 한국 시간 기준입니다.</p></details>
     </aside>

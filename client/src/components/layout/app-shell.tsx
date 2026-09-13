@@ -8,7 +8,6 @@ import { useState, type ComponentType, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import type { UserView } from "@/lib/api/contracts";
 import { apiRequest } from "@/lib/api/client";
-import { HeadlineBand } from "./headline-band";
 import { NewspaperMasthead } from "./newspaper-masthead";
 
 type NavItem = {
@@ -51,6 +50,30 @@ function userNavHref(item: NavItem, user: UserView | null) {
   return item.href === "/progress" && !user ? "/login?returnTo=%2Fprogress" : item.href;
 }
 
+function SiteHeader({ date, pathname, user, logoutState, onLogout }: {
+  date: string; pathname: string; user: UserView | null;
+  logoutState: "idle" | "pending" | "error"; onLogout: () => void;
+}) {
+  return <div className="site-header">
+    <NewspaperMasthead date={date} section={pathname.startsWith("/admin") ? "관리자" : pathname === "/" ? "종합" : pathname.startsWith("/articles") ? "기사" : pathname.startsWith("/issues") ? "보도 비교" : pathname.startsWith("/algo") ? "알고리즘" : "독자"} />
+    <nav className="site-nav" aria-label="주요 메뉴">
+      <Link href="/" className="site-nav__brand" aria-label="종합 1면" aria-current={pathname === "/" ? "page" : undefined}>종합 1면</Link>
+      <div className="site-nav__links">
+        {userNav.slice(1).map((item) => {
+          const { href, label, icon: Icon, paths } = item;
+          const active = isActive(pathname, paths);
+          return <Link key={href} href={userNavHref(item, user)} className={active ? "site-nav__link is-active" : "site-nav__link"} aria-current={active ? "page" : undefined}><Icon size={17} aria-hidden={true} /><span>{label}</span></Link>;
+        })}
+      </div>
+      <div className="site-nav__account-actions">
+        <Link href={user ? "/settings/privacy" : "/login"} className="site-nav__account" aria-current={user && pathMatches(pathname, "/settings/privacy") ? "page" : undefined}><UserRound size={17} aria-hidden="true" /><span>{user ? "개인정보 관리" : "로그인"}</span></Link>
+        {user && <Button type="button" variant="ghost" className="site-nav__logout" disabled={logoutState === "pending"} onClick={onLogout}>{logoutState === "pending" ? "처리 중" : logoutState === "error" ? "다시 시도" : "로그아웃"}</Button>}
+        {logoutState === "error" && <span className="sr-only" role="alert">로그아웃하지 못했습니다. 다시 시도해 주세요.</span>}
+      </div>
+    </nav>
+  </div>;
+}
+
 export function AppShell({ children, user, editionDate = "" }: { children: ReactNode; user: UserView | null; editionDate?: string }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -67,12 +90,14 @@ export function AppShell({ children, user, editionDate = "" }: { children: React
     }
   };
 
-  if (minimal) return <div className={`newspaper-account${pathname === "/login" ? " newspaper-account--login" : ""}`}><a className="skip-link" href="#main-content">본문으로 건너뛰기</a><NewspaperMasthead date={editionDate} section={admin ? "관리자" : "독자"} compact /><main id="main-content" className="minimal-shell" tabIndex={-1}>{children}</main></div>;
+  const header = <SiteHeader date={editionDate} pathname={pathname} user={user} logoutState={logoutState} onLogout={() => void logout()} />;
+
+  if (minimal) return <div className={`newspaper-account${pathname === "/login" ? " newspaper-account--login" : ""}`}><a className="skip-link" href="#main-content">본문으로 건너뛰기</a>{header}<main id="main-content" className="minimal-shell" tabIndex={-1}>{children}</main></div>;
 
   return (
     <div className={admin ? "shell shell--admin" : pathname === "/" ? "shell shell--frontpage" : "shell"}>
       <a className="skip-link" href="#main-content">본문으로 건너뛰기</a>
-      {admin && <NewspaperMasthead date={editionDate} section="관리자" compact />}
+      {header}
       {admin ? (
         <aside className="sidebar">
           <Link href="/admin/runtime" className="brand" aria-label="EFFICA 관리자 홈">
@@ -90,27 +115,7 @@ export function AppShell({ children, user, editionDate = "" }: { children: React
             <Link href={user ? "/settings/privacy" : "/login"} className="profile-chip"><Avatar.Root className="profile-avatar"><Avatar.Fallback>{user?.display_name.slice(0, 1) ?? "?"}</Avatar.Fallback></Avatar.Root><span><strong>{user?.display_name ?? "로그인 필요"}</strong><small>{user?.role ?? "Guest"}</small></span></Link>
           </div>
         </aside>
-      ) : (
-        <>
-          <NewspaperMasthead date={editionDate} section={pathname === "/" ? "종합" : pathname.startsWith("/articles") ? "기사" : pathname.startsWith("/issues") ? "보도 비교" : pathname.startsWith("/algo") ? "알고리즘" : "독자"} />
-          <nav className="site-nav" aria-label="주요 메뉴">
-            <Link href="/" className="site-nav__brand" aria-label="종합 1면" aria-current={pathname === "/" ? "page" : undefined}>종합 1면</Link>
-            <div className="site-nav__links">
-              {userNav.slice(1).map((item) => {
-                const { href, label, icon: Icon, paths } = item;
-                const active = isActive(pathname, paths);
-                return <Link key={href} href={userNavHref(item, user)} className={active ? "site-nav__link is-active" : "site-nav__link"} aria-current={active ? "page" : undefined}><Icon size={17} aria-hidden={true} /><span>{label}</span></Link>;
-              })}
-            </div>
-            <div className="site-nav__account-actions">
-              <Link href={user ? "/settings/privacy" : "/login"} className="site-nav__account" aria-current={user && pathMatches(pathname, "/settings/privacy") ? "page" : undefined}><UserRound size={17} aria-hidden="true" /><span>{user ? "개인정보 관리" : "로그인"}</span></Link>
-              {user && <Button type="button" variant="ghost" className="site-nav__logout" disabled={logoutState === "pending"} onClick={() => void logout()}>{logoutState === "pending" ? "처리 중" : logoutState === "error" ? "다시 시도" : "로그아웃"}</Button>}
-              {logoutState === "error" && <span className="sr-only" role="alert">로그아웃하지 못했습니다. 다시 시도해 주세요.</span>}
-            </div>
-          </nav>
-          {pathname !== "/" && <HeadlineBand />}
-        </>
-      )}
+      ) : null}
       <main id="main-content" className="main-content" tabIndex={-1}>
         {children}
       </main>
