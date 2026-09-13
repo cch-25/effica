@@ -60,7 +60,7 @@ export function FeedbackGuestbook() {
 
   return <div className="feedback-page">
     <header className="feedback-heading">
-      <div><p className="feedback-kicker">독자 방명록</p><h1>피드백</h1><p>에피카를 읽고 느낀 점을 자유롭게 남겨 주세요.</p></div>
+      <div><p className="feedback-kicker">독자의 한마디</p><h1>방명록</h1><p>에피카에 대한 피드백부터 가벼운 인사까지, 자유롭게 남겨 주세요.</p></div>
       <span className="feedback-heading__note">여러분의 한마디를<br />다음 지면에 담겠습니다.</span>
     </header>
     <div className="feedback-workspace">
@@ -72,20 +72,20 @@ export function FeedbackGuestbook() {
             <input id="feedback-name" name="name" autoComplete="nickname" maxLength={30} required value={name} onChange={(event) => setName(event.target.value)} placeholder="어떤 이름으로 남길까요?" disabled={pending} />
           </div>
           <div className="feedback-field">
-            <label htmlFor="feedback-content">피드백 내용</label>
-            <textarea id="feedback-content" name="content" required rows={6} value={content} onChange={(event) => setContent(event.target.value)} placeholder="좋았던 점, 아쉬웠던 점, 바라는 점을 들려주세요." aria-describedby="feedback-count feedback-public" aria-invalid={overLimit || undefined} disabled={pending} />
+            <label htmlFor="feedback-content">남길 이야기</label>
+            <textarea id="feedback-content" name="content" required rows={6} value={content} onChange={(event) => setContent(event.target.value)} placeholder="피드백, 제안, 응원이나 가벼운 인사도 좋아요." aria-describedby="feedback-count feedback-public" aria-invalid={overLimit || undefined} disabled={pending} />
             <div id="feedback-count" className={`feedback-count${overLimit ? " is-over" : ""}`}><span>{overLimit ? "200자 이내로 줄여 주세요." : "짧은 한마디도 환영해요."}</span><span>{count}<span className="feedback-count__limit"> / 200자</span></span></div>
           </div>
           <p id="feedback-public" className="feedback-public">이름과 내용은 모두에게 공개됩니다.</p>
-          <Button className="feedback-submit" type="submit" disabled={pending || overLimit || !name.trim() || !content.trim()}>{pending ? <>등록 중 <LoaderCircle size={16} className="feedback-spinner" aria-hidden="true" /></> : <>피드백 남기기 <ArrowUpRight size={17} aria-hidden="true" /></>}</Button>
+          <Button className="feedback-submit" type="submit" disabled={pending || overLimit || !name.trim() || !content.trim()}>{pending ? <>등록 중 <LoaderCircle size={16} className="feedback-spinner" aria-hidden="true" /></> : <>글 남기기 <ArrowUpRight size={17} aria-hidden="true" /></>}</Button>
           {error && <p className="feedback-message" role="alert">{error}</p>}
-          {posted && !error && <p className="feedback-message" role="status"><Check size={15} aria-hidden="true" /> 피드백을 남겼어요. 고맙습니다!</p>}
+          {posted && !error && <p className="feedback-message" role="status"><Check size={15} aria-hidden="true" /> 방명록에 글을 남겼어요. 고맙습니다!</p>}
         </form>
       </section>
       <section className="feedback-entries" aria-labelledby="feedback-entries-title" aria-busy={feedback.isPending}>
         <div className="feedback-entries__heading"><h2 id="feedback-entries-title">남겨주신 이야기</h2><span>최신순</span></div>
         {feedback.isPending && <p className="feedback-empty" role="status">이야기를 불러오고 있어요.</p>}
-        {feedback.isError && <div className="feedback-empty" role="alert"><p>피드백을 불러오지 못했어요.</p><Button type="button" className="feedback-text-button" onClick={() => void feedback.refetch()}>다시 불러오기</Button></div>}
+        {feedback.isError && <div className="feedback-empty" role="alert"><p>이야기를 불러오지 못했어요.</p><Button type="button" className="feedback-text-button" onClick={() => void feedback.refetch()}>다시 불러오기</Button></div>}
         {!feedback.isPending && !feedback.isError && visibleEntries.length === 0 && <div className="feedback-empty"><span className="feedback-empty__mark" aria-hidden="true">“</span><h3>첫 이야기를 기다리고 있어요.</h3><p>에피카의 첫 방명록을 채워 주세요.</p></div>}
         <ol className="feedback-list">{visibleEntries.map((entry) => <li key={entry.id} className={entry.id === posted?.id ? "feedback-entry is-new" : "feedback-entry"}>
           <div className="feedback-entry__meta"><strong>{entry.name}</strong><time dateTime={entry.created_at}>{dateFormat.format(new Date(entry.created_at))}</time></div>

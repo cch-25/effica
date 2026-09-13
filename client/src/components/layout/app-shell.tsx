@@ -23,7 +23,7 @@ const userNav: NavItem[] = [
   { href: "/issues", label: "이슈 비교", icon: Newspaper, paths: ["/issues"] },
   { href: "/algo", label: "알고리즘", icon: Orbit, paths: ["/algo"] },
   { href: "/progress", label: "내 활동", icon: CircleGauge, paths: ["/progress", "/share", "/efficacy"] },
-  { href: "/feedback", label: "피드백", icon: MessageSquare, paths: ["/feedback"] },
+  { href: "/feedback", label: "방명록", icon: MessageSquare, paths: ["/feedback"] },
 ];
 
 const adminNav = [
