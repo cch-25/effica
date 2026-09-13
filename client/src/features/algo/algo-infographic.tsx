@@ -32,12 +32,13 @@ export function AlgoInfographic() {
 function AlgorithmChapter({ chapter, index }: { chapter: typeof CHAPTERS[number]; index: number }) {
   const [state, setState] = useState<AlgorithmState>({ ...INITIAL_STATE, mode: chapter.id });
   const [status, setStatus] = useState<"loading" | "ready" | "fallback">("loading");
-  const [rotating, setRotating] = useState(false);
+  const [rotating, setRotating] = useState(true);
   const [autoplay, setAutoplay] = useState(true);
   const [inView, setInView] = useState(false);
   const host = useRef<HTMLDivElement>(null);
   const runtime = useRef<ReturnType<typeof createAlgorithmScene> | null>(null);
   const latest = useRef(state);
+  const latestRotation = useRef(true);
   const animation = useRef<number | null>(null);
   const interact = (update: (current: AlgorithmState) => AlgorithmState) => {
     if (animation.current !== null) cancelAnimationFrame(animation.current);
@@ -77,6 +78,7 @@ function AlgorithmChapter({ chapter, index }: { chapter: typeof CHAPTERS[number]
     };
   }, [autoplay, inView, status]);
   useEffect(() => { latest.current = state; runtime.current?.update(state); }, [state]);
+  useEffect(() => { latestRotation.current = rotating; runtime.current?.setInteractive(rotating); }, [rotating]);
   useEffect(() => {
     const node = host.current;
     if (!node) return;
@@ -96,7 +98,8 @@ function AlgorithmChapter({ chapter, index }: { chapter: typeof CHAPTERS[number]
       void import("./algo-scene").then(({ createAlgorithmScene }) => {
         if (!active || token !== generation) return;
         runtime.current = createAlgorithmScene(node, latest.current);
-        setRotating(false); setStatus("ready");
+        runtime.current.setInteractive(latestRotation.current);
+        setStatus("ready");
       }).catch(() => { if (active && token === generation) setStatus("fallback"); });
     }, { rootMargin: "450px 0px" });
     observer.observe(node);
@@ -122,7 +125,7 @@ function AlgorithmChapter({ chapter, index }: { chapter: typeof CHAPTERS[number]
         <output className={styles.readout} aria-live={autoplay ? "off" : "polite"}>{result}</output>
       </div>
       <div className={styles.stage}>
-        <div className={styles.stageTools}><span>THREE.JS / {state.mode.toUpperCase()}</span><div><Button variant="ghost" aria-pressed={autoplay} onClick={() => setAutoplay(value => !value)}>{autoplay ? "자동 재생 일시정지" : "자동 재생 시작"}</Button><Button variant="ghost" disabled={status !== "ready"} aria-pressed={rotating} onClick={() => { setAutoplay(false); runtime.current?.setInteractive(!rotating); setRotating(!rotating); }}>회전 {rotating ? "켜짐" : "꺼짐"}</Button><Button variant="ghost" disabled={status !== "ready"} onClick={() => runtime.current?.resetView()}>시점 초기화</Button></div></div>
+        <div className={styles.stageTools}><span>THREE.JS / {state.mode.toUpperCase()}</span><div><Button variant="ghost" aria-pressed={autoplay} onClick={() => setAutoplay(value => !value)}>{autoplay ? "자동 재생 일시정지" : "자동 재생 시작"}</Button><Button variant="ghost" disabled={status !== "ready"} aria-pressed={rotating} onClick={() => setRotating(value => !value)}>회전 {rotating ? "켜짐" : "꺼짐"}</Button><Button variant="ghost" disabled={status !== "ready"} onClick={() => runtime.current?.resetView()}>시점 초기화</Button></div></div>
         <div ref={host} className={styles.canvas} role="img" aria-label={`${chapter.title} ${result}`} data-status={status} />
         {status !== "ready" && <div className={styles.fallback}><strong>{status === "loading" ? "3D 계산 장면 준비 중" : "이 환경에서는 3D를 표시할 수 없습니다."}</strong><p>{result}</p></div>}
       </div>

@@ -343,7 +343,8 @@ export function createAlgorithmScene(host: HTMLDivElement, initial: AlgorithmSta
   return {
     update(next: AlgorithmState) { const changed = state.mode !== next.mode; state = next; if (changed) build(); else apply(state); dirty = true; },
     resetView,
-    setInteractive(enabled: boolean) { controls.enabled = enabled; renderer.domElement.style.touchAction = enabled ? "none" : "pan-y"; },
+    // Horizontal gestures rotate; vertical touch gestures remain page scrolling.
+    setInteractive(enabled: boolean) { controls.enabled = enabled; renderer.domElement.style.touchAction = "pan-y"; },
     dispose() { disposed = true; cancelAnimationFrame(frame); observer.disconnect(); intersection.disconnect(); controls.dispose(); clearContent(); light.shadow.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove(); },
   };
 }
